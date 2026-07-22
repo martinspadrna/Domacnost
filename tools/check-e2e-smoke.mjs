@@ -221,6 +221,70 @@ function connectCdp(wsUrl) {
   };
 }
 
+async function waitForExpression(page, expression, timeout = 3000, interval = 50) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const result = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression
+    });
+    if (result.result?.value) return result.result.value;
+    await new Promise((resolveWait) => setTimeout(resolveWait, interval));
+  }
+  return null;
+}
+
+async function dispatchPhysicalClick(page, selector) {
+  const rectResult = await page.send('Runtime.evaluate', {
+    returnByValue: true,
+    expression: `(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) return null;
+      element.scrollIntoView?.({ block: 'center', inline: 'center' });
+      const rect = element.getBoundingClientRect();
+      return {
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      };
+    })()`
+  });
+  const rect = rectResult.result?.value;
+  if (!rect || !Number.isFinite(rect.x) || !Number.isFinite(rect.y) || rect.width <= 0 || rect.height <= 0) return null;
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', buttons: 1, clickCount: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', buttons: 0, clickCount: 1 });
+  return rect;
+}
+
+async function measurePhysicalNavClick(page, navId, timeout = 2600) {
+  const selector = `.nav-shell .nav-item[data-nav="${String(navId).replace(/"/g, '\\"')}"]`;
+  const started = await page.send('Runtime.evaluate', {
+    returnByValue: true,
+    expression: `performance.now()`
+  });
+  const startMs = Number(started.result?.value || 0);
+  const rect = await dispatchPhysicalClick(page, selector);
+  if (!rect) return { navId, found: false, latencyMs: 0 };
+  const active = await waitForExpression(page, `(() => {
+    const item = document.querySelector(${JSON.stringify(selector)});
+    const app = document.querySelector('#app');
+    return Boolean(item?.classList?.contains('active') && app?.dataset?.bootOk === '1');
+  })()`, timeout, 45);
+  const finished = await page.send('Runtime.evaluate', {
+    returnByValue: true,
+    expression: `performance.now()`
+  });
+  return {
+    navId,
+    found: true,
+    active: Boolean(active),
+    latencyMs: Math.round(Number(finished.result?.value || startMs) - startMs),
+    rect
+  };
+}
+
 function smokeSeedScript() {
   const seed = {
     meta: { schemaVersion: 85, appBuild: Number(expectedBuild), mode: 'e2e-smoke', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -599,6 +663,20 @@ async function run() {
     if (!initialValue.navFinance) { fail('Po seed bootu není dostupná navigace Finance.'); bootOk = false; }
     if (!initialValue.navContracts) { fail('Po seed bootu není dostupná navigace Smlouvy.'); bootOk = false; }
     if (bootOk) ok('boot: nový Home, app root, verze, Finance, Bazén i Smlouvy navigace dostupné.');
+
+    const firstPhysicalNav = await measurePhysicalNavClick(page, 'finance');
+    if (process.env.E2E_DEBUG === '1') {
+      console.log('DEBUG first physical nav:', JSON.stringify(firstPhysicalNav, null, 2));
+    }
+    if (!firstPhysicalNav.found) {
+      fail('Performance: fyzicky kliknutelne Finance ve spodni liste nebyly nalezeny.');
+    } else if (!firstPhysicalNav.active) {
+      fail('Performance: prvni fyzicky klik na Finance neprepnul modul vcas.');
+    } else if (Number(firstPhysicalNav.latencyMs || 0) > 1800) {
+      fail(`Performance: prvni fyzicky klik na Finance trval ${firstPhysicalNav.latencyMs} ms.`);
+    } else {
+      ok(`Performance: prvni fyzicky klik na Finance ${firstPhysicalNav.latencyMs} ms.`);
+    }
 
     await page.send('Runtime.evaluate', {
       expression: `window.__DOMACNOST_E2E_NAV__ ? window.__DOMACNOST_E2E_NAV__('more') : (() => { const item = document.querySelector('[data-nav="more"]'); item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); })()`

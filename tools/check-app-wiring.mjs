@@ -201,6 +201,11 @@ if (app) {
   expect(app, 'window.__DOMACNOST_E2E_RENDER_TIMINGS__', 'app.js: E2E sbírá render timingy pro hlídání dlouhých prvních navigací.');
   expect(e2e, 'renderTimingCheck', 'tools/check-e2e-smoke.mjs: E2E kontroluje render timingy.');
   expect(e2e, 'maxMs || 0) > 2200', 'tools/check-e2e-smoke.mjs: E2E failne render v řádu sekund.');
+  expect(e2e, 'async function measurePhysicalNavClick', 'tools/check-e2e-smoke.mjs: E2E meri skutecny fyzicky klik na prvni navigaci.');
+  expect(e2e, 'Input.dispatchMouseEvent', 'tools/check-e2e-smoke.mjs: fyzicky nav test pouziva CDP vstup, ne interni helper.');
+  expect(e2e, 'firstPhysicalNav.latencyMs', 'tools/check-e2e-smoke.mjs: fyzicky nav test hlida latenci prvniho prepnuti.');
+  expectAbsent(app, 'function readNavRunnerSnapshot', 'app.js: klik na spodni navigaci nesmi pred renderem cist layout rozmery.');
+  expectAbsent(app, 'placeNavRunnerAt', 'app.js: nav runner uz nepotrebuje pixel snapshot z klikoveho tasku.');
   expectAbsent(app, "localStorage.setItem('homeWeb.activeModule', activeModule);", 'app.js: přepnutí modulu nesmí synchronně zapisovat activeModule do localStorage.');
   expectAbsent(app, "localStorage.setItem('domacnostPlus.moduleTabs', JSON.stringify(moduleTabs));", 'app.js: přepnutí záložek nesmí synchronně zapisovat moduleTabs do localStorage.');
   expect(app, "'.form-actions'", 'app.js: formulářové akce jsou chráněné proti swipe přepnutí.');

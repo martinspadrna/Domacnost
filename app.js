@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_478';
-  const APP_BUILD = 478;
+  const APP_VERSION = 'Domácnost+ v.0.1_479';
+  const APP_BUILD = 479;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -3403,17 +3403,6 @@
     }
   }
 
-  function placeNavRunnerAt(runner, left = 0, width = 0, animate = false) {
-    if (!runner) return;
-    runner.style.transition = animate ? '' : 'none';
-    runner.style.width = `${Math.max(0, Number(width || 0))}px`;
-    runner.style.transform = `translate3d(${Math.max(0, Number(left || 0))}px, 0, 0)`;
-    if (!animate) {
-      runner.offsetHeight;
-      runner.style.transition = '';
-    }
-  }
-
   function syncNavMotion(motion, fromIndex = 0, toIndex = 0) {
     const navScroll = document.querySelector('.nav-scroll');
     const runner = navScroll?.querySelector('.nav-active-runner');
@@ -3421,7 +3410,6 @@
     const activeItem = items[toIndex] || navScroll?.querySelector('.nav-item.active');
     if (!navScroll || !runner || !activeItem) return;
     const fromItem = items[fromIndex] || activeItem;
-    const hasPixelStart = motion && Number.isFinite(Number(motion.fromLeft)) && Number.isFinite(Number(motion.fromWidth)) && Number(motion.fromWidth) > 0;
 
     if (!motion) {
       navScroll.classList.remove('nav-is-moving');
@@ -3432,8 +3420,7 @@
     }
 
     navScroll.classList.remove('nav-runner-ready', 'nav-is-moving');
-    if (hasPixelStart) placeNavRunnerAt(runner, motion.fromLeft, motion.fromWidth, false);
-    else placeNavRunner(runner, fromItem, false);
+    placeNavRunner(runner, fromItem, false);
     navScroll.classList.add('nav-runner-ready');
 
     safeAnimationFrame(() => {
@@ -19725,17 +19712,6 @@
     return domActive || navRunnerCurrentBottomId || lastRenderedBottomNavId || getActiveBottomNavId(fallbackModuleId);
   }
 
-  function readNavRunnerSnapshot() {
-    const navScroll = document.querySelector('.nav-scroll');
-    const activeItem = navScroll?.querySelector('.nav-item.active');
-    if (!navScroll || !activeItem) return null;
-    return {
-      id: activeItem.dataset?.nav || currentRenderedBottomNavId(),
-      left: Number(activeItem.offsetLeft || 0),
-      width: Number(activeItem.offsetWidth || activeItem.clientWidth || 0)
-    };
-  }
-
   document.addEventListener('pointerdown', () => {
     lastUserInteractionAt = Date.now();
   }, { passive: true });
@@ -19798,8 +19774,7 @@
     if (nav) {
       lastUserInteractionAt = Date.now();
       const navFromBottomBar = Boolean(nav.closest('.nav-shell'));
-      const navSnapshot = navFromBottomBar ? readNavRunnerSnapshot() : null;
-      const previousBottomNavId = navFromBottomBar ? (navSnapshot?.id || currentRenderedBottomNavId(activeModule)) : getActiveBottomNavId(activeModule);
+      const previousBottomNavId = navFromBottomBar ? currentRenderedBottomNavId(activeModule) : getActiveBottomNavId(activeModule);
       const legacyTargetTab = nav.dataset.targetTab || '';
       const nextModule = nav.dataset.nav === 'homecare'
         ? ({ hdo: 'hdo', waste: 'waste', tasks: 'tasks', warranties: 'warranties', 'polish-holidays': 'polishHolidays' }[legacyTargetTab] || 'hdo')
@@ -19807,7 +19782,7 @@
       try {
         const nextBottomNavId = getActiveBottomNavId(nextModule);
         pendingNavMotion = navFromBottomBar && previousBottomNavId !== nextBottomNavId
-          ? { fromId: previousBottomNavId, toId: nextBottomNavId, fromLeft: navSnapshot?.left, fromWidth: navSnapshot?.width, createdAt: Date.now(), consumed: false }
+          ? { fromId: previousBottomNavId, toId: nextBottomNavId, createdAt: Date.now(), consumed: false }
           : null;
         activeOverview = null;
         activeModule = nextModule;
