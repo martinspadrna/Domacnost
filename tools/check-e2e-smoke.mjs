@@ -1264,16 +1264,31 @@ async function run() {
     await page.send('Runtime.evaluate', {
       expression: `document.querySelector('[data-action="subscription-debtor-info"]')?.click()`
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    const subscriptionInputReady = await waitForExpression(
+      page,
+      `Boolean(document.querySelector('.subscription-debtor-modal input[name="amount"]'))`,
+      3000,
+      50
+    );
+    if (!subscriptionInputReady) fail('Předplatné: po otevření dlužníka se nevykreslilo pole částky.');
     await page.send('Runtime.evaluate', {
       expression: `(() => {
         const input = document.querySelector('.subscription-debtor-modal input[name="amount"]');
-        input?.focus();
         if (input) input.value = '175';
-        input?.dispatchEvent(new Event('input', { bubbles: true }));
-        window.dispatchEvent(new Event('resize'));
+        input?.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '175' }));
+        input?.focus({ preventScroll: true });
       })()`
     });
+    const subscriptionInputPrepared = await waitForExpression(
+      page,
+      `(() => {
+        const input = document.querySelector('.subscription-debtor-modal input[name="amount"]');
+        return Boolean(input && input.value === '175' && document.activeElement === input);
+      })()`,
+      1500,
+      40
+    );
+    if (!subscriptionInputPrepared) fail('Předplatné: test nedokázal připravit rozepsanou částku a fokus.');
     await page.send('Emulation.setDeviceMetricsOverride', {
       width: 390,
       height: 520,
