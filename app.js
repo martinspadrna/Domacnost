@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_482';
-  const APP_BUILD = 482;
+  const APP_VERSION = 'Domácnost+ v.0.1_483';
+  const APP_BUILD = 483;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -14689,6 +14689,9 @@
   }
 
   function scheduleShoppingCloudRefresh(reason = 'auto', options = {}) {
+    // E2E ověřuje přesně připravený lokální nákup. Automatický cloudový refresh
+    // by mohl uprostřed testu přepsat seed podle rychlosti sítě runneru.
+    if (state.meta?.mode === 'e2e-smoke') return;
     if (!cloudReady()) return;
     if (activeModule !== 'shopping') return;
     if (document.hidden) return;
@@ -20210,6 +20213,10 @@
       render();
     };
     window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__ = () => {
+      if (shoppingAutoRefreshTimer) {
+        window.clearTimeout(shoppingAutoRefreshTimer);
+        shoppingAutoRefreshTimer = 0;
+      }
       ensureShoppingListsReady();
       const list = getShoppingLists().find((item) => shoppingItemsForList(item.id).some((shoppingItem) => shoppingItem.done)) || getShoppingLists()[0] || null;
       activeOverview = null;
