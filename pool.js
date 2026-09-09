@@ -286,10 +286,15 @@
       render();
     }
 
-    function closePhInfoModal() {
-      if (!phInfoOpen) return;
+    function isPhInfoModalOpen() {
+      return phInfoOpen;
+    }
+
+    function closePhInfoModal(options = {}) {
+      if (!phInfoOpen) return false;
       phInfoOpen = false;
-      render();
+      if (options.render !== false) render();
+      return true;
     }
 
     function renderPoolMeasurements(pool) {
@@ -745,7 +750,13 @@
       deletePoolMeasurement,
       previewShape,
       openPhInfoModal,
-      closePhInfoModal
+      closePhInfoModal,
+      ui: {
+        overlay: {
+          isOpen: isPhInfoModalOpen,
+          close: closePhInfoModal
+        }
+      }
     };
   }
 

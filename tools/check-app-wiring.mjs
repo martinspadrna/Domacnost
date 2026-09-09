@@ -37,8 +37,10 @@ function expectAbsent(source, pattern, label) {
 const app = read('app.js');
 const finance = read('finance.js');
 const pool = read('pool.js');
+const subscriptions = read('subscriptions.js');
 const contracts = read('contracts.js');
 const calendar = read('calendar.js');
+const warranty = read('warranty.js');
 const edgeCalendarIcs = read('edge-calendar-ics-sync.ts');
 const weather = read('weather.js');
 const vape = read('vape.js');
@@ -102,6 +104,28 @@ if (app && pool && index && sw) {
   expect(pool, 'function addPoolMeasurementFromForm', 'pool.js: nové měření se ukládá bez zásahu do nastavení bazénu.');
   expect(app, "'pool-add-measurement': () => addPoolMeasurementFromForm(data, form)", 'app.js: nové měření bazénu má form handler.');
   expect(pool, "id: 'settings', label: 'Nastavení'", 'pool.js: bazén má samostatnou záložku Nastavení.');
+}
+
+if (app && pool && subscriptions && calendar && warranty) {
+  expect(app, 'const moduleUiContracts = new Map()', 'app.js: modulové UI kontrakty mají centrální registr.');
+  expect(app, 'function registerModuleUiContract', 'app.js: modulová instance umí zaregistrovat svůj UI kontrakt.');
+  expect(app, 'function moduleHasOpenOverlay', 'app.js: shell zjišťuje otevřený overlay přes společné rozhraní.');
+  expect(app, 'function hasOpenModuleOverlay', 'app.js: shell zamkne podklad i pro overlay otevřený z jiného modulu.');
+  expect(app, '|| hasOpenModuleOverlay()', 'app.js: otevřený overlay libovolného modulu se započítá mezi aplikační dialogy.');
+  expect(app, 'function closeOpenAppModals', 'app.js: zavírání modalů je sjednocené v jednom místě.');
+  expect(app, 'if (nextModule !== activeModule) closeAllModuleOverlays()', 'app.js: přechod mezi moduly zavře i detail otevřený z Home.');
+  expect(app, "registerModuleUiContract('pool'", 'app.js: Bazén registruje společný UI kontrakt.');
+  expect(app, "registerModuleUiContract('subscriptions'", 'app.js: Předplatné registruje společný UI kontrakt.');
+  expect(app, "registerModuleUiContract('calendar'", 'app.js: Kalendář registruje společný UI kontrakt.');
+  expect(app, "registerModuleUiContract('warranties'", 'app.js: Záruky registrují společný UI kontrakt.');
+  expectAbsent(app, 'getSubscriptionsModule().isDebtorModalOpen()', 'app.js: shell už nezná konkrétní stav dialogu Předplatného.');
+  expectAbsent(app, 'getSubscriptionsModule().closeDebtorModal()', 'app.js: shell už nezavírá dialog Předplatného napřímo.');
+  expect(pool, 'isOpen: isPhInfoModalOpen', 'pool.js: Bazén publikuje overlay přes UI kontrakt.');
+  expect(subscriptions, 'isOpen: isDebtorModalOpen', 'subscriptions.js: Předplatné publikuje overlay přes UI kontrakt.');
+  expect(calendar, 'isOpen: isCalendarEventDetailOpen', 'calendar.js: Kalendář publikuje detail přes UI kontrakt.');
+  expect(warranty, 'isOpen: isWarrantyDetailOpen', 'warranty.js: Záruky publikují detail přes UI kontrakt.');
+  expectAbsent(app, 'calendarDetailEventId', 'app.js: shell už nedrží interní stav detailu Kalendáře.');
+  expectAbsent(app, 'activeWarrantyDetailId', 'app.js: shell už nedrží interní stav detailu Záruk.');
 }
 
 if (app && contracts && index && sw) {

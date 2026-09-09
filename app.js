@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_481';
-  const APP_BUILD = 481;
+  const APP_VERSION = 'Domácnost+ v.0.1_482';
+  const APP_BUILD = 482;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1059,6 +1059,9 @@
   let subscriptionsInstance = null;
   let calendarInstance = null;
   let vapeInstance = null;
+  // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
+  // interních modalů ani jejich stavové proměnné.
+  const moduleUiContracts = new Map();
 
   let state = loadState();
   runtimeStateRef = state;
@@ -1087,7 +1090,6 @@
   let garageEditRecord = null;
   let garageModal = null;
   let filePreviewModal = null;
-  let activeWarrantyDetailId = null;
   // Garáž „Přidat auto": rozbalené pomocné details (předvyplnění / technický
   // list) si drží stav přes render, aby je autosync/realtime rerender
   // nezavíral uprostřed vyplňování. Jen lokální UI stav, do cloudu se neukládá.
@@ -1148,7 +1150,6 @@
   let shoppingCloudRefreshInFlight = false;
   let shoppingLastAutoRefreshAt = 0;
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
-  let calendarDetailEventId = null;
   let toastTimer = null;
   let now = new Date();
   let supabaseClientInstance = null;
@@ -3250,8 +3251,7 @@
       }
       const showStartChoice = shouldShowStartChoice();
       if (showStartChoice) activeOverview = null;
-      const subscriptionDebtorModalOpen = activeModule === 'subscriptions' && getSubscriptionsModule().isDebtorModalOpen();
-      document.body.classList.toggle('overview-open', Boolean(activeOverview || garageModal || calendarDetailEventId || filePreviewModal || activeWarrantyDetailId || shoppingDoneModalOpen || loyaltyCardPreviewId || loyaltyCardMenuId || subscriptionDebtorModalOpen));
+      document.body.classList.toggle('overview-open', Boolean(activeOverview || hasOpenAppModal()));
 
       if (showStartChoice) {
         app?.classList?.remove('home-app-shell');
@@ -3846,6 +3846,67 @@
       try { URL.revokeObjectURL(filePreviewModal.objectUrl); } catch {}
     }
     filePreviewModal = null;
+  }
+
+  function registerModuleUiContract(moduleId, instance) {
+    const id = String(moduleId || '');
+    const ui = instance?.ui;
+    if (!id || !ui || typeof ui !== 'object') return instance;
+    moduleUiContracts.set(id, ui);
+    return instance;
+  }
+
+  function getModuleUiContract(moduleId = activeModule) {
+    return moduleUiContracts.get(String(moduleId || '')) || null;
+  }
+
+  function moduleHasOpenOverlay(moduleId = activeModule) {
+    const overlay = getModuleUiContract(moduleId)?.overlay;
+    return Boolean(overlay && typeof overlay.isOpen === 'function' && overlay.isOpen());
+  }
+
+  function hasOpenModuleOverlay() {
+    return Array.from(moduleUiContracts.keys()).some((moduleId) => moduleHasOpenOverlay(moduleId));
+  }
+
+  function closeModuleOverlay(moduleId = activeModule, options = {}) {
+    const overlay = getModuleUiContract(moduleId)?.overlay;
+    if (!overlay || typeof overlay.close !== 'function' || !moduleHasOpenOverlay(moduleId)) return false;
+    overlay.close({ render: false });
+    if (options.render !== false) render();
+    return true;
+  }
+
+  function closeAllModuleOverlays() {
+    let closed = false;
+    moduleUiContracts.forEach((_, moduleId) => {
+      if (closeModuleOverlay(moduleId, { render: false })) closed = true;
+    });
+    return closed;
+  }
+
+  function hasOpenAppModal() {
+    return Boolean(
+      garageModal
+      || filePreviewModal
+      || shoppingDoneModalOpen
+      || loyaltyCardPreviewId
+      || loyaltyCardMenuId
+      || hasOpenModuleOverlay()
+    );
+  }
+
+  function closeOpenAppModals(options = {}) {
+    const wasOpen = hasOpenAppModal();
+    garageModal = null;
+    shoppingDoneModalOpen = false;
+    loyaltyCardPreviewId = '';
+    loyaltyCardMenuId = '';
+    garageEditRecord = null;
+    closeFilePreviewModal();
+    const moduleOverlayClosed = closeAllModuleOverlays();
+    if ((wasOpen || moduleOverlayClosed) && options.render !== false) render();
+    return wasOpen || moduleOverlayClosed;
   }
 
   function showFilePreviewModal({ url, objectUrl = '', name = 'Příloha', type = '', source = '' } = {}) {
@@ -6673,8 +6734,7 @@
     activeOverview = null;
     closeFilePreviewModal();
     garageModal = null;
-    calendarDetailEventId = null;
-    activeWarrantyDetailId = null;
+    closeAllModuleOverlays();
     applyVisualSettings();
   }
 
@@ -6819,9 +6879,8 @@
     if (warrantyInstance) return warrantyInstance;
     const factory = window.DomacnostWarranty?.createWarranty;
     if (!factory) throw new Error('warranty.js není načtený');
-    warrantyInstance = factory({
+    warrantyInstance = registerModuleUiContract('warranties', factory({
       getState: () => state,
-      getActiveWarrantyDetailId: () => activeWarrantyDetailId,
       getDetailsOpen: isDetailsOpen,
       getModuleTab,
       setModuleTab,
@@ -6867,7 +6926,7 @@
       WARRANTY_FILE_MAX_BYTES,
       WARRANTY_IMAGE_MAX_DIMENSION,
       WARRANTY_IMAGE_JPEG_QUALITY
-    });
+    }));
     return warrantyInstance;
   }
 
@@ -7003,7 +7062,7 @@
     if (poolInstance) return poolInstance;
     const factory = window.DomacnostPool?.createPool;
     if (!factory) throw new Error('pool.js není načtený');
-    poolInstance = factory({
+    poolInstance = registerModuleUiContract('pool', factory({
       getState: () => state,
       getModuleTab,
       setModuleTab,
@@ -7025,7 +7084,7 @@
       cloudReady,
       cloudSaveHouseholdUiSettings,
       confirm: (message) => window.confirm(message)
-    });
+    }));
     return poolInstance;
   }
 
@@ -7106,7 +7165,7 @@
     if (subscriptionsInstance) return subscriptionsInstance;
     const factory = window.DomacnostSubscriptions?.createSubscriptions;
     if (!factory) throw new Error('subscriptions.js není načtený');
-    subscriptionsInstance = factory({
+    subscriptionsInstance = registerModuleUiContract('subscriptions', factory({
       getState: () => state,
       getActiveModule: () => activeModule,
       getDetailsOpen: isDetailsOpen,
@@ -7137,7 +7196,7 @@
       renderEmptyCta,
       financeMonthLabel,
       SUBSCRIPTION_SERVICE_OPTIONS
-    });
+    }));
     return subscriptionsInstance;
   }
 
@@ -7145,11 +7204,10 @@
     if (calendarInstance) return calendarInstance;
     const factory = window.DomacnostCalendar?.createCalendar;
     if (!factory) throw new Error('calendar.js není načtený');
-    calendarInstance = factory({
+    calendarInstance = registerModuleUiContract('calendar', factory({
       getState: () => state,
       getNow: () => now,
       getCalendarViewMonth: () => calendarViewMonth,
-      getCalendarDetailEventId: () => calendarDetailEventId,
       getDetailsOpen: isDetailsOpen,
       setDetailsOpen,
       escapeHtml,
@@ -7184,7 +7242,7 @@
       cloudReady,
       DEFAULT_CALENDAR_EVENT_MINUTES,
       APP_TIME_ZONE
-    });
+    }));
     return calendarInstance;
   }
 
@@ -17304,17 +17362,7 @@
       return;
     }
     if (action === 'close-modal') {
-      garageModal = null;
-      calendarDetailEventId = null;
-      activeWarrantyDetailId = null;
-      shoppingDoneModalOpen = false;
-      loyaltyCardPreviewId = '';
-      loyaltyCardMenuId = '';
-      garageEditRecord = null;
-      closeFilePreviewModal();
-      getPoolModule().closePhInfoModal();
-      getSubscriptionsModule().closeDebtorModal();
-      render();
+      closeOpenAppModals();
       return;
     }
     if (action === 'set-section-tab') {
@@ -17547,7 +17595,7 @@
       return;
     }
     if (action === 'delete-calendar') {
-      calendarDetailEventId = null;
+      closeModuleOverlay('calendar', { render: false });
       deleteCalendarEvent(button.dataset.id);
       return;
     }
@@ -17560,8 +17608,7 @@
       return;
     }
     if (action === 'calendar-event-detail') {
-      calendarDetailEventId = button.dataset.id || '';
-      render();
+      getCalendarModule().openCalendarEventDetail(button.dataset.id || '');
       return;
     }
     if (action === 'set-profile') {
@@ -17649,13 +17696,11 @@
       return;
     }
     if (action === 'open-warranty-detail') {
-      activeWarrantyDetailId = button.dataset.id || '';
-      render();
+      getWarrantyModule().openWarrantyDetail(button.dataset.id || '');
       return;
     }
     if (action === 'delete-warranty') {
       deleteWarranty(button.dataset.id);
-      activeWarrantyDetailId = null;
       return;
     }
     if (action === 'open-warranty-file') {
@@ -19645,20 +19690,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if (garageModal || calendarDetailEventId || activeWarrantyDetailId || filePreviewModal || shoppingDoneModalOpen || loyaltyCardPreviewId) {
-      garageModal = null;
-      calendarDetailEventId = null;
-      activeWarrantyDetailId = null;
-      shoppingDoneModalOpen = false;
-      loyaltyCardPreviewId = '';
-      loyaltyCardMenuId = '';
-      garageEditRecord = null;
-      closeFilePreviewModal();
-      getPoolModule().closePhInfoModal();
-      getSubscriptionsModule().closeDebtorModal();
-      render();
-      return;
-    }
+    if (closeOpenAppModals()) return;
     if (activeOverview) closeOverview();
   });
 
@@ -19748,17 +19780,7 @@
     }
     const modalBackdrop = event.target.closest('[data-modal-backdrop]');
     if (modalBackdrop && !event.target.closest('.app-modal')) {
-      garageModal = null;
-      calendarDetailEventId = null;
-      activeWarrantyDetailId = null;
-      shoppingDoneModalOpen = false;
-      loyaltyCardPreviewId = '';
-      loyaltyCardMenuId = '';
-      garageEditRecord = null;
-      closeFilePreviewModal();
-      getPoolModule().closePhInfoModal();
-      getSubscriptionsModule().closeDebtorModal();
-      render();
+      closeOpenAppModals();
       return;
     }
 
@@ -19785,6 +19807,7 @@
         ? ({ hdo: 'hdo', waste: 'waste', tasks: 'tasks', warranties: 'warranties', 'polish-holidays': 'polishHolidays' }[legacyTargetTab] || 'hdo')
         : nav.dataset.nav;
       try {
+        if (nextModule !== activeModule) closeAllModuleOverlays();
         const nextBottomNavId = getActiveBottomNavId(nextModule);
         pendingNavMotion = navFromBottomBar && previousBottomNavId !== nextBottomNavId
           ? { fromId: previousBottomNavId, toId: nextBottomNavId, createdAt: Date.now(), consumed: false }
@@ -20142,6 +20165,7 @@
     window.__DOMACNOST_E2E_NAV__ = (moduleId, tab = '') => {
       const nextModule = String(moduleId || 'home');
       window.__DOMACNOST_E2E_LAST_NAV__ = nextModule;
+      if (nextModule !== activeModule) closeAllModuleOverlays();
       if (renderFrameRequest) {
         try { (window.cancelAnimationFrame || window.webkitCancelAnimationFrame)?.(renderFrameRequest); } catch {}
       }
@@ -20171,8 +20195,7 @@
       if (!event) {
         event = (state.calendar || []).find((item) => /Smoke udalost/i.test(String(item.title || ''))) || (state.calendar || [])[0];
       }
-      calendarDetailEventId = String(event?.id || event?.cloudId || key || '');
-      render();
+      getCalendarModule().openCalendarEventDetail(String(event?.id || event?.cloudId || key || ''));
     };
     window.__DOMACNOST_E2E_OPEN_GARAGE_MODAL__ = (type = 'add-fuel') => {
       const modalType = String(type || 'add-fuel');

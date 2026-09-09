@@ -846,10 +846,11 @@
       setSubscriptionPaymentDraft({ personId: debtorModalPersonId, subscriptionId: '' });
     }
 
-    function closeDebtorModal() {
-      if (!debtorModalPersonId) return;
+    function closeDebtorModal(options = {}) {
+      if (!debtorModalPersonId) return false;
       debtorModalPersonId = '';
-      render();
+      if (options.render !== false) render();
+      return true;
     }
 
     function isDebtorModalOpen() {
@@ -1255,7 +1256,13 @@
       deleteSubscription,
       deleteSubscriptionPerson,
       deleteSubscriptionShare,
-      deleteSubscriptionPayment
+      deleteSubscriptionPayment,
+      ui: {
+        overlay: {
+          isOpen: isDebtorModalOpen,
+          close: closeDebtorModal
+        }
+      }
     };
   }
 

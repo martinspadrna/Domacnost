@@ -1311,9 +1311,14 @@ async function run() {
       mobile: true
     });
     await page.send('Runtime.evaluate', {
-      expression: `document.querySelector('.subscription-debtor-modal [data-action="close-modal"]')?.click()`
+      expression: `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    const subscriptionModalClosedCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `!document.querySelector('.subscription-debtor-modal.app-modal') && !document.body.classList.contains('overview-open')`
+    });
+    if (!subscriptionModalClosedCheck.result?.value) fail('Předplatné: společný modulový kontrakt nezavřel dialog klávesou Escape.');
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('garage') : document.querySelector('[data-nav="garage"]')?.click()`

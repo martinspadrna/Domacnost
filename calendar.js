@@ -12,7 +12,6 @@
     const getState = deps.getState || (() => ({}));
     const getNow = deps.getNow || (() => new Date());
     const getCalendarViewMonth = deps.getCalendarViewMonth || (() => new Date().toISOString().slice(0, 7));
-    const getCalendarDetailEventId = deps.getCalendarDetailEventId || (() => null);
     const getDetailsOpen = deps.getDetailsOpen || (() => false);
     const escapeHtml = deps.escapeHtml || ((v) => String(v ?? ''));
     const normalizeText = deps.normalizeText || ((v) => String(v || '').trim());
@@ -63,6 +62,7 @@
 
     let calendarAutoSyncTimer = null;
     let calendarAutoSyncRunning = false;
+    let calendarDetailEventId = '';
 
     function getCalendarSources() {
       return Array.isArray(getState().calendarCloud?.sources) ? getState().calendarCloud.sources : [];
@@ -379,7 +379,7 @@
     }
 
     function renderCalendarEventDetailModal() {
-      const event = findCalendarEventById(getCalendarDetailEventId());
+      const event = findCalendarEventById(calendarDetailEventId);
       if (!event) return '';
       const running = calendarEventIsRunning(event, getNow());
       const source = calendarSourceName(event.sourceId);
@@ -409,6 +409,25 @@
           </section>
         </div>
       `;
+    }
+
+    function openCalendarEventDetail(eventId) {
+      const event = findCalendarEventById(eventId);
+      if (!event) return false;
+      calendarDetailEventId = String(event.id || event.cloudId || '');
+      render();
+      return true;
+    }
+
+    function isCalendarEventDetailOpen() {
+      return Boolean(findCalendarEventById(calendarDetailEventId));
+    }
+
+    function closeCalendarEventDetail(options = {}) {
+      if (!calendarDetailEventId) return false;
+      calendarDetailEventId = '';
+      if (options.render !== false) render();
+      return true;
     }
 
     function normalizeCalendarMonth(value) {
@@ -1184,6 +1203,7 @@
       const event = getState().calendar.find((entry) => entry.id === id);
       if (!event) return;
       getState().calendar = getState().calendar.filter((entry) => entry.id !== id);
+      if (calendarDetailEventId === id || calendarDetailEventId === event.cloudId) calendarDetailEventId = '';
       touchState();
       saveState();
       render();
@@ -1630,6 +1650,8 @@
       // render
       renderCalendar,
       renderCalendarEventDetailModal,
+      openCalendarEventDetail,
+      closeCalendarEventDetail,
       renderEventList,
       findCalendarEventById,
       shiftCalendarMonth,
@@ -1646,7 +1668,13 @@
       toggleCalendarSource,
       deleteCalendarSource,
       icsCalendarSync,
-      scheduleCalendarAutoSync
+      scheduleCalendarAutoSync,
+      ui: {
+        overlay: {
+          isOpen: isCalendarEventDetailOpen,
+          close: closeCalendarEventDetail
+        }
+      }
     };
   }
 

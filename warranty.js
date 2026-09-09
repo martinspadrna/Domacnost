@@ -7,7 +7,6 @@
   // IndexedDB i komprese jdou přes deps, aby se neměnilo, kdy a jak se ukládají přílohy.
   function createWarranty(deps) {
     const getState = deps.getState || (() => ({}));
-    const getActiveWarrantyDetailId = deps.getActiveWarrantyDetailId || (() => null);
     const getDetailsOpen = deps.getDetailsOpen || (() => false);
     const getModuleTab = deps.getModuleTab || ((area, fallback) => fallback);
     const renderSectionTabs = deps.renderSectionTabs || (() => '');
@@ -54,6 +53,7 @@
     const WARRANTY_FILE_MAX_BYTES = deps.WARRANTY_FILE_MAX_BYTES || (15 * 1024 * 1024);
     const WARRANTY_IMAGE_MAX_DIMENSION = deps.WARRANTY_IMAGE_MAX_DIMENSION || 1600;
     const WARRANTY_IMAGE_JPEG_QUALITY = deps.WARRANTY_IMAGE_JPEG_QUALITY || 0.82;
+    let activeWarrantyDetailId = '';
 
     // Draft formuláře záruky – dříve modulová proměnná v app.js, používaná jen zárukami.
     let warrantyFormDraft = (() => {
@@ -277,8 +277,8 @@
     }
 
     function renderWarrantyDetailModal() {
-      if (!getActiveWarrantyDetailId()) return '';
-      const item = normalizeWarranties(getState().warranties).find((entry) => entry.id === getActiveWarrantyDetailId());
+      if (!activeWarrantyDetailId) return '';
+      const item = normalizeWarranties(getState().warranties).find((entry) => entry.id === activeWarrantyDetailId);
       if (!item) return '';
       const files = warrantyFilesFor(item.id);
       const purchaseDate = item.purchaseDate || todayISO();
@@ -338,6 +338,25 @@
           </section>
         </div>
       `;
+    }
+
+    function openWarrantyDetail(id) {
+      const item = normalizeWarranties(getState().warranties).find((entry) => entry.id === id);
+      if (!item) return false;
+      activeWarrantyDetailId = item.id;
+      render();
+      return true;
+    }
+
+    function isWarrantyDetailOpen() {
+      return Boolean(activeWarrantyDetailId && normalizeWarranties(getState().warranties).some((entry) => entry.id === activeWarrantyDetailId));
+    }
+
+    function closeWarrantyDetail(options = {}) {
+      if (!activeWarrantyDetailId) return false;
+      activeWarrantyDetailId = '';
+      if (options.render !== false) render();
+      return true;
     }
 
     function renderWarrantyAddForm() {
@@ -859,6 +878,7 @@
       const warranty = getState().warranties.find((item) => item.id === id);
       getState().warranties = normalizeWarranties(getState().warranties).filter((item) => item.id !== id);
       if (getState().warranties.length === before) return;
+      if (activeWarrantyDetailId === id) activeWarrantyDetailId = '';
       const files = (getState().warrantyFiles || []).filter((file) => file.warrantyId === id);
       for (const file of files) {
         if (!file.cloudId) deleteStoredWarrantyFile(file.id).catch(() => {});
@@ -889,6 +909,8 @@
       renderWarrantyItem,
       renderWarrantyDetailModal,
       renderWarrantiesPanel,
+      openWarrantyDetail,
+      closeWarrantyDetail,
       // přílohy + cloud
       cloudLoadWarrantyFiles,
       cloudSyncLocalWarrantyFiles,
@@ -898,7 +920,13 @@
       // handlery
       addWarrantyFromForm,
       updateWarrantyFromForm,
-      deleteWarranty
+      deleteWarranty,
+      ui: {
+        overlay: {
+          isOpen: isWarrantyDetailOpen,
+          close: closeWarrantyDetail
+        }
+      }
     };
   }
 
