@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_480';
-  const APP_BUILD = 480;
+  const APP_VERSION = 'Domácnost+ v.0.1_481';
+  const APP_BUILD = 481;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -2796,6 +2796,10 @@
   }
 
   function scheduleBootCloudWarmStart() {
+    // The browser smoke suite validates the seeded local UI. Letting the fake
+    // signed-in session reach Supabase makes the result depend on network speed
+    // and can replace the seed while the suite is still navigating modules.
+    if (state.meta?.mode === 'e2e-smoke') return;
     if (cloudWarmStartTimer) return;
     // If we believe the user is signed in (saved state), start eagerly so the
     // household loads quickly and the "not configured" login flash is minimised.
