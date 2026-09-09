@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_479';
-  const APP_BUILD = 479;
+  const APP_VERSION = 'Domácnost+ v.0.1_480';
+  const APP_BUILD = 480;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -3246,7 +3246,8 @@
       }
       const showStartChoice = shouldShowStartChoice();
       if (showStartChoice) activeOverview = null;
-      document.body.classList.toggle('overview-open', Boolean(activeOverview || garageModal || calendarDetailEventId || filePreviewModal || activeWarrantyDetailId || shoppingDoneModalOpen || loyaltyCardPreviewId || loyaltyCardMenuId));
+      const subscriptionDebtorModalOpen = activeModule === 'subscriptions' && getSubscriptionsModule().isDebtorModalOpen();
+      document.body.classList.toggle('overview-open', Boolean(activeOverview || garageModal || calendarDetailEventId || filePreviewModal || activeWarrantyDetailId || shoppingDoneModalOpen || loyaltyCardPreviewId || loyaltyCardMenuId || subscriptionDebtorModalOpen));
 
       if (showStartChoice) {
         app?.classList?.remove('home-app-shell');

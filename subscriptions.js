@@ -852,6 +852,10 @@
       render();
     }
 
+    function isDebtorModalOpen() {
+      return Boolean(debtorModalPersonId);
+    }
+
     function renderDebtorModal(summary) {
       if (!debtorModalPersonId) return '';
       const row = summary.peopleRows.find((item) => item.person.id === debtorModalPersonId);
@@ -1235,6 +1239,7 @@
       setSubscriptionPaymentDraft,
       openDebtorModal,
       closeDebtorModal,
+      isDebtorModalOpen,
       // autofill defaults pro formulář
       subscriptionServiceDefaults,
       // handlery

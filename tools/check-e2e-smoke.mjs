@@ -349,7 +349,8 @@ function smokeSeedScript() {
       profileId: 'profile-e2e-smoke',
       sourceId: 'calendar-source-e2e-smoke',
       title: 'Smoke udalost',
-      date: '2026-07-03',
+      // Událost musí zůstat v aktuálně otevřeném měsíci i při pozdějším běhu CI.
+      date: new Date().toISOString().slice(0, 10),
       time: '09:30',
       endTime: '10:15',
       type: 'event',
@@ -473,6 +474,26 @@ function smokeSeedScript() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }],
+    subscriptionPeople: [{
+      id: 'subscription-person-e2e-smoke',
+      name: 'Petr',
+      note: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    subscriptions: [{
+      id: 'subscription-e2e-smoke',
+      serviceKey: 'netflix',
+      name: 'Netflix',
+      price: 319,
+      billingDay: 1,
+      maxMembers: 5,
+      enabled: true,
+      shares: [{ personId: 'subscription-person-e2e-smoke', amount: 100 }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    subscriptionPayments: [],
     pool: {
       shape: 'rect',
       length: 6,
@@ -1235,6 +1256,64 @@ async function run() {
     if (!contractsValue.detailSurface) { fail('Smlouvy detail nemá sjednocený detailní povrch.'); contractsOk = false; }
     if (!contractsValue.contractText) { fail('Smlouvy neukazují seed smlouvu/přehled.'); contractsOk = false; }
     if (contractsOk) ok('Smlouvy: přehled, detail i příloha formuláře renderují.');
+
+    await page.send('Runtime.evaluate', {
+      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('subscriptions', 'overview') : document.querySelector('[data-nav="subscriptions"]')?.click()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    await page.send('Runtime.evaluate', {
+      expression: `document.querySelector('[data-action="subscription-debtor-info"]')?.click()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    await page.send('Runtime.evaluate', {
+      expression: `(() => {
+        const input = document.querySelector('.subscription-debtor-modal input[name="amount"]');
+        input?.focus();
+        if (input) input.value = '175';
+        input?.dispatchEvent(new Event('input', { bubbles: true }));
+        window.dispatchEvent(new Event('resize'));
+      })()`
+    });
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 520,
+      deviceScaleFactor: 2,
+      mobile: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 350));
+    const subscriptionPaymentModalCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const modal = document.querySelector('.subscription-debtor-modal.app-modal');
+        const input = modal?.querySelector('input[name="amount"]');
+        const rect = modal?.getBoundingClientRect();
+        return {
+          modal: Boolean(modal),
+          bodyOpen: document.body.classList.contains('overview-open'),
+          amount: input?.value || '',
+          focused: document.activeElement === input,
+          visible: Boolean(rect && rect.bottom > 0 && rect.top < window.innerHeight)
+        };
+      })()`
+    });
+    const subscriptionPaymentModalValue = subscriptionPaymentModalCheck.result?.value || {};
+    let subscriptionPaymentModalOk = true;
+    if (!subscriptionPaymentModalValue.modal) { fail('Předplatné: dialog platby po fokusu částky zmizel.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.bodyOpen) { fail('Předplatné: dialog platby nezamkl podkladovou stránku pro mobilní klávesnici.'); subscriptionPaymentModalOk = false; }
+    if (subscriptionPaymentModalValue.amount !== '175') { fail('Předplatné: dialog platby neudržel rozepsanou částku.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.focused) { fail('Předplatné: pole částky po změně mobilního viewportu ztratilo fokus.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.visible) { fail('Předplatné: dialog platby po otevření mobilní klávesnice není ve viewportu.'); subscriptionPaymentModalOk = false; }
+    if (subscriptionPaymentModalOk) ok('Předplatné: dialog platby zůstává při psaní částky otevřený, zaostřený a viditelný.');
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true
+    });
+    await page.send('Runtime.evaluate', {
+      expression: `document.querySelector('.subscription-debtor-modal [data-action="close-modal"]')?.click()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('garage') : document.querySelector('[data-nav="garage"]')?.click()`
