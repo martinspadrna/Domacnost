@@ -1,7 +1,8 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-487';
+  const ASSET_VERSION = '0-1-488';
+  const ASSET_LOAD_TIMEOUT_MS = 15000;
   const definitions = {
     shopping: {
       styles: ['shopping.css'],
@@ -65,19 +66,37 @@
 
     const promise = new Promise((resolve, reject) => {
       const script = existing || document.createElement('script');
+      let settled = false;
+      let timer = 0;
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        script.removeEventListener('load', onLoad);
+        script.removeEventListener('error', onError);
+      };
       const onLoad = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
         script.dataset.loaded = 'true';
         resolve(true);
       };
-      const onError = () => reject(new Error(`Nepodařilo se načíst ${path}`));
-      script.addEventListener('load', onLoad, { once: true });
-      script.addEventListener('error', onError, { once: true });
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        assetPromises.delete(key);
+        if (script.dataset.domacnostAsset === path) script.remove();
+        reject(new Error(`Nepodařilo se načíst ${path}`));
+      };
+      script.addEventListener('load', onLoad);
+      script.addEventListener('error', onError);
       if (!existing) {
         script.src = versionedUrl(path);
         script.async = false;
         script.dataset.domacnostAsset = path;
         document.head.appendChild(script);
       }
+      timer = window.setTimeout(onError, ASSET_LOAD_TIMEOUT_MS);
     });
     assetPromises.set(key, promise);
     return promise;
@@ -93,12 +112,34 @@
 
     const promise = new Promise((resolve, reject) => {
       const link = document.createElement('link');
+      let settled = false;
+      let timer = 0;
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        link.removeEventListener('load', onLoad);
+        link.removeEventListener('error', onError);
+      };
+      const onLoad = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(true);
+      };
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        assetPromises.delete(key);
+        link.remove();
+        reject(new Error(`Nepodařilo se načíst ${path}`));
+      };
       link.rel = 'stylesheet';
       link.href = versionedUrl(path);
       link.dataset.domacnostAsset = path;
-      link.addEventListener('load', () => resolve(true), { once: true });
-      link.addEventListener('error', () => reject(new Error(`Nepodařilo se načíst ${path}`)), { once: true });
+      link.addEventListener('load', onLoad);
+      link.addEventListener('error', onError);
       document.head.appendChild(link);
+      timer = window.setTimeout(onError, ASSET_LOAD_TIMEOUT_MS);
     });
     assetPromises.set(key, promise);
     return promise;

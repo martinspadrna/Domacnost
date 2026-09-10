@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_487';
-  const APP_BUILD = 487;
+  const APP_VERSION = 'Domácnost+ v.0.1_488';
+  const APP_BUILD = 488;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1084,6 +1084,7 @@
   let globalSearchIndexRevision = 0;
   let globalSearchIndexCache = { revision: -1, sources: [], rows: [] };
   let globalAlertsOpen = false;
+  let moduleLoadBusyCount = 0;
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
   // interních modalů ani jejich stavové proměnné.
   const moduleUiContracts = new Map();
@@ -1100,13 +1101,24 @@
 
   async function ensureModuleCodeForInteraction(moduleId) {
     if (moduleCodeReady(moduleId)) return true;
+    moduleLoadBusyCount += 1;
+    const status = document.getElementById('module-load-status');
+    const moduleLabel = MODULES.find((item) => item.id === moduleId)?.label || 'modul';
     app?.setAttribute?.('aria-busy', 'true');
     document.documentElement.classList.add('app-module-loading');
+    if (status) {
+      status.textContent = `Načítám ${moduleLabel}…`;
+      status.classList.add('is-visible');
+    }
     try {
       return await ensureModuleCode(moduleId);
     } finally {
-      app?.removeAttribute?.('aria-busy');
-      document.documentElement.classList.remove('app-module-loading');
+      moduleLoadBusyCount = Math.max(0, moduleLoadBusyCount - 1);
+      if (moduleLoadBusyCount === 0) {
+        app?.removeAttribute?.('aria-busy');
+        document.documentElement.classList.remove('app-module-loading');
+        status?.classList.remove('is-visible');
+      }
     }
   }
 

@@ -647,6 +647,8 @@ async function run() {
             vape: !window.DomacnostVape
           },
           appRoot: Boolean(document.querySelector('#app')),
+          moduleLoadStatus: Boolean(document.querySelector('#module-load-status')),
+          moduleLoadStatusHidden: !document.querySelector('#module-load-status')?.classList.contains('is-visible'),
           versionOk: document.title.includes('v.0.1_${expectedBuild}') || text.includes('v.0.1_${expectedBuild}'),
           bootError: Boolean(document.querySelector('.module-error-card, .app-boot-error')),
           homeDash: Boolean(document.querySelector('.home-dash')),
@@ -681,6 +683,7 @@ async function run() {
     if (!initialValue.lazyLoader) { fail('Chybí loader odložených modulů.'); bootOk = false; }
     if (!Object.values(initialValue.deferredModulesAtBoot || {}).every(Boolean)) { fail('Některý odložený modul znovu blokuje první vykreslení.'); bootOk = false; }
     if (!initialValue.appRoot) { fail('Chybí #app root.'); bootOk = false; }
+    if (!initialValue.moduleLoadStatus || !initialValue.moduleLoadStatusHidden) { fail('Stav načítání modulů při klidném bootu chybí nebo zůstává viditelný.'); bootOk = false; }
     if (!initialValue.versionOk) { fail(`Na stránce/title není v0.1_${expectedBuild}.`); bootOk = false; }
     if (initialValue.bootError) { fail('Po bootu je vidět module/app error card.'); bootOk = false; }
     if (!initialValue.homeDash) { fail('Home nepoužívá nový home-dash widget layout.'); bootOk = false; }
@@ -751,8 +754,9 @@ async function run() {
     } else {
       ok(`Performance: prvni fyzicky klik na Finance ${firstPhysicalNav.latencyMs} ms.`);
     }
-    const financeLazyReady = await page.send('Runtime.evaluate', { returnByValue: true, expression: `Boolean(window.DomacnostFinance && document.querySelector('[data-tab-area="finance"]'))` });
-    if (!financeLazyReady.result?.value) fail('Finance se po prvním kliknutí nenačetly jako odložený modul.');
+    const financeLazyReady = await page.send('Runtime.evaluate', { returnByValue: true, expression: `({ ready: Boolean(window.DomacnostFinance && document.querySelector('[data-tab-area="finance"]')), busy: document.documentElement.classList.contains('app-module-loading') || document.querySelector('#module-load-status')?.classList.contains('is-visible') })` });
+    if (!financeLazyReady.result?.value?.ready) fail('Finance se po prvním kliknutí nenačetly jako odložený modul.');
+    else if (financeLazyReady.result?.value?.busy) fail('Stav načítání zůstal viset i po otevření Financí.');
     else ok('Lazy loading: Finance se stáhly a vykreslily až po prvním otevření.');
 
     await page.send('Runtime.evaluate', {

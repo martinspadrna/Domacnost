@@ -364,6 +364,12 @@ if (app && index && moduleLoader) {
   expect(app, "add('finance', 'overview'", 'app.js: globální hledání prohledává finance.');
   expect(app, "add('readings', 'overview'", 'app.js: globální hledání prohledává měřidla.');
   expect(app, "(event.ctrlKey || event.metaKey) && key === 'k'", 'app.js: Ctrl/Command+K otevírá globální hledání.');
+  expect(moduleLoader, 'const ASSET_LOAD_TIMEOUT_MS = 15000', 'module-loader.js: načítání modulu má časový limit.');
+  expect(moduleLoader, 'assetPromises.delete(key)', 'module-loader.js: neúspěšný asset lze při dalším kliknutí načíst znovu.');
+  expect(moduleLoader, "script.dataset.domacnostAsset === path", 'module-loader.js: po chybě odstraní jen vlastní neúspěšný script.');
+  expect(index, 'id="module-load-status"', 'index.html: pomalé načtení modulu má samostatný stavový prvek.');
+  expect(app, 'let moduleLoadBusyCount = 0', 'app.js: souběžné načítání modulů používá bezpečný čítač.');
+  expect(styles, '.module-load-status.is-visible', 'styles.css: stav načítání je viditelný až při práci modulu.');
 }
 
 console.log('App wiring smoke pro Domácnost+');
