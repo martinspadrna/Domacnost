@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_486';
-  const APP_BUILD = 486;
+  const APP_VERSION = 'Domácnost+ v.0.1_487';
+  const APP_BUILD = 487;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1081,6 +1081,8 @@
   let globalQuickAddOpen = false;
   let globalSearchOpen = false;
   let globalSearchQuery = '';
+  let globalSearchIndexRevision = 0;
+  let globalSearchIndexCache = { revision: -1, sources: [], rows: [] };
   let globalAlertsOpen = false;
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
   // interních modalů ani jejich stavové proměnné.
@@ -2511,7 +2513,7 @@
           <span class="app-sidebar-word">Domácnost+</span>
         </div>
         <div class="app-sidebar-tools" aria-label="Rychlé nástroje">
-          <button type="button" class="sidebar-tool-btn" data-action="open-global-search"><span aria-hidden="true">⌕</span><strong>Hledat</strong></button>
+          <button type="button" class="sidebar-tool-btn" data-action="open-global-search" title="Hledat (Ctrl/⌘ + K)" aria-keyshortcuts="Control+K Meta+K"><span aria-hidden="true">⌕</span><strong>Hledat</strong></button>
           <button type="button" class="sidebar-tool-btn primary" data-action="open-global-quick-add"><span aria-hidden="true">＋</span><strong>Přidat</strong></button>
           <button type="button" class="sidebar-tool-btn" data-action="open-global-alerts"><span aria-hidden="true">🔔</span><strong>Upozornění</strong>${getNotificationItems().length ? `<em>${getNotificationItems().length}</em>` : ''}</button>
         </div>
@@ -3430,7 +3432,7 @@
               </div>
             </nav>
             <div class="global-action-dock" aria-label="Rychlé nástroje">
-              <button type="button" class="global-action-btn search" data-action="open-global-search" aria-label="Hledat v aplikaci">⌕</button>
+              <button type="button" class="global-action-btn search" data-action="open-global-search" aria-label="Hledat v aplikaci" title="Hledat (Ctrl/⌘ + K)" aria-keyshortcuts="Control+K Meta+K">⌕</button>
               <button type="button" class="global-action-btn add" data-action="open-global-quick-add" aria-label="Rychle přidat">＋</button>
               <button type="button" class="global-action-btn alerts" data-action="open-global-alerts" aria-label="Upozornění">🔔${getNotificationItems().length ? `<span>${Math.min(99, getNotificationItems().length)}</span>` : ''}</button>
             </div>
@@ -3887,14 +3889,29 @@
     }
   }
 
-  function globalSearchRows(query = globalSearchQuery) {
-    const needle = normalizeKey(query);
-    if (!needle) return [];
+  function buildGlobalSearchIndex() {
+    const sources = [
+      state.contracts, state.warranties, state.notes, state.homeTasks, state.vehicles,
+      state.subscriptions, state.subscriptionPeople, state.calendar, state.shopping,
+      state.shoppingLists, state.finance, state.readingMeters, state.waste, state.pools,
+      state.coupons, state.loyaltyCards
+    ];
+    const cacheValid = globalSearchIndexCache.revision === globalSearchIndexRevision
+      && sources.every((source, index) => source === globalSearchIndexCache.sources[index]);
+    if (cacheValid) return globalSearchIndexCache.rows;
     const rows = [];
     const add = (moduleId, tab, icon, title, meta, searchText = '') => {
-      const haystack = normalizeKey(`${title || ''} ${meta || ''} ${searchText || ''}`);
-      if (!haystack.includes(needle)) return;
-      rows.push({ moduleId, tab, icon, title: title || 'Bez názvu', meta: meta || '' });
+      if (!isModuleEnabled(moduleId)) return;
+      const safeTitle = title || 'Bez názvu';
+      rows.push({
+        moduleId,
+        tab,
+        icon,
+        title: safeTitle,
+        meta: meta || '',
+        titleKey: normalizeKey(safeTitle),
+        searchKey: normalizeKey(`${safeTitle} ${meta || ''} ${searchText || ''}`)
+      });
     };
     (state.contracts || []).forEach((item) => add('contracts', 'overview', '📄', item.title || item.name, item.provider || item.type || 'Smlouva', `${item.contractNumber || item.contract_number || ''} ${item.note || ''}`));
     (state.warranties || []).forEach((item) => add('warranties', '', '🧾', item.name || item.title, item.store || 'Záruka', `${item.note || ''} ${item.warrantyUntil || ''}`));
@@ -3904,7 +3921,30 @@
     (state.subscriptions || []).forEach((item) => add('subscriptions', 'services', '🎬', item.name || item.title || 'Předplatné', formatCurrency(item.price || 0), item.note || ''));
     (state.subscriptionPeople || []).forEach((item) => add('subscriptions', 'overview', '👤', item.name || 'Člen', 'Předplatné', item.note || ''));
     (state.calendar || []).forEach((item) => add('calendar', 'overview', '📅', item.title || 'Událost', item.date ? formatDate(item.date) : 'Kalendář', `${item.location || ''} ${item.note || ''}`));
-    return rows.slice(0, 40);
+    const shoppingLists = new Map((state.shoppingLists || []).map((list) => [String(list.id || ''), list.name || 'Nákupní seznam']));
+    (state.shopping || []).forEach((item) => add('shopping', 'list', '🛒', item.name || item.title || 'Nákup', `${shoppingLists.get(String(item.listId || '')) || 'Nákupní seznam'}${item.done ? ' · koupeno' : ''}`, `${item.category || item.kind || ''} ${item.note || ''} ${item.quantity || ''} ${item.unit || ''}`));
+    (state.finance || []).forEach((item) => add('finance', 'overview', item.type === 'income' ? '💰' : '💸', item.title || item.name || 'Finanční pohyb', `${formatCurrency(Math.abs(decimalValue(item.amount)))} · ${item.type === 'income' ? 'příjem' : item.type === 'transfer' ? 'převod' : 'výdaj'}`, `${item.category || ''} ${item.note || ''} ${item.paymentMethod || item.payment_method || ''}`));
+    (state.readingMeters || []).forEach((item) => add('readings', 'overview', '📊', item.name || 'Měřidlo', item.type || item.unit || 'Odečty', `${item.serialNumber || item.serial_number || ''} ${item.note || ''}`));
+    (state.waste || []).forEach((item) => add('waste', 'overview', '♻️', item.type || item.title || 'Svoz odpadu', item.date ? formatDate(item.date) : 'Odpad', item.note || ''));
+    (state.pools || []).forEach((item) => add('pool', '', '🏊', item.name || 'Bazén', 'Bazén', `${item.note || ''} ${item.volume || item.volumeM3 || ''}`));
+    (state.coupons || []).forEach((item) => add('shopping', 'coupons', '🏷️', item.store || item.title || 'Slevový kód', item.discount || 'Slevový kód', `${item.code || ''} ${item.note || ''}`));
+    (state.loyaltyCards || []).forEach((item) => add('shopping', 'loyalty', '💳', item.store || item.name || 'Věrnostní karta', item.cardNumber || 'Věrnostní karta', item.note || ''));
+    globalSearchIndexCache = { revision: globalSearchIndexRevision, sources, rows };
+    return rows;
+  }
+
+  function globalSearchRows(query = globalSearchQuery) {
+    const needle = normalizeKey(query);
+    if (!needle) return [];
+    const tokens = needle.split(/\s+/).filter(Boolean);
+    return buildGlobalSearchIndex()
+      .filter((item) => tokens.every((token) => item.searchKey.includes(token)))
+      .map((item) => {
+        const rank = item.titleKey === needle ? 0 : item.titleKey.startsWith(needle) ? 1 : item.titleKey.includes(needle) ? 2 : 3;
+        return { ...item, rank };
+      })
+      .sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title, 'cs'))
+      .slice(0, 40);
   }
 
   function renderGlobalSearchResults(query = globalSearchQuery) {
@@ -3924,7 +3964,7 @@
     return `
       <div class="app-modal-backdrop global-tool-backdrop" data-modal-backdrop role="presentation">
         <section class="app-modal global-tool-modal global-search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
-          <div class="app-modal-head"><div><span class="badge">všechny moduly</span><h2 id="global-search-title">Hledat v Domácnost+</h2><p>Smlouvy, záruky, poznámky, auta, předplatné a kalendář na jednom místě.</p></div><button class="icon-btn" type="button" data-action="close-global-tools" aria-label="Zavřít hledání">×</button></div>
+          <div class="app-modal-head"><div><span class="badge">všechny moduly</span><h2 id="global-search-title">Hledat v Domácnost+</h2><p>Hledej ve všech záznamech. Okno kdykoliv otevřeš přes <kbd>Ctrl/⌘ K</kbd>.</p></div><button class="icon-btn" type="button" data-action="close-global-tools" aria-label="Zavřít hledání">×</button></div>
           <label class="global-search-field"><span aria-hidden="true">⌕</span><input class="input" type="search" value="${escapeHtml(globalSearchQuery)}" placeholder="Co hledáš?" autocomplete="off" data-global-search-input></label>
           <div class="global-search-results" data-global-search-results>${renderGlobalSearchResults()}</div>
         </section>
@@ -16823,6 +16863,7 @@
   }
 
   function touchState() {
+    globalSearchIndexRevision += 1;
     state.meta = { ...(state.meta || {}), schemaVersion: 85, appBuild: APP_BUILD, mode: 'performance-stabilization-v300', updatedAt: new Date().toISOString() };
   }
 
@@ -20443,9 +20484,20 @@
 
 
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    if (closeOpenAppModals()) return;
-    if (activeOverview) closeOverview();
+    const key = String(event.key || '').toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === 'k') {
+      event.preventDefault();
+      globalSearchOpen = true;
+      globalQuickAddOpen = false;
+      globalAlertsOpen = false;
+      render();
+      window.setTimeout(() => app.querySelector('[data-global-search-input]')?.focus(), 0);
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (closeOpenAppModals()) return;
+      if (activeOverview) closeOverview();
+    }
   });
 
   app.addEventListener('pointerdown', (event) => {

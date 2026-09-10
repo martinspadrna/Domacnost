@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-486';
+  const ASSET_VERSION = '0-1-487';
   const definitions = {
     shopping: {
       styles: ['shopping.css'],
@@ -129,32 +129,10 @@
     return !definition || Boolean(definition.ready?.());
   }
 
-  function initialHomeDependencies() {
-    try {
-      const snapshot = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || 'null');
-      const settings = snapshot?.settings || {};
-      const homeSelections = [
-        settings.homeWidgets,
-        settings.homeHeroItems,
-        settings.homeTodayBadgeIds,
-        ...Object.values(settings.profileUiSettings || {}).flatMap((profile) => [
-          profile?.homeWidgets,
-          profile?.homeHeroItems,
-          profile?.homeTodayBadgeIds
-        ])
-      ].flat().filter(Boolean);
-      const selected = new Set(homeSelections.map(String));
-      const dependencies = ['tasks', 'subscriptions'].filter((id) => selected.has(id));
-      const previousBuild = Number(snapshot?.meta?.appBuild || 0);
-      if (previousBuild > 0 && previousBuild < 382) dependencies.push('vape');
-      return dependencies;
-    } catch (error) {
-      return [];
-    }
-  }
-
   async function start() {
-    await Promise.all(initialHomeDependencies().map(ensure));
+    // Domovské souhrny používají lehké datové adaptéry v app.js. Žádný celý
+    // funkční modul proto nesmí blokovat první obrazovku, ani když je jeho
+    // widget připnutý na domovské stránce.
     await loadScript('app.js');
   }
 

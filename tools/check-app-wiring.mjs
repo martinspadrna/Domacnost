@@ -356,6 +356,14 @@ if (app && index && moduleLoader) {
   });
   expect(app, 'const canPatchCurrentModule =', 'app.js: opakovaný render stejného modulu zachovává shell.');
   expect(app, "await ensureModuleCodeForInteraction(nextModule)", 'app.js: navigace počká na kód odloženého modulu.');
+  expectAbsent(moduleLoader, 'initialHomeDependencies', 'module-loader.js: domovské widgety už nestahují celé moduly při startu.');
+  expect(moduleLoader, "async function start() {\n    // Domovské souhrny používají lehké datové adaptéry", 'module-loader.js: první obrazovka spouští jen hlavní shell.');
+  expect(app, 'function buildGlobalSearchIndex()', 'app.js: globální hledání používá sdílený paměťový index.');
+  expect(app, 'globalSearchIndexRevision += 1', 'app.js: změna dat zneplatní index globálního hledání.');
+  expect(app, "add('shopping', 'list'", 'app.js: globální hledání prohledává nákupní položky.');
+  expect(app, "add('finance', 'overview'", 'app.js: globální hledání prohledává finance.');
+  expect(app, "add('readings', 'overview'", 'app.js: globální hledání prohledává měřidla.');
+  expect(app, "(event.ctrlKey || event.metaKey) && key === 'k'", 'app.js: Ctrl/Command+K otevírá globální hledání.');
 }
 
 console.log('App wiring smoke pro Domácnost+');

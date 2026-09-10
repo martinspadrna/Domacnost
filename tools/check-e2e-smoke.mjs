@@ -702,11 +702,11 @@ async function run() {
     if (bootOk) ok('boot: nový Home, app root, verze, Finance, Bazén i Smlouvy navigace dostupné.');
 
     await page.send('Runtime.evaluate', {
-      expression: `document.querySelector('[data-action="open-global-search"]')?.click()`
+      expression: `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }))`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     await page.send('Runtime.evaluate', {
-      expression: `(() => { const input = document.querySelector('[data-global-search-input]'); if (input) { input.value = 'Smoke'; input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Smoke', inputType: 'insertText' })); } })()`
+      expression: `(() => { const input = document.querySelector('[data-global-search-input]'); if (input) { input.value = 'Smoke nákup'; input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Smoke nákup', inputType: 'insertText' })); } })()`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     const globalToolsCheck = await page.send('Runtime.evaluate', {
@@ -714,6 +714,8 @@ async function run() {
       expression: `(() => {
         const searchModal = document.querySelector('.global-search-modal');
         const searchResults = document.querySelectorAll('.global-search-result').length;
+        const shoppingResult = document.querySelector('.global-search-result[data-nav="shopping"]');
+        const searchFocused = document.activeElement?.matches?.('[data-global-search-input]') || false;
         const searchSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
         document.querySelector('[data-action="close-global-tools"]')?.click();
         document.querySelector('[data-action="open-global-quick-add"]')?.click();
@@ -723,16 +725,18 @@ async function run() {
         const alertsModal = document.querySelector('.global-alerts-modal');
         const alertsSettings = document.querySelector('.global-alerts-modal [data-nav="settings"][data-target-tab="notifications"]');
         document.querySelector('[data-action="close-global-tools"]')?.click();
-        return { searchModal: Boolean(searchModal), searchResults, searchSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
+        return { searchModal: Boolean(searchModal), searchResults, shoppingResult: Boolean(shoppingResult), searchFocused, searchSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
       })()`
     });
     const globalToolsValue = globalToolsCheck.result?.value || {};
     let globalToolsOk = true;
     if (!globalToolsValue.searchModal || globalToolsValue.searchResults < 1) { fail('Globální hledání nevrátilo seed data.'); globalToolsOk = false; }
+    if (!globalToolsValue.shoppingResult) { fail('Globální hledání neprohledává nákupní položky.'); globalToolsOk = false; }
+    if (!globalToolsValue.searchFocused) { fail('Klávesová zkratka Ctrl/⌘ + K neotevřela hledání s fokusem v poli.'); globalToolsOk = false; }
     if (globalToolsValue.searchSurface === 'shell') { fail('Globální hledání zbytečně překreslilo celý shell.'); globalToolsOk = false; }
     if (globalToolsValue.quickItems < 6) { fail('Rychlé přidání nenabízí všechny hlavní typy záznamů.'); globalToolsOk = false; }
     if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
-    if (globalToolsOk) ok('Globální nástroje: hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
+    if (globalToolsOk) ok('Globální nástroje: Ctrl/⌘ + K, rozšířené hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
 
     const firstPhysicalNav = await measurePhysicalNavClick(page, 'finance');
     if (process.env.E2E_DEBUG === '1') {

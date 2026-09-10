@@ -16267,7 +16267,7 @@ html.pwa-standalone body {
   border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
 }
 
-/* Global actions, search, unified sync and alert center (v0.1_486). */
+/* Global actions, search, unified sync and alert center (v0.1_487). */
 .app-sidebar-brand { gap: 10px; }
 .app-sidebar-tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 2px 0 12px; }
 .sidebar-tool-btn { position: relative; min-width: 0; display: grid; place-items: center; gap: 2px; padding: 9px 4px; border: 1px solid var(--line); border-radius: 13px; color: var(--text); background: var(--card, rgba(255,255,255,.06)); cursor: pointer; }
@@ -16279,6 +16279,7 @@ html.pwa-standalone body {
 .global-tool-modal { width: min(680px, calc(100vw - 24px)); max-height: min(82vh, 760px); overflow: auto; }
 .global-search-field { display: flex; align-items: center; gap: 8px; margin: 14px 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 15px; background: var(--card, rgba(255,255,255,.06)); }
 .global-search-field input { flex: 1; border: 0; background: transparent; }
+.global-search-modal kbd { display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; color: var(--text); background: var(--card, rgba(255,255,255,.06)); font: inherit; font-size: .72rem; white-space: nowrap; }
 .global-search-results, .global-alert-list { display: grid; gap: 8px; }
 .global-search-result, .global-alert-item { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 2px 10px; align-items: center; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 14px; color: var(--text); background: var(--card, rgba(255,255,255,.05)); text-align: left; cursor: pointer; }
 .global-search-result > span, .global-alert-item > span { grid-row: 1 / span 2; display: grid; place-items: center; font-size: 1.35rem; }
