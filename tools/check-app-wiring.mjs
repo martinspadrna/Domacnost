@@ -126,6 +126,13 @@ if (app && pool && subscriptions && calendar && warranty) {
   expect(subscriptions, 'isOpen: isDebtorModalOpen', 'subscriptions.js: Předplatné publikuje overlay přes UI kontrakt.');
   expect(calendar, 'isOpen: isCalendarEventDetailOpen', 'calendar.js: Kalendář publikuje detail přes UI kontrakt.');
   expect(warranty, 'isOpen: isWarrantyDetailOpen', 'warranty.js: Záruky publikují detail přes UI kontrakt.');
+  expect(pool, 'render: () => renderPhInfoModal(getActivePool())', 'pool.js: Bazén publikuje obsah modalu do společné overlay vrstvy.');
+  expect(subscriptions, 'render: () => renderDebtorModal(subscriptionMonthSummary())', 'subscriptions.js: Předplatné publikuje platební modal do společné overlay vrstvy.');
+  expect(calendar, 'render: renderCalendarEventDetailModal', 'calendar.js: Kalendář publikuje detail do společné overlay vrstvy.');
+  expect(warranty, 'render: renderWarrantyDetailModal', 'warranty.js: Záruky publikuje detail do společné overlay vrstvy.');
+  expect(app, 'function renderOverlaysOnly()', 'app.js: modaly a rychlé přehledy mají samostatnou render cestu.');
+  expect(app, "app.dataset.lastRenderSurface = changed ? 'overlay' : 'none'", 'app.js: overlay render neoznačuje změnu hlavního modulu.');
+  expect(app, 'renderOverlays: renderOverlaysOnly', 'app.js: modulům se předává úzká overlay render cesta.');
   expectAbsent(app, 'calendarDetailEventId', 'app.js: shell už nedrží interní stav detailu Kalendáře.');
   expectAbsent(app, 'activeWarrantyDetailId', 'app.js: shell už nedrží interní stav detailu Záruk.');
 }
@@ -376,6 +383,9 @@ if (app && index && moduleLoader) {
   expect(app, "app.addEventListener('focusin', (event) => scheduleModuleIntentPrefetch(event.target))", 'app.js: klávesnicové zaměření připraví odložený modul.');
   expect(app, "app.addEventListener('pointerdown', (event) => scheduleModuleIntentPrefetch(event.target, { immediate: true })", 'app.js: dotyk začne modul načítat ještě před kliknutím.');
   expect(app, 'primeModuleCode(moduleId, { renderOnReady: false })', 'app.js: příprava modulu na základě záměru nepřekreslí otevřenou obrazovku.');
+  expect(app, 'let notificationItemsCache =', 'app.js: seznam upozornění má paměťovou cache.');
+  expect(app, 'notificationItemsCache.revision === globalSearchIndexRevision', 'app.js: upozornění se přepočítají až po změně dat nebo dne.');
+  expect(app, 'source === notificationItemsCache.sources[index]', 'app.js: výměna cloudových kolekcí zneplatní cache upozornění i bez mutace pole.');
 }
 
 console.log('App wiring smoke pro Domácnost+');

@@ -32,6 +32,7 @@
     const saveState = deps.saveState || (() => {});
     const touchState = deps.touchState || (() => {});
     const render = deps.render || (() => {});
+    const renderOverlays = deps.renderOverlays || render;
     const toSafeDate = deps.toSafeDate || ((v, f) => f || new Date());
     const addDaysIso = deps.addDaysIso || ((iso) => iso);
     const dateOffsetISO = deps.dateOffsetISO || (() => '');
@@ -415,7 +416,7 @@
       const event = findCalendarEventById(eventId);
       if (!event) return false;
       calendarDetailEventId = String(event.id || event.cloudId || '');
-      render();
+      renderOverlays();
       return true;
     }
 
@@ -426,7 +427,7 @@
     function closeCalendarEventDetail(options = {}) {
       if (!calendarDetailEventId) return false;
       calendarDetailEventId = '';
-      if (options.render !== false) render();
+      if (options.render !== false) renderOverlays();
       return true;
     }
 
@@ -1672,6 +1673,7 @@
       ui: {
         overlay: {
           isOpen: isCalendarEventDetailOpen,
+          render: renderCalendarEventDetailModal,
           close: closeCalendarEventDetail
         }
       }

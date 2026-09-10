@@ -24,6 +24,7 @@
     const touchState = deps.touchState || (() => {});
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
+    const renderOverlays = deps.renderOverlays || render;
     const showToast = deps.showToast || (() => {});
     const cloudReady = deps.cloudReady || (() => false);
     const cloudSaveHouseholdUiSettings = deps.cloudSaveHouseholdUiSettings || (() => Promise.resolve(false));
@@ -283,7 +284,7 @@
 
     function openPhInfoModal() {
       phInfoOpen = true;
-      render();
+      renderOverlays();
     }
 
     function isPhInfoModalOpen() {
@@ -293,7 +294,7 @@
     function closePhInfoModal(options = {}) {
       if (!phInfoOpen) return false;
       phInfoOpen = false;
-      if (options.render !== false) render();
+      if (options.render !== false) renderOverlays();
       return true;
     }
 
@@ -525,7 +526,6 @@
         </section>
         ${activeTab === 'overview' ? renderPoolMeasurements(pool) : ''}
         ${volume > 0 ? '' : renderEmptyCta({ icon: '🏊', title: 'Zadej rozměry bazénu', text: 'Pak se dopočítá objem vody a dávkování podle naměřeného pH.', nav: 'pool', tab: 'settings', label: 'Nastavit bazén' })}
-        ${renderPhInfoModal(pool)}
       `;
     }
 
@@ -754,6 +754,7 @@
       ui: {
         overlay: {
           isOpen: isPhInfoModalOpen,
+          render: () => renderPhInfoModal(getActivePool()),
           close: closePhInfoModal
         }
       }

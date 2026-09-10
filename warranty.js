@@ -38,6 +38,7 @@
     const touchState = deps.touchState || (() => {});
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
+    const renderOverlays = deps.renderOverlays || render;
     const requestRender = deps.requestRender || render;
     const putStoredWarrantyFile = deps.putStoredWarrantyFile || (async () => {});
     const getStoredWarrantyFile = deps.getStoredWarrantyFile || (async () => null);
@@ -344,7 +345,7 @@
       const item = normalizeWarranties(getState().warranties).find((entry) => entry.id === id);
       if (!item) return false;
       activeWarrantyDetailId = item.id;
-      render();
+      renderOverlays();
       return true;
     }
 
@@ -355,7 +356,7 @@
     function closeWarrantyDetail(options = {}) {
       if (!activeWarrantyDetailId) return false;
       activeWarrantyDetailId = '';
-      if (options.render !== false) render();
+      if (options.render !== false) renderOverlays();
       return true;
     }
 
@@ -924,6 +925,7 @@
       ui: {
         overlay: {
           isOpen: isWarrantyDetailOpen,
+          render: renderWarrantyDetailModal,
           close: closeWarrantyDetail
         }
       }

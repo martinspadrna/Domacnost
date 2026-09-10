@@ -721,14 +721,20 @@ async function run() {
         const searchFocused = document.activeElement?.matches?.('[data-global-search-input]') || false;
         const searchSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
         document.querySelector('[data-action="close-global-tools"]')?.click();
+        const closeSearchSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
+        document.querySelector('[data-action="open-global-search"]')?.click();
+        const directSearchSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
+        document.querySelector('[data-action="close-global-tools"]')?.click();
         document.querySelector('[data-action="open-global-quick-add"]')?.click();
+        const quickAddSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
         const quickItems = document.querySelectorAll('.global-quick-add-item').length;
         document.querySelector('[data-action="close-global-tools"]')?.click();
         document.querySelector('[data-action="open-global-alerts"]')?.click();
+        const alertsSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
         const alertsModal = document.querySelector('.global-alerts-modal');
         const alertsSettings = document.querySelector('.global-alerts-modal [data-nav="settings"][data-target-tab="notifications"]');
         document.querySelector('[data-action="close-global-tools"]')?.click();
-        return { searchModal: Boolean(searchModal), searchResults, shoppingResult: Boolean(shoppingResult), searchFocused, searchSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
+        return { searchModal: Boolean(searchModal), searchResults, shoppingResult: Boolean(shoppingResult), searchFocused, searchSurface, closeSearchSurface, directSearchSurface, quickAddSurface, alertsSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
       })()`
     });
     const globalToolsValue = globalToolsCheck.result?.value || {};
@@ -736,7 +742,7 @@ async function run() {
     if (!globalToolsValue.searchModal || globalToolsValue.searchResults < 1) { fail('Globální hledání nevrátilo seed data.'); globalToolsOk = false; }
     if (!globalToolsValue.shoppingResult) { fail('Globální hledání neprohledává nákupní položky.'); globalToolsOk = false; }
     if (!globalToolsValue.searchFocused) { fail('Klávesová zkratka Ctrl/⌘ + K neotevřela hledání s fokusem v poli.'); globalToolsOk = false; }
-    if (globalToolsValue.searchSurface === 'shell') { fail('Globální hledání zbytečně překreslilo celý shell.'); globalToolsOk = false; }
+    if (![globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].every((surface) => surface === 'overlay')) { fail(`Globální nástroje nepoužily ve všech krocích samostatný overlay render (${[globalToolsValue.searchSurface, globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].join(', ')}).`); globalToolsOk = false; }
     if (globalToolsValue.quickItems < 6) { fail('Rychlé přidání nenabízí všechny hlavní typy záznamů.'); globalToolsOk = false; }
     if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
     if (globalToolsOk) ok('Globální nástroje: Ctrl/⌘ + K, rozšířené hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
@@ -1414,7 +1420,7 @@ async function run() {
         const rect = modal?.getBoundingClientRect();
         return {
           modal: Boolean(modal),
-          partialRender: document.querySelector('#app')?.dataset?.lastRenderSurface === 'module',
+          partialRender: document.querySelector('#app')?.dataset?.lastRenderSurface === 'overlay',
           bodyOpen: document.body.classList.contains('overview-open'),
           amount: input?.value || '',
           focused: document.activeElement === input,
@@ -1425,7 +1431,7 @@ async function run() {
     const subscriptionPaymentModalValue = subscriptionPaymentModalCheck.result?.value || {};
     let subscriptionPaymentModalOk = true;
     if (!subscriptionPaymentModalValue.modal) { fail('Předplatné: dialog platby po fokusu částky zmizel.'); subscriptionPaymentModalOk = false; }
-    if (!subscriptionPaymentModalValue.partialRender) { fail('Předplatné: otevření dialogu zbytečně překreslilo celý aplikační shell.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.partialRender) { fail('Předplatné: otevření dialogu nepoužilo samostatný overlay render.'); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.bodyOpen) { fail('Předplatné: dialog platby nezamkl podkladovou stránku pro mobilní klávesnici.'); subscriptionPaymentModalOk = false; }
     if (subscriptionPaymentModalValue.amount !== '175') { fail('Předplatné: dialog platby neudržel rozepsanou částku.'); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.focused) { fail('Předplatné: pole částky po změně mobilního viewportu ztratilo fokus.'); subscriptionPaymentModalOk = false; }

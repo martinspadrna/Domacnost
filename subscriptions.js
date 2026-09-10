@@ -26,6 +26,7 @@
     const touchState = deps.touchState || (() => {});
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
+    const renderOverlays = deps.renderOverlays || render;
     const showToast = deps.showToast || (() => {});
     const persistStateSnapshot = deps.persistStateSnapshot || (() => {});
     const cloudReady = deps.cloudReady || (() => false);
@@ -439,7 +440,7 @@
       };
     }
 
-    function setSubscriptionPaymentDraft(partial = {}) {
+    function setSubscriptionPaymentDraft(partial = {}, options = {}) {
       const current = subscriptionPaymentDraft();
       const month = /^\d{4}-\d{2}$/.test(String((partial.month ?? current.month) || '')) ? String(partial.month ?? current.month) : subscriptionSelectedMonth();
       const draft = {
@@ -450,7 +451,7 @@
       getState().settings = { ...(getState().settings || {}), subscriptionPaymentDraft: draft };
       touchState();
       saveState();
-      render();
+      if (options.render !== false) render();
     }
 
     function clearSubscriptionPaymentDraft(keepMonth = subscriptionSelectedMonth()) {
@@ -824,7 +825,7 @@
               ${services.length ? (visiblePaymentServices.length ? `<div class="subscription-payment-grid">${visiblePaymentServices.map((row) => renderSubscriptionPaymentCard(row.service, month, paymentFilter, summary)).join('')}</div>` : '<div class="empty">V tomhle filtru není nic k zaplacení.</div>') : renderEmptyCta({ icon: '🎬', title: 'Zatím žádná služba', text: 'Přidej předplatné a potom k němu přiřaď lidi.', nav: 'subscriptions', tab: 'services', label: 'Přidat službu' })}
             </details>
           </section>
-          ${renderDebtorModal(summary)}`);
+          `);
     }
 
     function renderSubscriptionPersonSummary(row) {
@@ -843,13 +844,14 @@
 
     function openDebtorModal(personId) {
       debtorModalPersonId = normalizeText(personId);
-      setSubscriptionPaymentDraft({ personId: debtorModalPersonId, subscriptionId: '' });
+      setSubscriptionPaymentDraft({ personId: debtorModalPersonId, subscriptionId: '' }, { render: false });
+      renderOverlays();
     }
 
     function closeDebtorModal(options = {}) {
       if (!debtorModalPersonId) return false;
       debtorModalPersonId = '';
-      if (options.render !== false) render();
+      if (options.render !== false) renderOverlays();
       return true;
     }
 
@@ -1260,6 +1262,7 @@
       ui: {
         overlay: {
           isOpen: isDebtorModalOpen,
+          render: () => renderDebtorModal(subscriptionMonthSummary()),
           close: closeDebtorModal
         }
       }

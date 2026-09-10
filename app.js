@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_489';
-  const APP_BUILD = 489;
+  const APP_VERSION = 'Domácnost+ v.0.1_490';
+  const APP_BUILD = 490;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1083,6 +1083,7 @@
   let globalSearchQuery = '';
   let globalSearchIndexRevision = 0;
   let globalSearchIndexCache = { revision: -1, sources: [], rows: [] };
+  let notificationItemsCache = { revision: -1, day: '', sources: [], rows: [] };
   let globalAlertsOpen = false;
   let moduleLoadBusyCount = 0;
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
@@ -3384,6 +3385,21 @@
     `;
   }
 
+  function renderOverlaysOnly() {
+    const overlays = app?.querySelector?.('[data-app-overlays]');
+    if (lastRenderedSurfaceMode !== 'app' || !overlays || renderInProgress || renderDeferDepth > 0) {
+      render();
+      return false;
+    }
+    const overlayHtml = renderOverlaySurface();
+    const changed = overlayHtml !== lastRenderedOverlayHtml;
+    document.body.classList.toggle('overview-open', Boolean(activeOverview || hasOpenAppModal()));
+    if (changed) overlays.innerHTML = overlayHtml;
+    lastRenderedOverlayHtml = overlayHtml;
+    app.dataset.lastRenderSurface = changed ? 'overlay' : 'none';
+    return true;
+  }
+
   function render() {
     if (renderDeferDepth > 0 || renderInProgress) {
       // render() je vždy hlasitá cesta (uživatelská akce) - i tady musí vynulovat
@@ -3820,6 +3836,18 @@
   }
 
   function getNotificationItems() {
+    const cacheDay = todayISO();
+    const sources = [
+      state.subscriptions, state.subscriptionPeople, state.subscriptionPayments, state.contracts,
+      state.warranties, state.vehicles, state.services, state.fuel, state.waste,
+      state.readingMeters, state.readings, state.homeTasks, state.settings?.notificationPreferences,
+      state.settings?.vehicleServicePlans
+    ];
+    if (notificationItemsCache.revision === globalSearchIndexRevision
+      && notificationItemsCache.day === cacheDay
+      && sources.every((source, index) => source === notificationItemsCache.sources[index])) {
+      return notificationItemsCache.rows;
+    }
     const rows = [];
     const add = (type, item) => {
       if (!notificationTypeEnabled(type) || !item?.title) return;
@@ -3894,7 +3922,9 @@
       if (days === null || days > 3) return;
       add('tasks', { icon: '✅', title: task.title || 'Úkol', meta: days < 0 ? `Po termínu ${Math.abs(days)} d` : days === 0 ? 'Termín dnes' : `Termín za ${days} d`, nav: 'tasks', rank: days < 0 ? 0 : 3 });
     });
-    return rows.sort((a, b) => Number(a.rank || 9) - Number(b.rank || 9) || String(a.title).localeCompare(String(b.title), 'cs')).slice(0, 40);
+    const result = rows.sort((a, b) => Number(a.rank || 9) - Number(b.rank || 9) || String(a.title).localeCompare(String(b.title), 'cs')).slice(0, 40);
+    notificationItemsCache = { revision: globalSearchIndexRevision, day: cacheDay, sources, rows: result };
+    return result;
   }
 
   function setNotificationPreference(type, enabled) {
@@ -4073,7 +4103,10 @@
   }
 
   function renderGlobalModals() {
-    return `${renderCalendarEventDetailModal()}${renderGarageRecordModal()}${renderWarrantyDetailModal()}${renderFilePreviewModal()}${renderLoyaltyCodeModal()}${renderLoyaltyMenuModal()}${renderGlobalSearchModal()}${renderGlobalQuickAddModal()}${renderGlobalAlertsModal()}`;
+    const moduleOverlays = Array.from(moduleUiContracts.values())
+      .map((ui) => typeof ui?.overlay?.render === 'function' ? ui.overlay.render() : '')
+      .join('');
+    return `${moduleOverlays}${renderGarageRecordModal()}${renderFilePreviewModal()}${renderLoyaltyCodeModal()}${renderLoyaltyMenuModal()}${renderGlobalSearchModal()}${renderGlobalQuickAddModal()}${renderGlobalAlertsModal()}`;
   }
 
   function renderCalendarEventDetailModal() {
@@ -4321,7 +4354,7 @@
     const overlay = getModuleUiContract(moduleId)?.overlay;
     if (!overlay || typeof overlay.close !== 'function' || !moduleHasOpenOverlay(moduleId)) return false;
     overlay.close({ render: false });
-    if (options.render !== false) render();
+    if (options.render !== false) renderOverlaysOnly();
     return true;
   }
 
@@ -4349,6 +4382,7 @@
 
   function closeOpenAppModals(options = {}) {
     const wasOpen = hasOpenAppModal();
+    const needsModuleRender = shoppingDoneModalOpen;
     garageModal = null;
     shoppingDoneModalOpen = false;
     loyaltyCardPreviewId = '';
@@ -4359,7 +4393,10 @@
     garageEditRecord = null;
     closeFilePreviewModal();
     const moduleOverlayClosed = closeAllModuleOverlays();
-    if ((wasOpen || moduleOverlayClosed) && options.render !== false) render();
+    if ((wasOpen || moduleOverlayClosed) && options.render !== false) {
+      if (needsModuleRender) render();
+      else renderOverlaysOnly();
+    }
     return wasOpen || moduleOverlayClosed;
   }
 
@@ -4367,13 +4404,13 @@
     if (!url) return showToast('Soubor nejde otevřít');
     closeFilePreviewModal();
     filePreviewModal = { url, objectUrl, name, type, source };
-    render();
+    renderOverlaysOnly();
   }
 
   function closeOverview() {
     if (!activeOverview) return;
     activeOverview = null;
-    render();
+    renderOverlaysOnly();
   }
 
   async function openOverview(type) {
@@ -4382,11 +4419,11 @@
     try {
       await ensureModuleCodeForInteraction(target.nav);
       activeOverview = nextType;
-      render();
+      renderOverlaysOnly();
     } catch (error) {
       console.error('Overview render failed', type, error);
       activeOverview = null;
-      render();
+      renderOverlaysOnly();
       showToast('Rychlý přehled se nepovedlo otevřít. Data jsem neuložil ani nesmazal.');
     }
   }
@@ -7594,6 +7631,7 @@
       touchState,
       saveState,
       render,
+      renderOverlays: renderOverlaysOnly,
       requestRender,
       putStoredWarrantyFile,
       getStoredWarrantyFile,
@@ -7762,6 +7800,7 @@
       touchState,
       saveState,
       render,
+      renderOverlays: renderOverlaysOnly,
       showToast,
       cloudReady,
       cloudSaveHouseholdUiSettings,
@@ -7866,6 +7905,7 @@
       touchState,
       saveState,
       render,
+      renderOverlays: renderOverlaysOnly,
       showToast,
       persistStateSnapshot,
       cloudReady,
@@ -7911,6 +7951,7 @@
       saveState,
       touchState,
       render,
+      renderOverlays: renderOverlaysOnly,
       requestRender,
       runWhenUiQuiet,
       toSafeDate,
@@ -17031,7 +17072,7 @@
       const vehicle = state.vehicles.find((item) => item.id === garageVehicleId) || state.vehicles[0];
       if (!vehicle) return showToast('Nejdřív vyber auto');
       garageModal = { type: normalized, vehicleId: vehicle.id };
-      render();
+      renderOverlaysOnly();
       return;
     }
     const settings = document.querySelector('[data-garage-detail="vehicle-settings"]');
@@ -17055,11 +17096,11 @@
       garageVehicleId = vehicles[0].id;
       garageStatsVehicleId = garageVehicleId;
       garageModal = { type: 'add-fuel', vehicleId: vehicles[0].id };
-      render();
+      renderOverlaysOnly();
       return;
     }
     garageModal = { type: 'select-fuel-vehicle' };
-    render();
+    renderOverlaysOnly();
   }
 
   function daysModeToArray(mode) {
@@ -18288,7 +18329,7 @@
     }
     if (action === 'open-loyalty-menu') {
       loyaltyCardMenuId = button.dataset.id || '';
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'toggle-loyalty-edit') {
@@ -18316,7 +18357,7 @@
     }
     if (action === 'open-loyalty-code') {
       loyaltyCardPreviewId = button.dataset.id || '';
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'toggle-loyalty-favorite') {
@@ -18339,7 +18380,7 @@
       const closeLoyaltyMenuAfterCopy = Boolean(loyaltyCardMenuId);
       if (closeLoyaltyMenuAfterCopy) loyaltyCardMenuId = '';
       copyText(button.dataset.value || '');
-      if (closeLoyaltyMenuAfterCopy) render();
+      if (closeLoyaltyMenuAfterCopy) renderOverlaysOnly();
       return;
     }
     if (action === 'cloud-load-all') {
@@ -18354,14 +18395,14 @@
       globalQuickAddOpen = true;
       globalSearchOpen = false;
       globalAlertsOpen = false;
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'open-global-search') {
       globalSearchOpen = true;
       globalQuickAddOpen = false;
       globalAlertsOpen = false;
-      render();
+      renderOverlaysOnly();
       window.setTimeout(() => app.querySelector('[data-global-search-input]')?.focus(), 0);
       return;
     }
@@ -18369,14 +18410,14 @@
       globalAlertsOpen = true;
       globalQuickAddOpen = false;
       globalSearchOpen = false;
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'close-global-tools') {
       globalQuickAddOpen = false;
       globalSearchOpen = false;
       globalAlertsOpen = false;
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'toggle-notification-type') {
@@ -18601,7 +18642,7 @@
       garageVehicleId = vehicle.id;
       garageStatsVehicleId = garageVehicleId;
       garageModal = { type: 'add-fuel', vehicleId: vehicle.id };
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'select-vehicle') {
@@ -18659,13 +18700,13 @@
       garageVehicleId = item.vehicleId || garageVehicleId;
       garageEditRecord = null;
       garageModal = { type: collection === 'fuel' ? 'edit-fuel' : 'edit-service', vehicleId: item.vehicleId || garageVehicleId, recordId: id };
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'cancel-garage-edit') {
       garageEditRecord = null;
       garageModal = null;
-      render();
+      renderOverlaysOnly();
       return;
     }
     if (action === 'clear-fuelio-preview') {
@@ -20375,7 +20416,7 @@
 
   function toggleHomeEditSheet(forceValue) {
     homeEditSheetOpen = typeof forceValue === 'boolean' ? forceValue : !homeEditSheetOpen;
-    render();
+    renderOverlaysOnly();
   }
 
   function toggleHomeWidget(widgetId) {
@@ -20552,7 +20593,7 @@
       globalSearchOpen = true;
       globalQuickAddOpen = false;
       globalAlertsOpen = false;
-      render();
+      renderOverlaysOnly();
       window.setTimeout(() => app.querySelector('[data-global-search-input]')?.focus(), 0);
       return;
     }
