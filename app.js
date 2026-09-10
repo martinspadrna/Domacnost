@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_492';
-  const APP_BUILD = 492;
+  const APP_VERSION = 'Domácnost+ v.0.1_493';
+  const APP_BUILD = 493;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -517,7 +517,7 @@
   const SUPABASE_URL = 'https://hyyehcskthqmncqlechi.supabase.co';
   const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_38RX0YiAzT1-CEkjgYNX4A_Yskw_1EQ';
   const SUPABASE_STORAGE_KEY = 'domacnost-plus-auth';
-  const APP_PUBLIC_URL = 'https://domacnost-rho.vercel.app/';
+  const APP_PUBLIC_URL = 'https://domacnost-plus.vercel.app/';
 
   const BRAND_ICON_SRC = './icons/domacnost-plus-icon-180.png';
 
