@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_484';
-  const APP_BUILD = 484;
+  const APP_VERSION = 'Domácnost+ v.0.1_485';
+  const APP_BUILD = 485;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1059,9 +1059,41 @@
   let subscriptionsInstance = null;
   let calendarInstance = null;
   let vapeInstance = null;
+  let lastRenderedSurfaceMode = '';
+  let lastRenderedModuleId = '';
+  let lastRenderedShellSignature = '';
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
   // interních modalů ani jejich stavové proměnné.
   const moduleUiContracts = new Map();
+
+  function moduleCodeReady(moduleId) {
+    return window.DomacnostModuleLoader?.isReady?.(moduleId) !== false;
+  }
+
+  async function ensureModuleCode(moduleId) {
+    const loader = window.DomacnostModuleLoader;
+    if (!loader?.ensure) return true;
+    return loader.ensure(moduleId);
+  }
+
+  async function ensureModuleCodeForInteraction(moduleId) {
+    if (moduleCodeReady(moduleId)) return true;
+    app?.setAttribute?.('aria-busy', 'true');
+    document.documentElement.classList.add('app-module-loading');
+    try {
+      return await ensureModuleCode(moduleId);
+    } finally {
+      app?.removeAttribute?.('aria-busy');
+      document.documentElement.classList.remove('app-module-loading');
+    }
+  }
+
+  function primeModuleCode(moduleId) {
+    if (moduleCodeReady(moduleId)) return;
+    ensureModuleCode(moduleId)
+      .then(() => requestBackgroundRender())
+      .catch((error) => console.warn('Odložený modul se nepodařilo načíst', moduleId, error));
+  }
 
   let state = loadState();
   runtimeStateRef = state;
@@ -3228,6 +3260,33 @@
     requestRender({ quiet: true });
   }
 
+  function renderMainSurface(active, moduleHtml) {
+    const isHomeModule = active.id === 'home';
+    const pageSubtitle = getModuleSubtitle(active.id);
+    return `
+      ${isHomeModule ? '' : `
+      <section class="page-head">
+        <div>
+          <h2 class="page-title">${escapeHtml(active.label)}</h2>
+          ${pageSubtitle ? `<p class="page-subtitle">${escapeHtml(pageSubtitle)}</p>` : ''}
+        </div>
+        ${renderPageActions(active.id)}
+      </section>
+      `}
+      ${renderDemoReadOnlyBanner()}${moduleHtml}
+    `;
+  }
+
+  function renderOverlaySurface() {
+    return `
+      ${renderOverviewDrawer()}
+      ${renderGlobalModals()}
+      ${homeEditSheetOpen ? renderHomeEditSheet() : ''}
+      ${renderPwaUpdateBanner()}
+      <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
+    `;
+  }
+
   function render() {
     if (renderDeferDepth > 0 || renderInProgress) {
       // render() je vždy hlasitá cesta (uživatelská akce) - i tady musí vynulovat
@@ -3246,6 +3305,9 @@
         activeOverview = null;
         document.body.classList.toggle('overview-open', false);
         renderCloudResumeScreen();
+        lastRenderedSurfaceMode = 'cloud-resume';
+        lastRenderedModuleId = '';
+        lastRenderedShellSignature = '';
         if (app) app.setAttribute?.('data-boot-ok', '1');
         return;
       }
@@ -3257,6 +3319,9 @@
         app?.classList?.remove('home-app-shell');
         app?.classList?.remove('home-redesign-shell');
         renderOnboarding();
+        lastRenderedSurfaceMode = 'onboarding';
+        lastRenderedModuleId = '';
+        lastRenderedShellSignature = '';
         if (app) app.setAttribute?.('data-boot-ok', '1');
       } else {
         const visibleModules = getVisibleModules();
@@ -3277,55 +3342,64 @@
         app?.classList?.toggle('home-redesign-shell', isHomeModule);
         document.documentElement.classList.toggle('home-active', isHomeModule);
         document.body.classList.toggle('home-active', isHomeModule);
-        const pageTitle = active.label;
-        const pageSubtitle = getModuleSubtitle(active.id);
         const moduleRenderStartedAt = performance?.now ? performance.now() : Date.now();
         const moduleHtml = renderModule(active.id);
         const moduleRenderMs = Math.round((performance?.now ? performance.now() : Date.now()) - moduleRenderStartedAt);
         if (moduleRenderMs > 180) console.info('Domácnost+ pomalý render modulu', active.id, `${moduleRenderMs} ms`);
+        const mainHtml = renderMainSurface(active, moduleHtml);
+        const overlayHtml = renderOverlaySurface();
+        const shellSignature = `${visibleModules.map((module) => module.id).join(',')}|${bottomNavModules.map((module) => module.id).join(',')}`;
+        const existingMain = app?.querySelector?.('.app-frame main');
+        const existingFrame = app?.querySelector?.('.app-frame');
+        const existingSidebar = app?.querySelector?.('.app-sidebar');
+        const existingOverlays = app?.querySelector?.('[data-app-overlays]');
+        const canPatchCurrentModule = lastRenderedSurfaceMode === 'app'
+          && lastRenderedModuleId === active.id
+          && lastRenderedShellSignature === shellSignature
+          && !navMotion
+          && existingMain
+          && existingFrame
+          && existingSidebar
+          && existingOverlays;
 
-        app.innerHTML = `
-          <div class="app-desktop-row">
-            ${renderDesktopSidebar(active.id)}
-            <div class="app-frame ${isHomeModule ? 'home-clean-frame' : ''}">
-              <main>
-                ${isHomeModule ? '' : `
-                <section class="page-head">
-                  <div>
-                    <h2 class="page-title">${escapeHtml(pageTitle)}</h2>
-                    ${pageSubtitle ? `<p class="page-subtitle">${escapeHtml(pageSubtitle)}</p>` : ''}
-                  </div>
-                  ${renderPageActions(active.id)}
-                </section>
-                `}
-                ${renderDemoReadOnlyBanner()}${moduleHtml}
-              </main>
+        if (canPatchCurrentModule) {
+          existingMain.innerHTML = mainHtml;
+          existingFrame.classList.toggle('home-clean-frame', isHomeModule);
+          existingSidebar.outerHTML = renderDesktopSidebar(active.id);
+          existingOverlays.innerHTML = overlayHtml;
+        } else {
+          app.innerHTML = `
+            <div class="app-desktop-row">
+              ${renderDesktopSidebar(active.id)}
+              <div class="app-frame ${isHomeModule ? 'home-clean-frame' : ''}">
+                <main>${mainHtml}</main>
+              </div>
             </div>
-          </div>
 
-          <nav class="nav-shell" aria-label="Hlavní navigace">
-            <div class="nav-scroll ${navMotion ? 'nav-has-motion' : 'nav-no-motion'}" data-nav-count="${bottomNavModules.length}">
-              <span class="nav-active-runner" aria-hidden="true"></span>
-              ${bottomNavModules.map((module, index) => {
-                const isActive = module.id === activeBottomNavId;
-                const isSweeping = navMotion && index >= navSweepStart && index <= navSweepEnd && !isActive;
-                return `
-                  <button class="nav-item ${isActive ? 'active' : ''} ${isSweeping ? 'nav-sweep' : ''}" type="button" data-nav="${module.id}">
-                    ${renderMiniModuleIcon(module.id, { size: 'nav', slotClass: 'nav-icon', label: module.label })}
-                    <span>${escapeHtml(module.label)}</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-          </nav>
-          ${renderOverviewDrawer()}
-          ${renderGlobalModals()}
-          ${homeEditSheetOpen ? renderHomeEditSheet() : ''}
-          ${renderPwaUpdateBanner()}
-          <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
-        `;
+            <nav class="nav-shell" aria-label="Hlavní navigace">
+              <div class="nav-scroll ${navMotion ? 'nav-has-motion' : 'nav-no-motion'}" data-nav-count="${bottomNavModules.length}">
+                <span class="nav-active-runner" aria-hidden="true"></span>
+                ${bottomNavModules.map((module, index) => {
+                  const isActive = module.id === activeBottomNavId;
+                  const isSweeping = navMotion && index >= navSweepStart && index <= navSweepEnd && !isActive;
+                  return `
+                    <button class="nav-item ${isActive ? 'active' : ''} ${isSweeping ? 'nav-sweep' : ''}" type="button" data-nav="${module.id}">
+                      ${renderMiniModuleIcon(module.id, { size: 'nav', slotClass: 'nav-icon', label: module.label })}
+                      <span>${escapeHtml(module.label)}</span>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </nav>
+            <div data-app-overlays>${overlayHtml}</div>
+          `;
+        }
 
         if (app) app.setAttribute?.('data-boot-ok', '1');
+        if (app) app.dataset.lastRenderSurface = canPatchCurrentModule ? 'module' : 'shell';
+        lastRenderedSurfaceMode = 'app';
+        lastRenderedModuleId = active.id;
+        lastRenderedShellSignature = shellSignature;
         lastRenderedBottomNavId = activeBottomNavId;
         schedulePostRenderLayoutWork(navMotion, navMotionFromIndex, activeBottomNavIndex);
       }
@@ -8165,6 +8239,14 @@
   const NOTEBOOK_NOTE_PREFIX = 'DPLUS_NOTEBOOK_V1:';
 
   function notebookPages() {
+    if (!moduleCodeReady('tasks')) {
+      primeModuleCode('tasks');
+      return (state.notes || []).map((note) => {
+        const text = String(note?.text || '');
+        if (!text.startsWith(NOTEBOOK_NOTE_PREFIX)) return null;
+        try { return JSON.parse(text.slice(NOTEBOOK_NOTE_PREFIX.length)); } catch (error) { return null; }
+      }).filter(Boolean);
+    }
     return getNotesModule().notebookPages();
   }
 
@@ -12792,10 +12874,32 @@
   }
 
   function subscriptionMonthSummary(month) {
+    if (!moduleCodeReady('subscriptions')) {
+      primeModuleCode('subscriptions');
+      const selectedMonth = month || todayISO().slice(0, 7);
+      const services = (state.subscriptions || []).filter((item) => item.enabled !== false);
+      const people = state.subscriptionPeople || [];
+      const payments = (state.subscriptionPayments || []).filter((item) => item.month === selectedMonth);
+      const totalCost = services.reduce((sum, item) => sum + decimalValue(item.price), 0);
+      const expectedReturn = services.reduce((sum, item) => sum + (item.shares || []).reduce((inner, share) => inner + decimalValue(share.amount), 0), 0);
+      const paid = payments.reduce((sum, item) => sum + decimalValue(item.amount), 0);
+      const peopleRows = people.map((person) => {
+        const expected = services.reduce((sum, service) => sum + decimalValue((service.shares || []).find((share) => share.personId === person.id)?.amount), 0);
+        const personPaid = payments.filter((payment) => payment.personId === person.id).reduce((sum, payment) => sum + decimalValue(payment.amount), 0);
+        return { person, expected, paid: personPaid, debt: Math.max(0, expected - personPaid), cumulativeDebt: Math.max(0, expected - personPaid), overpaid: Math.max(0, personPaid - expected), serviceRows: [] };
+      });
+      return { month: selectedMonth, totalCost, expectedReturn, paid, netCost: totalCost - expectedReturn, peopleRows, capacityRows: [], maxSlots: 0, usedSlots: 0, freeSlots: 0, fullServices: 0 };
+    }
     return getSubscriptionsModule().subscriptionMonthSummary(month);
   }
 
   function subscriptionCapacityLabel(service) {
+    if (!moduleCodeReady('subscriptions')) {
+      primeModuleCode('subscriptions');
+      const used = (service?.shares || []).length;
+      const max = Number(service?.maxMembers || service?.max_members || 0);
+      return max > 0 ? `${used}/${max} míst · volno ${Math.max(0, max - used)}` : `${used} míst obsazeno · bez limitu`;
+    }
     return getSubscriptionsModule().subscriptionCapacityLabel(service);
   }
 
@@ -17085,6 +17189,7 @@
 
   async function cloudLoadModuleForNav(moduleId, showMessage = false, options = {}) {
     if (!state.cloud?.userId || !state.cloud?.householdId) return false;
+    await ensureModuleCode(moduleId);
     const renderAfter = options.renderAfter !== false;
     // Malý wrapper — priority/background/realtime běhy modulu vždy chtějí
     // sdílený household UI loader bez vlastního renderu. Závěrečný render
@@ -17282,6 +17387,7 @@
         if (!options.silentWhenOffline) showToast('Nejdřív napoj domácnost na cloud');
         return;
       }
+      await Promise.all(['tasks', 'contracts'].map(ensureModuleCode));
       const loaders = [
         cloudLoadUserVisualSettings,
         // cloudLoadAllModules dělá závěrečný requestRender() ve svém konci,
@@ -19770,7 +19876,7 @@
     if (detailsKey) setDetailsOpen(detailsKey, details.open);
   }, true);
 
-  app.addEventListener('click', (event) => {
+  app.addEventListener('click', async (event) => {
     const backdrop = event.target.closest('[data-overview-backdrop]');
     if (backdrop && !event.target.closest('[data-overview-panel]')) {
       closeOverview();
@@ -19810,6 +19916,7 @@
         ? ({ hdo: 'hdo', waste: 'waste', tasks: 'tasks', warranties: 'warranties', 'polish-holidays': 'polishHolidays' }[legacyTargetTab] || 'hdo')
         : nav.dataset.nav;
       try {
+        await ensureModuleCodeForInteraction(nextModule);
         if (nextModule !== activeModule) closeAllModuleOverlays();
         const nextBottomNavId = getActiveBottomNavId(nextModule);
         pendingNavMotion = navFromBottomBar && previousBottomNavId !== nextBottomNavId
@@ -19858,6 +19965,10 @@
     const action = event.target.closest('[data-action]');
     if (action) {
       try {
+        if (action.dataset.action === 'open-overview') {
+          const target = overviewTarget(action.dataset.overview || 'tasks');
+          await ensureModuleCodeForInteraction(target?.nav || '');
+        }
         handleAction(action);
       } catch (error) {
         console.error('Action failed', action.dataset.action, error);
@@ -20165,8 +20276,9 @@
   installAppLikeTouchGuards();
 
   if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
-    window.__DOMACNOST_E2E_NAV__ = (moduleId, tab = '') => {
+    window.__DOMACNOST_E2E_NAV__ = async (moduleId, tab = '') => {
       const nextModule = String(moduleId || 'home');
+      await ensureModuleCode(nextModule);
       window.__DOMACNOST_E2E_LAST_NAV__ = nextModule;
       if (nextModule !== activeModule) closeAllModuleOverlays();
       if (renderFrameRequest) {

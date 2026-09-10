@@ -15,6 +15,7 @@ const appPath = resolve(projectRoot, 'app.js');
 const indexPath = resolve(projectRoot, 'index.html');
 const swPath = resolve(projectRoot, 'sw.js');
 const pwaPath = resolve(projectRoot, 'pwa.js');
+const moduleLoaderPath = resolve(projectRoot, 'module-loader.js');
 
 const errors = [];
 const notes = [];
@@ -44,6 +45,7 @@ const sw = readOrFail(swPath);
 // načítá, musí existovat a projít release kontrolou pro PWA_EXPECTED_CACHE.
 const indexReferencesPwa = /<script\s+src="\.\/pwa\.js\?/.test(index);
 const pwa = indexReferencesPwa ? readOrFail(pwaPath) : '';
+const moduleLoader = readOrFail(moduleLoaderPath);
 if (indexReferencesPwa && !existsSync(pwaPath)) {
   errors.push('index.html načítá ./pwa.js, ale soubor v repu chybí.');
 }
@@ -150,6 +152,17 @@ if (versionMatch && buildMatch) {
         notes.push('pwa.js: PWA_CACHE_PREFIX + PWA_EXPECTED_CACHE odvozené z APP_BUILD.');
       }
     }
+  }
+
+  const loaderVersionMatch = moduleLoader.match(/const ASSET_VERSION = '0-1-(\d+)';/);
+  if (!loaderVersionMatch) {
+    errors.push('module-loader.js: chybí ASSET_VERSION pro verzování odložených souborů.');
+  } else if (loaderVersionMatch[1] !== buildNumber) {
+    errors.push(`module-loader.js ASSET_VERSION=${loaderVersionMatch[1]} neodpovídá APP_BUILD=${buildNumber}.`);
+  } else if (!/loadScript\('app\.js'\)/.test(moduleLoader)) {
+    errors.push('module-loader.js: hlavní app.js není zapojený do dynamického startu.');
+  } else {
+    notes.push(`module-loader.js: odložené soubory používají build ${buildNumber} a spouštějí app.js.`);
   }
 
   // Ochrana proti zbytkům předchozí verze na release surface.

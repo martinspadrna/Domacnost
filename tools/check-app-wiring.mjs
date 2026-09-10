@@ -49,6 +49,7 @@ const sw = read('sw.js');
 const pkg = read('package.json');
 const styles = read('styles.css');
 const shoppingCss = read('shopping.css');
+const moduleLoader = read('module-loader.js');
 const e2e = read('tools/check-e2e-smoke.mjs');
 
 if (app && finance) {
@@ -69,7 +70,7 @@ if (app && finance) {
 }
 
 if (app && pool && index && sw) {
-  expect(index, './pool.js?v=', 'index.html: pool.js se načítá před app.js.');
+  expect(index, './pool.js?v=', 'index.html: pool.js se načítá v Home startovní sadě.');
   expect(sw, "'./pool.js'", 'sw.js: pool.js je v APP_ASSETS.');
   expect(app, "{ id: 'pool'", 'app.js: pool je v module registry/Home konfiguraci.');
   expect(app, 'let poolInstance = null', 'app.js: pool má modulovou instanci.');
@@ -128,8 +129,9 @@ if (app && pool && subscriptions && calendar && warranty) {
   expectAbsent(app, 'activeWarrantyDetailId', 'app.js: shell už nedrží interní stav detailu Záruk.');
 }
 
-if (app && contracts && index && sw) {
-  expect(index, './contracts.js?v=', 'index.html: contracts.js se načítá před app.js.');
+if (app && contracts && index && sw && moduleLoader) {
+  expectAbsent(index, './contracts.js?v=', 'index.html: contracts.js neblokuje první vykreslení.');
+  expect(moduleLoader, "contracts: {\n      scripts: ['contracts.js']", 'module-loader.js: Smlouvy se načítají při prvním použití.');
   expect(sw, "'./contracts.js'", 'sw.js: contracts.js je v APP_ASSETS.');
   expect(app, 'let contractsInstance = null', 'app.js: contracts má modulovou instanci.');
   expect(app, 'function getContractsModule()', 'app.js: getContractsModule factory wrapper existuje.');
@@ -344,6 +346,15 @@ if (pkg) {
   expect(pkg, '"check:wiring"', 'package.json: check:wiring je v npm skriptech.');
   expect(pkg, 'npm run check:wiring', 'package.json: hlavní check spouští wiring smoke.');
   expect(pkg, '"check:e2e"', 'package.json: check:e2e real-browser smoke je dostupný.');
+}
+
+if (app && index && moduleLoader) {
+  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'vape.js'].forEach((asset) => {
+    expectAbsent(index, `./${asset}?v=`, `index.html: ${asset} neblokuje první vykreslení.`);
+    expect(moduleLoader, `'${asset}'`, `module-loader.js: ${asset} je dostupný na vyžádání.`);
+  });
+  expect(app, 'const canPatchCurrentModule =', 'app.js: opakovaný render stejného modulu zachovává shell.');
+  expect(app, "await ensureModuleCodeForInteraction(nextModule)", 'app.js: navigace počká na kód odloženého modulu.');
 }
 
 console.log('App wiring smoke pro Domácnost+');

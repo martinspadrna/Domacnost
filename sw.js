@@ -1,10 +1,11 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-484`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-485`;
 const APP_ASSETS = [
   './',
   './index.html',
   './styles.css',
   './icon-assets.css',
+  './module-loader.js',
   './shopping.css',
   './supabase.js',
   './utils.js',
@@ -48,6 +49,7 @@ const CORE_FALLBACKS = {
   '/styles.css': './styles.css',
   '/sw.js': './sw.js',
   '/icon-assets.css': './icon-assets.css',
+  '/module-loader.js': './module-loader.js',
   '/shopping.css': './shopping.css',
   '/utils.js': './utils.js',
   '/shopping-utils.js': './shopping-utils.js',
@@ -126,7 +128,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   const isNavigation = event.request.mode === 'navigate' || requestUrl.pathname.endsWith('/');
-  const isCoreAppFile = /\/(index\.html|app\.js|styles\.css|icon-assets\.css|shopping\.css|shopping-utils\.js|shopping-render\.js|shopping-actions\.js|sw\.js)$/.test(requestUrl.pathname);
+  const isCoreAppFile = /\/(index\.html|app\.js|module-loader\.js|styles\.css|icon-assets\.css|shopping\.css|shopping-utils\.js|shopping-render\.js|shopping-actions\.js|sw\.js)$/.test(requestUrl.pathname);
 
   // Start appky je cache-first: síť dřív blokovala každé spuštění (na mobilu
   // klidně několik vteřin, než dorazil index.html + app.js + styles.css), i

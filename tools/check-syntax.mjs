@@ -49,6 +49,18 @@ try {
   errors.push(`index.html: ${error.message}`);
 }
 
+// 1b. JS načítaný přes module-loader.js (odložené moduly + app.js).
+try {
+  const loader = readFileSync(join(projectRoot, 'module-loader.js'), 'utf8');
+  const lazyScriptHits = [...loader.matchAll(/'([^']+\.js)'/g)];
+  lazyScriptHits.forEach((match) => addTarget(match[1], 'module-loader.js'));
+} catch (error) {
+  errors.push(`module-loader.js: ${error.message}`);
+}
+
+// Dynamicky načítaný app.js už nemusí mít vlastní script tag v index.html.
+addTarget('app.js', 'dynamic bootstrap');
+
 // 2. sw.js.
 addTarget('sw.js', 'root');
 

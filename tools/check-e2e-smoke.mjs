@@ -632,6 +632,14 @@ async function run() {
           title: document.title,
           appStarted: Boolean(window.__DOMACNOST_APP_STARTED__),
           e2eNavHook: typeof window.__DOMACNOST_E2E_NAV__,
+          lazyLoader: Boolean(window.DomacnostModuleLoader),
+          deferredModulesAtBoot: {
+            shopping: !window.DomacnostShoppingUtils && !window.DomacnostShoppingRender && !window.DomacnostShoppingActions,
+            tasks: !window.DomacnostNotes,
+            contracts: !window.DomacnostContracts,
+            subscriptions: !window.DomacnostSubscriptions,
+            vape: !window.DomacnostVape
+          },
           appRoot: Boolean(document.querySelector('#app')),
           versionOk: document.title.includes('v.0.1_${expectedBuild}') || text.includes('v.0.1_${expectedBuild}'),
           bootError: Boolean(document.querySelector('.module-error-card, .app-boot-error')),
@@ -664,6 +672,8 @@ async function run() {
     runtimeErrors.forEach((line) => fail(`Runtime chyba v prohlížeči: ${line}`));
     let bootOk = true;
     if (!initialValue.appStarted) { fail('App nenastavila __DOMACNOST_APP_STARTED__.'); bootOk = false; }
+    if (!initialValue.lazyLoader) { fail('Chybí loader odložených modulů.'); bootOk = false; }
+    if (!Object.values(initialValue.deferredModulesAtBoot || {}).every(Boolean)) { fail('Některý odložený modul znovu blokuje první vykreslení.'); bootOk = false; }
     if (!initialValue.appRoot) { fail('Chybí #app root.'); bootOk = false; }
     if (!initialValue.versionOk) { fail(`Na stránce/title není v0.1_${expectedBuild}.`); bootOk = false; }
     if (initialValue.bootError) { fail('Po bootu je vidět module/app error card.'); bootOk = false; }
@@ -810,7 +820,8 @@ async function run() {
     if (weatherOk) ok('Počasí: Home detail text je pryč a záložka Další má Slunce/Měsíc v novém povrchu.');
 
     await page.send('Runtime.evaluate', {
-      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('vape', 'items') : document.querySelector('[data-nav="vape"]')?.click()`
+      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('vape', 'items') : document.querySelector('[data-nav="vape"]')?.click()`,
+      awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 800));
     const vapeCheck = await page.send('Runtime.evaluate', {
@@ -987,14 +998,15 @@ async function run() {
     await new Promise((resolveWait) => setTimeout(resolveWait, 900));
 
     await page.send('Runtime.evaluate', {
-      expression: `(() => {
+      expression: `(async () => {
         if (typeof window.__DOMACNOST_E2E_NAV__ === 'function') {
-          window.__DOMACNOST_E2E_NAV__('shopping');
+          await window.__DOMACNOST_E2E_NAV__('shopping');
           return;
         }
         const item = Array.from(document.querySelectorAll('[data-nav="shopping"]')).find((node) => node.offsetParent !== null);
         item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      })()`
+      })()`,
+      awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 900));
     for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -1230,7 +1242,8 @@ async function run() {
     if (financeOk) ok('Finance: půjčka a refinancování renderují.');
 
     await page.send('Runtime.evaluate', {
-      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('contracts') : document.querySelector('[data-nav="contracts"]')?.click()`
+      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('contracts') : document.querySelector('[data-nav="contracts"]')?.click()`,
+      awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 800));
     const contractsCheck = await page.send('Runtime.evaluate', {
@@ -1258,7 +1271,8 @@ async function run() {
     if (contractsOk) ok('Smlouvy: přehled, detail i příloha formuláře renderují.');
 
     await page.send('Runtime.evaluate', {
-      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('subscriptions', 'overview') : document.querySelector('[data-nav="subscriptions"]')?.click()`
+      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('subscriptions', 'overview') : document.querySelector('[data-nav="subscriptions"]')?.click()`,
+      awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
     await page.send('Runtime.evaluate', {
@@ -1304,6 +1318,7 @@ async function run() {
         const rect = modal?.getBoundingClientRect();
         return {
           modal: Boolean(modal),
+          partialRender: document.querySelector('#app')?.dataset?.lastRenderSurface === 'module',
           bodyOpen: document.body.classList.contains('overview-open'),
           amount: input?.value || '',
           focused: document.activeElement === input,
@@ -1314,6 +1329,7 @@ async function run() {
     const subscriptionPaymentModalValue = subscriptionPaymentModalCheck.result?.value || {};
     let subscriptionPaymentModalOk = true;
     if (!subscriptionPaymentModalValue.modal) { fail('Předplatné: dialog platby po fokusu částky zmizel.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.partialRender) { fail('Předplatné: otevření dialogu zbytečně překreslilo celý aplikační shell.'); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.bodyOpen) { fail('Předplatné: dialog platby nezamkl podkladovou stránku pro mobilní klávesnici.'); subscriptionPaymentModalOk = false; }
     if (subscriptionPaymentModalValue.amount !== '175') { fail('Předplatné: dialog platby neudržel rozepsanou částku.'); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.focused) { fail('Předplatné: pole částky po změně mobilního viewportu ztratilo fokus.'); subscriptionPaymentModalOk = false; }
