@@ -13,6 +13,8 @@ const checks = [
   {
     name: 'scrollable app panels preserve their own scroll across renders',
     ok: app.includes('data-preserve-scroll="home-edit-sheet"') &&
+      app.includes('data-preserve-scroll="module-main-${escapeHtml(active.id)}"') &&
+      app.includes('const moduleScrollPositions = new Map()') &&
       app.includes('function scrollStabilityElements()') &&
       app.includes('function isScrollStabilityCandidate(node)') &&
       app.includes('function scrollStabilityKey(node)') &&

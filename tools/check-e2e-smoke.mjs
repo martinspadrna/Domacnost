@@ -286,6 +286,9 @@ async function measurePhysicalNavClick(page, navId, timeout = 2600) {
 }
 
 function smokeSeedScript() {
+  const advancePaymentDate = new Date();
+  advancePaymentDate.setMonth(advancePaymentDate.getMonth() - 2, 1);
+  const advancePaymentMonth = `${advancePaymentDate.getFullYear()}-${String(advancePaymentDate.getMonth() + 1).padStart(2, '0')}`;
   const seed = {
     meta: { schemaVersion: 85, appBuild: Number(expectedBuild), mode: 'e2e-smoke', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     household: { id: 'household-e2e-smoke', name: 'Smoke domácnost', isConfigured: true, createdAt: new Date().toISOString() },
@@ -480,6 +483,12 @@ function smokeSeedScript() {
       note: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
+    }, {
+      id: 'subscription-person-advance-e2e-smoke',
+      name: 'Aleš',
+      note: 'Zaplaceno dopředu',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     }],
     subscriptions: [{
       id: 'subscription-e2e-smoke',
@@ -489,11 +498,24 @@ function smokeSeedScript() {
       billingDay: 1,
       maxMembers: 5,
       enabled: true,
-      shares: [{ personId: 'subscription-person-e2e-smoke', amount: 100 }],
+      shares: [
+        { personId: 'subscription-person-e2e-smoke', amount: 100 },
+        { personId: 'subscription-person-advance-e2e-smoke', amount: 300 }
+      ],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }],
-    subscriptionPayments: [],
+    subscriptionPayments: [{
+      id: 'subscription-payment-advance-e2e-smoke',
+      subscriptionId: 'subscription-e2e-smoke',
+      personId: 'subscription-person-advance-e2e-smoke',
+      month: advancePaymentMonth,
+      amount: 3600,
+      paidAt: new Date().toISOString().slice(0, 10),
+      note: 'Platba dopředu',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
     pool: {
       shape: 'rect',
       length: 6,
@@ -655,6 +677,7 @@ async function run() {
           homeDashTop: Boolean(document.querySelector('.home-dash-top')),
           homeOldHero: Boolean(document.querySelector('.home-minimal-hero, .dashboard-empty-home, .home-daily-hero, .home-dashboard-redesign')),
           homeMainScrollable: Boolean(homeMainStyle && /auto|scroll/.test(homeMainStyle.overflowY)),
+          homeMainScrollRange: homeMain ? Math.max(0, homeMain.scrollHeight - homeMain.clientHeight) : 0,
           homeMainAnimationName: homeMainStyle?.animationName || '',
           homeGreeting: Boolean(document.querySelector('.home-dash-greeting')),
           homeTitle: Boolean(document.querySelector('.home-dash-title')),
@@ -690,6 +713,7 @@ async function run() {
     if (!initialValue.homeDashTop) { fail('Home nemá hlavičku home-dash-top (pozdrav + název domácnosti).'); bootOk = false; }
     if (initialValue.homeOldHero) { fail('Home znovu vykresluje starý hero/cockpit layout.'); bootOk = false; }
     if (!initialValue.homeMainScrollable) { fail('Nový Home main není scrollovatelný.'); bootOk = false; }
+    if (!(initialValue.homeMainScrollRange > 0)) { fail(`Domů nemá skutečný prostor pro svislý posun (${initialValue.homeMainScrollRange}px).`); bootOk = false; }
     if (initialValue.homeMainAnimationName && initialValue.homeMainAnimationName !== 'none') { fail(`Home main při bootu pořád animuje (${initialValue.homeMainAnimationName}).`); bootOk = false; }
     if (!initialValue.homeGreeting) { fail('Home nemá pozdrav (home-dash-greeting).'); bootOk = false; }
     if (!initialValue.homeTitle) { fail('Home nemá název domácnosti v nadpisu (home-dash-title).'); bootOk = false; }
@@ -703,6 +727,24 @@ async function run() {
     if (!initialValue.navFinance) { fail('Po seed bootu není dostupná navigace Finance.'); bootOk = false; }
     if (!initialValue.navContracts) { fail('Po seed bootu není dostupná navigace Smlouvy.'); bootOk = false; }
     if (bootOk) ok('boot: nový Home, app root, verze, Finance, Bazén i Smlouvy navigace dostupné.');
+
+    await page.send('Runtime.evaluate', {
+      expression: `(() => {
+        const main = document.querySelector('.home-redesign-shell.home-app-shell main');
+        if (main) main.scrollTop = Math.min(180, Math.max(0, main.scrollHeight - main.clientHeight));
+      })()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    const homeScrollCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const main = document.querySelector('.home-redesign-shell.home-app-shell main');
+        return { scrollTop: Number(main?.scrollTop || 0), range: main ? Math.max(0, main.scrollHeight - main.clientHeight) : 0 };
+      })()`
+    });
+    const homeScrollValue = homeScrollCheck.result?.value || {};
+    if (!(homeScrollValue.range > 0) || !(homeScrollValue.scrollTop > 0)) fail(`Domů nejde skutečně posunout (rozsah ${homeScrollValue.range || 0}px, posun ${homeScrollValue.scrollTop || 0}px).`);
+    else ok(`Domů: svislý obsah lze posunout o ${homeScrollValue.range}px.`);
 
     await page.send('Runtime.evaluate', {
       expression: `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }))`
@@ -733,8 +775,9 @@ async function run() {
         const alertsSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
         const alertsModal = document.querySelector('.global-alerts-modal');
         const alertsSettings = document.querySelector('.global-alerts-modal [data-nav="settings"][data-target-tab="notifications"]');
+        const advancePayerAlert = Boolean(alertsModal?.innerText?.includes('Aleš'));
         document.querySelector('[data-action="close-global-tools"]')?.click();
-        return { searchModal: Boolean(searchModal), searchResults, shoppingResult: Boolean(shoppingResult), searchFocused, searchSurface, closeSearchSurface, directSearchSurface, quickAddSurface, alertsSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
+        return { searchModal: Boolean(searchModal), searchResults, shoppingResult: Boolean(shoppingResult), searchFocused, searchSurface, closeSearchSurface, directSearchSurface, quickAddSurface, alertsSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings), advancePayerAlert };
       })()`
     });
     const globalToolsValue = globalToolsCheck.result?.value || {};
@@ -745,7 +788,14 @@ async function run() {
     if (![globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].every((surface) => surface === 'overlay')) { fail(`Globální nástroje nepoužily ve všech krocích samostatný overlay render (${[globalToolsValue.searchSurface, globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].join(', ')}).`); globalToolsOk = false; }
     if (globalToolsValue.quickItems < 6) { fail('Rychlé přidání nenabízí všechny hlavní typy záznamů.'); globalToolsOk = false; }
     if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
+    if (globalToolsValue.advancePayerAlert) { fail('Upozornění označilo Aleše jako dlužníka, přestože má dostatečný kredit z platby dopředu.'); globalToolsOk = false; }
     if (globalToolsOk) ok('Globální nástroje: Ctrl/⌘ + K, rozšířené hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
+    const homeScrollBeforeNavCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `Number(document.querySelector('.home-redesign-shell.home-app-shell main')?.scrollTop || 0)`
+    });
+    const homeScrollBeforeNav = Number(homeScrollBeforeNavCheck.result?.value || 0);
+    if (!(homeScrollBeforeNav > 0)) fail('Globální nástroje vynulovaly pozici posunu Domů.');
 
     await page.send('Runtime.evaluate', {
       expression: `document.querySelector('.nav-shell .nav-item[data-nav="finance"]')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))`
@@ -777,6 +827,18 @@ async function run() {
     if (!financeLazyReady.result?.value?.ready) fail('Finance se po prvním kliknutí nenačetly jako odložený modul.');
     else if (financeLazyReady.result?.value?.busy) fail('Stav načítání zůstal viset i po otevření Financí.');
     else ok('Lazy loading: připravené Finance se po prvním kliknutí správně vykreslily.');
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('home')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    const restoredHomeScroll = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `({ scrollTop: Number(document.querySelector('.home-redesign-shell.home-app-shell main')?.scrollTop || 0), saved: window.__DOMACNOST_E2E_SCROLL_POSITIONS__?.() || {} })`
+    });
+    const restoredHomeScrollValue = restoredHomeScroll.result?.value || {};
+    if (!(Number(restoredHomeScrollValue.scrollTop || 0) >= Math.max(1, homeScrollBeforeNav - 2))) fail(`Domů po návratu z jiného modulu zapomnělo pozici posunu (${restoredHomeScrollValue.scrollTop || 0}px místo ${homeScrollBeforeNav}px; uložené ${JSON.stringify(restoredHomeScrollValue.saved || {})}).`);
+    else ok('Navigace: každý modul si zachovává vlastní pozici posunu.');
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
 
     await page.send('Runtime.evaluate', {
       expression: `window.__DOMACNOST_E2E_NAV__ ? window.__DOMACNOST_E2E_NAV__('more') : (() => { const item = document.querySelector('[data-nav="more"]'); item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); })()`

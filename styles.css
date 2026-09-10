@@ -16316,3 +16316,59 @@ html.pwa-standalone body {
   .unified-cloud-control button { grid-column: 2; justify-self: start; }
   .notification-system-row { align-items: flex-start; flex-direction: column; }
 }
+
+/* Domacnost+ v0.1_491 - spolehlivy svisly scroll Home ve vsech layoutech */
+html.home-active,
+body.home-active {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-redesign-shell.home-app-shell {
+  height: var(--app-vh, 100dvh) !important;
+  min-height: 0 !important;
+  max-height: var(--app-vh, 100dvh) !important;
+  overflow: hidden !important;
+}
+
+.home-redesign-shell.home-app-shell .app-desktop-row {
+  height: 100%;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.home-redesign-shell.home-app-shell .app-frame.home-clean-frame {
+  display: flex !important;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  padding-bottom: 0 !important;
+}
+
+.home-redesign-shell.home-app-shell .home-clean-frame > main {
+  display: block !important;
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(var(--nav-v278-shell-height, 78px) + var(--safe-bottom, 0px) + 24px) !important;
+}
+
+@media (min-width: 900px) {
+  .home-redesign-shell.home-app-shell .app-sidebar {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .home-redesign-shell.home-app-shell .home-clean-frame > main {
+    padding-bottom: 28px !important;
+  }
+}

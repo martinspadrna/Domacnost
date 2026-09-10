@@ -381,11 +381,19 @@ if (app && index && moduleLoader) {
   expect(app, 'function allowModuleIntentPrefetch', 'app.js: přednačítání respektuje úsporné a velmi pomalé připojení.');
   expect(app, "app.addEventListener('pointerover', (event) => scheduleModuleIntentPrefetch(event.target))", 'app.js: najetí na navigaci připraví odložený modul.');
   expect(app, "app.addEventListener('focusin', (event) => scheduleModuleIntentPrefetch(event.target))", 'app.js: klávesnicové zaměření připraví odložený modul.');
-  expect(app, "app.addEventListener('pointerdown', (event) => scheduleModuleIntentPrefetch(event.target, { immediate: true })", 'app.js: dotyk začne modul načítat ještě před kliknutím.');
+  expect(app, "scheduleModuleIntentPrefetch(event.target, { immediate: true })", 'app.js: dotyk začne modul načítat ještě před kliknutím.');
   expect(app, 'primeModuleCode(moduleId, { renderOnReady: false })', 'app.js: příprava modulu na základě záměru nepřekreslí otevřenou obrazovku.');
   expect(app, 'let notificationItemsCache =', 'app.js: seznam upozornění má paměťovou cache.');
   expect(app, 'notificationItemsCache.revision === globalSearchIndexRevision', 'app.js: upozornění se přepočítají až po změně dat nebo dne.');
   expect(app, 'source === notificationItemsCache.sources[index]', 'app.js: výměna cloudových kolekcí zneplatní cache upozornění i bez mutace pole.');
+  expect(app, 'const subscriptionSummary = subscriptionMonthSummary(currentMonth, { prime: false })', 'app.js: upozornění na předplatné používá stejnou kreditní matematiku bez předčasného načtení modulu.');
+  expect(app, 'let creditBefore = 0', 'app.js: rychlý Home výpočet započítává kredit z dřívější platby.');
+  expect(app, 'creditBefore = Math.max(0, creditBefore + monthPaid - expected)', 'app.js: kredit platby dopředu se přenáší měsíc po měsíci.');
+  expect(app, 'const moduleScrollPositions = new Map()', 'app.js: moduly si pamatují vlastní pozici posunu.');
+  expect(app, 'function rememberModuleScrollPosition(moduleId = activeModule)', 'app.js: pozice posunu se uloží ještě před asynchronním přepnutím modulu.');
+  expect(app, 'data-preserve-scroll="module-main-${escapeHtml(active.id)}"', 'app.js: hlavní scroll má stabilní klíč oddělený pro každý modul.');
+  expect(styles, '/* Domacnost+ v0.1_491 - spolehlivy svisly scroll Home ve vsech layoutech */', 'styles.css: existuje finální oprava svislého scrollu Domů.');
+  expect(styles, '.home-redesign-shell.home-app-shell .app-desktop-row {\n  height: 100%;', 'styles.css: Home předává skutečnou výšku vnitřnímu scrollovacímu kontejneru.');
 }
 
 console.log('App wiring smoke pro Domácnost+');

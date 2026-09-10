@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_490';
-  const APP_BUILD = 490;
+  const APP_VERSION = 'Domácnost+ v.0.1_491';
+  const APP_BUILD = 491;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1078,6 +1078,7 @@
   let lastRenderedMainHtml = '';
   let lastRenderedSidebarHtml = '';
   let lastRenderedOverlayHtml = '';
+  const moduleScrollPositions = new Map();
   let globalQuickAddOpen = false;
   let globalSearchOpen = false;
   let globalSearchQuery = '';
@@ -1089,6 +1090,13 @@
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
   // interních modalů ani jejich stavové proměnné.
   const moduleUiContracts = new Map();
+
+  function rememberModuleScrollPosition(moduleId = activeModule) {
+    const safeModuleId = normalizeText(moduleId);
+    if (!safeModuleId || lastRenderedSurfaceMode !== 'app') return;
+    const main = app?.querySelector?.(`main[data-preserve-scroll="module-main-${safeModuleId}"]`) || app?.querySelector?.('.app-frame main');
+    if (main) moduleScrollPositions.set(safeModuleId, Number(main.scrollTop || 0));
+  }
 
   function moduleCodeReady(moduleId) {
     return window.DomacnostModuleLoader?.isReady?.(moduleId) !== false;
@@ -3490,7 +3498,7 @@
             <div class="app-desktop-row">
               ${sidebarHtml}
               <div class="app-frame ${isHomeModule ? 'home-clean-frame' : ''}">
-                <main>${mainHtml}</main>
+                <main data-preserve-scroll="module-main-${escapeHtml(active.id)}">${mainHtml}</main>
               </div>
             </div>
 
@@ -3516,6 +3524,20 @@
             </div>
             <div data-app-overlays>${overlayHtml}</div>
           `;
+          const restoredMain = app?.querySelector?.('.app-frame main');
+          const restoredScrollTop = moduleScrollPositions.get(active.id) || 0;
+          if (restoredMain && restoredScrollTop > 0) {
+            restoredMain.scrollTop = restoredScrollTop;
+            // Nově vložený Home ještě v tomhle okamžiku nemusí mít finální
+            // výšku. Druhý zápis po layoutu zabrání tomu, aby prohlížeč
+            // předčasnou hodnotu ořízl zpět na nulu.
+            const restoredModuleId = active.id;
+            safeAnimationFrame(() => {
+              if (activeModule !== restoredModuleId) return;
+              const currentMain = app?.querySelector?.(`main[data-preserve-scroll="module-main-${restoredModuleId}"]`);
+              if (currentMain) currentMain.scrollTop = restoredScrollTop;
+            });
+          }
           if (app) app.dataset.lastRenderSurface = 'shell';
         }
 
@@ -3854,24 +3876,13 @@
       rows.push({ type, ...item });
     };
     const currentMonth = todayISO().slice(0, 7);
-    const activeServices = (state.subscriptions || []).filter((service) => service?.enabled !== false && service?.active !== false);
-    const peopleById = new Map((state.subscriptionPeople || []).map((person) => [String(person.id || ''), person]));
-    const payments = (state.subscriptionPayments || []).filter((payment) => String(payment.month || '').slice(0, 7) === currentMonth);
-    const debtByPerson = new Map();
-    activeServices.forEach((service) => {
-      (service.shares || []).forEach((share) => {
-        const personId = String(share.personId || '');
-        const expected = Math.max(0, decimalValue(share.amount));
-        const paid = payments
-          .filter((payment) => String(payment.personId || '') === personId && String(payment.subscriptionId || '') === String(service.id || ''))
-          .reduce((sum, payment) => sum + Math.max(0, decimalValue(payment.amount)), 0);
-        const missing = Math.max(0, expected - paid);
-        if (missing > 0) debtByPerson.set(personId, (debtByPerson.get(personId) || 0) + missing);
-      });
-    });
-    debtByPerson.forEach((amount, personId) => add('subscriptions', {
+    // Stejná kreditní matematika jako v modulu Předplatné. Platba zadaná
+    // dřív jako větší částka může pokrýt i aktuální a budoucí měsíce, takže
+    // samotný filtr plateb na tento měsíc vytvářel falešné dlužníky.
+    const subscriptionSummary = subscriptionMonthSummary(currentMonth, { prime: false });
+    subscriptionSummary.peopleRows.filter((row) => row.debt > 0).forEach((row) => add('subscriptions', {
       icon: '🎬',
-      title: `${peopleById.get(personId)?.name || 'Člen domácnosti'} má doplatit ${formatCurrency(amount)}`,
+      title: `${row.person?.name || 'Člen domácnosti'} má doplatit ${formatCurrency(row.debt)}`,
       meta: 'Předplatné · tento měsíc',
       nav: 'subscriptions',
       tab: 'overview',
@@ -13538,22 +13549,67 @@
     return getVapeModule().seedVapeItems();
   }
 
-  function subscriptionMonthSummary(month) {
+  function subscriptionMonthSummary(month, options = {}) {
     if (!moduleCodeReady('subscriptions')) {
-      primeModuleCode('subscriptions');
-      const selectedMonth = month || todayISO().slice(0, 7);
+      if (options.prime !== false) primeModuleCode('subscriptions');
+      const selectedMonth = /^\d{4}-\d{2}$/.test(String(month || '')) ? String(month) : todayISO().slice(0, 7);
       const services = (state.subscriptions || []).filter((item) => item.enabled !== false);
       const people = state.subscriptionPeople || [];
-      const payments = (state.subscriptionPayments || []).filter((item) => item.month === selectedMonth);
+      const allPayments = (state.subscriptionPayments || []).filter((item) => item.personId && item.subscriptionId && decimalValue(item.amount) > 0);
+      const payments = allPayments.filter((item) => item.month === selectedMonth);
+      const monthToIndex = (value) => {
+        const safe = /^\d{4}-\d{2}$/.test(String(value || '')) ? String(value) : selectedMonth;
+        const [year, monthIndex] = safe.split('-').map(Number);
+        return (year * 12) + monthIndex - 1;
+      };
+      const indexToMonth = (index) => `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+      const targetIndex = monthToIndex(selectedMonth);
       const totalCost = services.reduce((sum, item) => sum + decimalValue(item.price), 0);
       const expectedReturn = services.reduce((sum, item) => sum + (item.shares || []).reduce((inner, share) => inner + decimalValue(share.amount), 0), 0);
       const paid = payments.reduce((sum, item) => sum + decimalValue(item.amount), 0);
       const peopleRows = people.map((person) => {
-        const expected = services.reduce((sum, service) => sum + decimalValue((service.shares || []).find((share) => share.personId === person.id)?.amount), 0);
-        const personPaid = payments.filter((payment) => payment.personId === person.id).reduce((sum, payment) => sum + decimalValue(payment.amount), 0);
-        return { person, expected, paid: personPaid, debt: Math.max(0, expected - personPaid), cumulativeDebt: Math.max(0, expected - personPaid), overpaid: Math.max(0, personPaid - expected), serviceRows: [] };
+        const serviceRows = services.map((service) => {
+          const expected = decimalValue((service.shares || []).find((share) => share.personId === person.id)?.amount);
+          if (!(expected > 0)) return null;
+          const servicePayments = allPayments.filter((payment) => payment.personId === person.id && payment.subscriptionId === service.id);
+          const directPaid = servicePayments.filter((payment) => payment.month === selectedMonth).reduce((sum, payment) => sum + decimalValue(payment.amount), 0);
+          const previousPayments = servicePayments.filter((payment) => monthToIndex(payment.month) < targetIndex);
+          let creditBefore = 0;
+          if (previousPayments.length) {
+            const firstPreviousIndex = Math.min(...previousPayments.map((payment) => monthToIndex(payment.month)));
+            for (let index = firstPreviousIndex; index < targetIndex; index += 1) {
+              const monthPaid = previousPayments.filter((payment) => payment.month === indexToMonth(index)).reduce((sum, payment) => sum + decimalValue(payment.amount), 0);
+              creditBefore = Math.max(0, creditBefore + monthPaid - expected);
+            }
+          }
+          const effectivePaid = directPaid + creditBefore;
+          const paymentIndexes = servicePayments.map((payment) => monthToIndex(payment.month));
+          const firstPaymentIndex = paymentIndexes.length ? Math.min(...paymentIndexes) : null;
+          const startIndex = firstPaymentIndex === null ? targetIndex : Math.min(firstPaymentIndex, targetIndex);
+          const monthsCount = Math.min(120, targetIndex - startIndex + 1);
+          const paidThroughTarget = servicePayments
+            .filter((payment) => monthToIndex(payment.month) <= targetIndex)
+            .reduce((sum, payment) => sum + decimalValue(payment.amount), 0);
+          return {
+            service,
+            expected,
+            paid: effectivePaid,
+            directPaid,
+            creditApplied: Math.min(expected, creditBefore),
+            debt: Math.max(0, expected - effectivePaid),
+            cumulativeDebt: Math.max(0, (expected * monthsCount) - paidThroughTarget),
+            overpaid: Math.max(0, effectivePaid - expected)
+          };
+        }).filter(Boolean);
+        const expected = serviceRows.reduce((sum, row) => sum + row.expected, 0);
+        const personPaid = serviceRows.reduce((sum, row) => sum + row.paid, 0);
+        const debt = serviceRows.reduce((sum, row) => sum + row.debt, 0);
+        const cumulativeDebt = serviceRows.reduce((sum, row) => sum + row.cumulativeDebt, 0);
+        return { person, expected, paid: personPaid, debt, cumulativeDebt, overpaid: serviceRows.reduce((sum, row) => sum + row.overpaid, 0), serviceRows };
       });
-      return { month: selectedMonth, totalCost, expectedReturn, paid, netCost: totalCost - expectedReturn, peopleRows, capacityRows: [], maxSlots: 0, usedSlots: 0, freeSlots: 0, fullServices: 0 };
+      const owed = peopleRows.reduce((sum, row) => sum + row.debt, 0);
+      const owedTotal = peopleRows.reduce((sum, row) => sum + row.cumulativeDebt, 0);
+      return { month: selectedMonth, totalCost, expectedReturn, paid, owed, owedTotal, netCost: totalCost - expectedReturn, peopleRows, capacityRows: [], maxSlots: 0, usedSlots: 0, freeSlots: 0, fullServices: 0 };
     }
     return getSubscriptionsModule().subscriptionMonthSummary(month);
   }
@@ -20668,7 +20724,11 @@
   app.addEventListener('pointerover', (event) => scheduleModuleIntentPrefetch(event.target));
   app.addEventListener('pointerout', (event) => cancelModuleIntentPrefetch(event.target, event.relatedTarget));
   app.addEventListener('focusin', (event) => scheduleModuleIntentPrefetch(event.target));
-  app.addEventListener('pointerdown', (event) => scheduleModuleIntentPrefetch(event.target, { immediate: true }), { passive: true });
+  app.addEventListener('pointerdown', (event) => {
+    const targetModuleId = moduleIdFromNavigationTarget(event.target);
+    if (targetModuleId && targetModuleId !== activeModule) rememberModuleScrollPosition();
+    scheduleModuleIntentPrefetch(event.target, { immediate: true });
+  }, { passive: true });
 
   document.addEventListener('toggle', (event) => {
     const details = event.target;
@@ -20714,6 +20774,9 @@
     const nav = event.target.closest('[data-nav]');
     if (nav) {
       lastUserInteractionAt = Date.now();
+      // Myš/dotyk uloží pozici už na pointerdown, ještě před změnou fokusu.
+      // Klávesnicové aktivování pointerdown nemá, proto ho zachytíme tady.
+      if (event.detail === 0) rememberModuleScrollPosition();
       const focusTarget = nav.dataset.focusTarget || '';
       if (nav.closest('.global-tool-modal')) {
         globalQuickAddOpen = false;
@@ -21101,9 +21164,11 @@
   }, 15 * 60 * 1000);
 
   if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
+    window.__DOMACNOST_E2E_SCROLL_POSITIONS__ = () => Object.fromEntries(moduleScrollPositions.entries());
     window.__DOMACNOST_E2E_NAV__ = async (moduleId, tab = '') => {
       const nextModule = String(moduleId || 'home');
       await ensureModuleCode(nextModule);
+      rememberModuleScrollPosition();
       window.__DOMACNOST_E2E_LAST_NAV__ = nextModule;
       if (nextModule !== activeModule) closeAllModuleOverlays();
       if (renderFrameRequest) {
