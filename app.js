@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_485';
-  const APP_BUILD = 485;
+  const APP_VERSION = 'Domácnost+ v.0.1_486';
+  const APP_BUILD = 486;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -43,6 +43,17 @@
     { id: 'money', label: 'Finance' },
     { id: 'system', label: 'Systém' }
   ];
+
+  const NOTIFICATION_TYPE_DEFS = [
+    { id: 'subscriptions', label: 'Platby předplatného', icon: '🎬' },
+    { id: 'contracts', label: 'Konce smluv', icon: '📄' },
+    { id: 'warranties', label: 'Konce záruk', icon: '🧾' },
+    { id: 'vehicles', label: 'STK a servis', icon: '🚗' },
+    { id: 'waste', label: 'Svoz odpadu', icon: '♻️' },
+    { id: 'readings', label: 'Odečty', icon: '📊' },
+    { id: 'tasks', label: 'Úkoly', icon: '✅' }
+  ];
+  const DEFAULT_NOTIFICATION_PREFERENCES = Object.fromEntries(NOTIFICATION_TYPE_DEFS.map((item) => [item.id, true]));
 
   const DEFAULT_BOTTOM_NAV_IDS = ['home', 'calendar', 'shopping', 'finance'];
 
@@ -524,7 +535,7 @@
     { id: 'hdo', label: 'HDO', icon: '💡', overview: 'hdo', metric: (ctx) => ctx.hdo.active ? 'Běží' : 'Ne', text: () => 'HDO' },
     { id: 'waste', label: 'Odpad', icon: '♻️', overview: 'waste', metric: (ctx) => ctx.wasteSoon.length, text: () => 'svoz do 7 dnů' },
     { id: 'readings', label: 'Odečty', icon: '📊', nav: 'readings', tab: 'overview', metric: () => readingsMeters().length, text: () => 'měřidel' },
-    { id: 'pool', label: 'Bazén', icon: '🏊', nav: 'pool', tab: '', metric: () => formatPoolVolume(poolVolumeM3(getPoolModule().getActivePool())), text: () => 'objem vody' },
+    { id: 'pool', label: 'Bazén', icon: '🏊', nav: 'pool', tab: '', metric: () => formatPoolVolume(poolVolumeM3(summaryActivePool())), text: () => 'objem vody' },
     { id: 'tasks', label: 'Zápisník', icon: '🗒️', overview: 'tasks', metric: (ctx) => (ctx.openTasks?.length || 0) + notebookPages().length, text: () => 'úkoly a stránky' },
     { id: 'warranties', label: 'Záruky', icon: '🧾', nav: 'warranties', tab: '', metric: () => state.warranties.filter((item) => item.status !== 'archived').length, text: () => 'záruky' },
     { id: 'polishHolidays', label: 'PL svátky', icon: '🇵🇱', nav: 'polishHolidays', tab: '', metric: () => polishShopHeroMetric(), text: () => polishShopHeroText() },
@@ -798,7 +809,9 @@
       vehicleIconShapes: {},
       vehicleServicePlans: {},
       profileUiSettings: {},
-      polishShopShowNonTradingSundays: false
+      polishShopShowNonTradingSundays: false,
+      notificationPreferences: { ...DEFAULT_NOTIFICATION_PREFERENCES },
+      systemNotificationsEnabled: false
     },
     household: {
       id: '',
@@ -1062,6 +1075,13 @@
   let lastRenderedSurfaceMode = '';
   let lastRenderedModuleId = '';
   let lastRenderedShellSignature = '';
+  let lastRenderedMainHtml = '';
+  let lastRenderedSidebarHtml = '';
+  let lastRenderedOverlayHtml = '';
+  let globalQuickAddOpen = false;
+  let globalSearchOpen = false;
+  let globalSearchQuery = '';
+  let globalAlertsOpen = false;
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
   // interních modalů ani jejich stavové proměnné.
   const moduleUiContracts = new Map();
@@ -1095,6 +1115,7 @@
       .catch((error) => console.warn('Odložený modul se nepodařilo načíst', moduleId, error));
   }
 
+  const lazyDataCore = createLazyDataCore();
   let state = loadState();
   runtimeStateRef = state;
   mergeVisualSettings({ ...readLocalVisualSettings(), ...(state.settings || {}) });
@@ -1716,6 +1737,11 @@
     return merged;
   }
 
+  function normalizeNotificationPreferences(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return Object.fromEntries(NOTIFICATION_TYPE_DEFS.map((item) => [item.id, source[item.id] !== false]));
+  }
+
   function migrateState(input, options = {}) {
     const migrated = structuredCloneSafe(input || DEFAULT_STATE);
     // Odstraň legacy klíče po odstraněných modulech, které mohly přežít v uloženém stavu.
@@ -1753,7 +1779,9 @@
       vehicleIconColors: normalizeVehicleIconColorMap(migrated.settings?.vehicleIconColors),
       vehicleIconShapes: normalizeVehicleIconShapeMap(migrated.settings?.vehicleIconShapes),
       vehicleServicePlans: normalizeVehicleServicePlanMap(migrated.settings?.vehicleServicePlans),
-      profileUiSettings: normalizeProfileUiSettingsMap(migrated.settings?.profileUiSettings, migrated.enabledModules)
+      profileUiSettings: normalizeProfileUiSettingsMap(migrated.settings?.profileUiSettings, migrated.enabledModules),
+      notificationPreferences: normalizeNotificationPreferences(migrated.settings?.notificationPreferences),
+      systemNotificationsEnabled: migrated.settings?.systemNotificationsEnabled === true
     };
     if (forceLightVisualRecovery) {
       Object.keys(migrated.settings.profileUiSettings || {}).forEach((key) => {
@@ -2481,6 +2509,11 @@
         <div class="app-sidebar-brand">
           <span class="app-sidebar-logo" aria-hidden="true"><img src="${BRAND_ICON_SRC}" alt=""></span>
           <span class="app-sidebar-word">Domácnost+</span>
+        </div>
+        <div class="app-sidebar-tools" aria-label="Rychlé nástroje">
+          <button type="button" class="sidebar-tool-btn" data-action="open-global-search"><span aria-hidden="true">⌕</span><strong>Hledat</strong></button>
+          <button type="button" class="sidebar-tool-btn primary" data-action="open-global-quick-add"><span aria-hidden="true">＋</span><strong>Přidat</strong></button>
+          <button type="button" class="sidebar-tool-btn" data-action="open-global-alerts"><span aria-hidden="true">🔔</span><strong>Upozornění</strong>${getNotificationItems().length ? `<em>${getNotificationItems().length}</em>` : ''}</button>
         </div>
         ${groups.map((group) => `
           <div class="app-sidebar-group">
@@ -3348,6 +3381,7 @@
         if (moduleRenderMs > 180) console.info('Domácnost+ pomalý render modulu', active.id, `${moduleRenderMs} ms`);
         const mainHtml = renderMainSurface(active, moduleHtml);
         const overlayHtml = renderOverlaySurface();
+        const sidebarHtml = renderDesktopSidebar(active.id);
         const shellSignature = `${visibleModules.map((module) => module.id).join(',')}|${bottomNavModules.map((module) => module.id).join(',')}`;
         const existingMain = app?.querySelector?.('.app-frame main');
         const existingFrame = app?.querySelector?.('.app-frame');
@@ -3363,14 +3397,18 @@
           && existingOverlays;
 
         if (canPatchCurrentModule) {
-          existingMain.innerHTML = mainHtml;
+          const mainChanged = mainHtml !== lastRenderedMainHtml;
+          const sidebarChanged = sidebarHtml !== lastRenderedSidebarHtml;
+          const overlayChanged = overlayHtml !== lastRenderedOverlayHtml;
+          if (mainChanged) existingMain.innerHTML = mainHtml;
           existingFrame.classList.toggle('home-clean-frame', isHomeModule);
-          existingSidebar.outerHTML = renderDesktopSidebar(active.id);
-          existingOverlays.innerHTML = overlayHtml;
+          if (sidebarChanged) existingSidebar.outerHTML = sidebarHtml;
+          if (overlayChanged) existingOverlays.innerHTML = overlayHtml;
+          if (app) app.dataset.lastRenderSurface = mainChanged ? 'module' : overlayChanged ? 'overlay' : sidebarChanged ? 'sidebar' : 'none';
         } else {
           app.innerHTML = `
             <div class="app-desktop-row">
-              ${renderDesktopSidebar(active.id)}
+              ${sidebarHtml}
               <div class="app-frame ${isHomeModule ? 'home-clean-frame' : ''}">
                 <main>${mainHtml}</main>
               </div>
@@ -3391,15 +3429,23 @@
                 }).join('')}
               </div>
             </nav>
+            <div class="global-action-dock" aria-label="Rychlé nástroje">
+              <button type="button" class="global-action-btn search" data-action="open-global-search" aria-label="Hledat v aplikaci">⌕</button>
+              <button type="button" class="global-action-btn add" data-action="open-global-quick-add" aria-label="Rychle přidat">＋</button>
+              <button type="button" class="global-action-btn alerts" data-action="open-global-alerts" aria-label="Upozornění">🔔${getNotificationItems().length ? `<span>${Math.min(99, getNotificationItems().length)}</span>` : ''}</button>
+            </div>
             <div data-app-overlays>${overlayHtml}</div>
           `;
+          if (app) app.dataset.lastRenderSurface = 'shell';
         }
 
         if (app) app.setAttribute?.('data-boot-ok', '1');
-        if (app) app.dataset.lastRenderSurface = canPatchCurrentModule ? 'module' : 'shell';
         lastRenderedSurfaceMode = 'app';
         lastRenderedModuleId = active.id;
         lastRenderedShellSignature = shellSignature;
+        lastRenderedMainHtml = mainHtml;
+        lastRenderedSidebarHtml = sidebarHtml;
+        lastRenderedOverlayHtml = overlayHtml;
         lastRenderedBottomNavId = activeBottomNavId;
         schedulePostRenderLayoutWork(navMotion, navMotionFromIndex, activeBottomNavIndex);
       }
@@ -3662,7 +3708,9 @@
   }
 
   function renderFinanceOverviewItem(item) {
-    return getFinanceModule().renderFinanceOverviewItem(item);
+    if (window.DomacnostFinance) return getFinanceModule().renderFinanceOverviewItem(item);
+    const isIncome = item.type === 'income';
+    return renderOverviewItem({ title: item.title || 'Platba', badge: formatCurrency(item.amount), badgeClass: isIncome ? 'good' : 'warn', meta: [formatDate(item.date), item.note].filter(Boolean).join(' · '), icon: isIncome ? '➕' : '➖' });
   }
 
   function renderTaskOverviewItem(task) {
@@ -3670,7 +3718,8 @@
   }
 
   function renderWasteOverviewItem(item) {
-    return getWasteModule().renderWasteOverviewItem(item);
+    if (window.DomacnostWaste) return getWasteModule().renderWasteOverviewItem(item);
+    return renderOverviewItem({ title: item.type || item.title || 'Svoz odpadu', badge: item.days === null ? 'bez data' : dueBadge(item.days), badgeClass: item.days !== null && item.days <= 1 ? 'warn' : '', meta: item.note || '', icon: '♻️' });
   }
 
   function renderOverviewDrawer() {
@@ -3698,12 +3747,235 @@
     `;
   }
 
+  function notificationPreferences() {
+    return normalizeNotificationPreferences(state.settings?.notificationPreferences);
+  }
+
+  function notificationTypeEnabled(type) {
+    return notificationPreferences()[String(type || '')] !== false;
+  }
+
+  function getNotificationItems() {
+    const rows = [];
+    const add = (type, item) => {
+      if (!notificationTypeEnabled(type) || !item?.title) return;
+      rows.push({ type, ...item });
+    };
+    const currentMonth = todayISO().slice(0, 7);
+    const activeServices = (state.subscriptions || []).filter((service) => service?.enabled !== false && service?.active !== false);
+    const peopleById = new Map((state.subscriptionPeople || []).map((person) => [String(person.id || ''), person]));
+    const payments = (state.subscriptionPayments || []).filter((payment) => String(payment.month || '').slice(0, 7) === currentMonth);
+    const debtByPerson = new Map();
+    activeServices.forEach((service) => {
+      (service.shares || []).forEach((share) => {
+        const personId = String(share.personId || '');
+        const expected = Math.max(0, decimalValue(share.amount));
+        const paid = payments
+          .filter((payment) => String(payment.personId || '') === personId && String(payment.subscriptionId || '') === String(service.id || ''))
+          .reduce((sum, payment) => sum + Math.max(0, decimalValue(payment.amount)), 0);
+        const missing = Math.max(0, expected - paid);
+        if (missing > 0) debtByPerson.set(personId, (debtByPerson.get(personId) || 0) + missing);
+      });
+    });
+    debtByPerson.forEach((amount, personId) => add('subscriptions', {
+      icon: '🎬',
+      title: `${peopleById.get(personId)?.name || 'Člen domácnosti'} má doplatit ${formatCurrency(amount)}`,
+      meta: 'Předplatné · tento měsíc',
+      nav: 'subscriptions',
+      tab: 'overview',
+      rank: 1
+    }));
+
+    (state.contracts || []).forEach((contract) => {
+      const date = contract.validTo || contract.valid_until || contract.changeDeadline || '';
+      const days = daysUntil(date);
+      if (days === null || days > 60) return;
+      add('contracts', {
+        icon: '📄',
+        title: `Smlouva: ${contract.title || contract.name || 'bez názvu'}`,
+        meta: date ? `${days < 0 ? 'Skončila' : 'Končí'} ${formatDate(date)}` : '',
+        nav: 'contracts',
+        tab: 'overview',
+        rank: days < 0 ? 0 : 2
+      });
+    });
+    (state.warranties || []).filter((item) => !['archived', 'done'].includes(item.status)).forEach((item) => {
+      const date = item.warrantyUntil || item.warranty_until || '';
+      const days = daysUntil(date);
+      if (days === null || days > 45) return;
+      add('warranties', {
+        icon: '🧾',
+        title: `Záruka: ${item.name || item.title || 'položka'}`,
+        meta: `${days < 0 ? 'Skončila' : 'Končí'} ${formatDate(date)}`,
+        nav: 'warranties',
+        rank: days < 0 ? 0 : 2
+      });
+    });
+    try {
+      vehicleAlerts().slice(0, 8).forEach((item) => add('vehicles', {
+        icon: '🚗', title: item.title || item.label || 'Kontrola vozidla', meta: item.meta || item.message || '', nav: 'garage', tab: 'overview', rank: item.days < 0 ? 0 : 2
+      }));
+    } catch (error) {}
+    (state.waste || []).filter((item) => item?.enabled !== false).forEach((item) => {
+      const days = daysUntil(item.date);
+      if (days === null || days < 0 || days > 2) return;
+      add('waste', { icon: '♻️', title: item.type || item.title || 'Svoz odpadu', meta: days === 0 ? 'Dnes' : days === 1 ? 'Zítra' : `Za ${days} dny`, nav: 'waste', rank: 1 });
+    });
+    try {
+      const dueMeters = readingsMeters().filter((meter) => !readingMeterHasCompleteMonthEntry(meter));
+      if (dueMeters.length) add('readings', { icon: '📊', title: `${dueMeters.length} ${dueMeters.length === 1 ? 'měřidlo čeká' : 'měřidel čeká'} na odečet`, meta: 'Aktuální měsíc', nav: 'readings', tab: 'entry', rank: 3 });
+    } catch (error) {}
+    (state.homeTasks || []).filter((task) => !task.done && task.due).forEach((task) => {
+      const days = daysUntil(task.due);
+      if (days === null || days > 3) return;
+      add('tasks', { icon: '✅', title: task.title || 'Úkol', meta: days < 0 ? `Po termínu ${Math.abs(days)} d` : days === 0 ? 'Termín dnes' : `Termín za ${days} d`, nav: 'tasks', rank: days < 0 ? 0 : 3 });
+    });
+    return rows.sort((a, b) => Number(a.rank || 9) - Number(b.rank || 9) || String(a.title).localeCompare(String(b.title), 'cs')).slice(0, 40);
+  }
+
+  function setNotificationPreference(type, enabled) {
+    if (!NOTIFICATION_TYPE_DEFS.some((item) => item.id === type)) return;
+    state.settings = {
+      ...(state.settings || {}),
+      notificationPreferences: { ...notificationPreferences(), [type]: Boolean(enabled) }
+    };
+    touchState();
+    saveState();
+    render();
+    if (cloudReady()) cloudSaveHouseholdUiSettings(false).catch((error) => console.warn('Cloud notification settings save failed', error));
+  }
+
+  async function enableSystemNotifications() {
+    if (!('Notification' in window)) {
+      showToast('Tento prohlížeč systémová upozornění nepodporuje');
+      return false;
+    }
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    const enabled = permission === 'granted';
+    state.settings = { ...(state.settings || {}), systemNotificationsEnabled: enabled };
+    touchState();
+    saveState();
+    render();
+    if (cloudReady()) cloudSaveHouseholdUiSettings(false).catch((error) => console.warn('Cloud notification permission save failed', error));
+    showToast(enabled ? 'Systémová upozornění jsou zapnutá' : 'Systémová upozornění nebyla povolena');
+    if (enabled) maybeSendSystemNotifications(true);
+    return enabled;
+  }
+
+  async function maybeSendSystemNotifications(force = false) {
+    if (!state.settings?.systemNotificationsEnabled || !('Notification' in window) || Notification.permission !== 'granted') return false;
+    const rows = getNotificationItems().slice(0, 4);
+    if (!rows.length) return false;
+    const key = `${todayISO()}|${rows.map((item) => `${item.type}:${item.title}`).join('|')}`;
+    const lastKey = localStorage.getItem('domacnostPlus.lastSystemNotification') || '';
+    if (!force && key === lastKey) return false;
+    const title = rows.length === 1 ? rows[0].title : `Domácnost+: ${rows.length} věci čekají`;
+    const body = rows.length === 1 ? rows[0].meta : rows.map((item) => item.title).join(' · ').slice(0, 220);
+    try {
+      const registration = await navigator.serviceWorker?.ready;
+      if (registration?.showNotification) {
+        await registration.showNotification(title, { body, icon: BRAND_ICON_SRC, badge: './icons/domacnost-plus-icon-32.png', tag: `domacnost-alerts-${todayISO()}`, renotify: false, data: { url: APP_PUBLIC_URL } });
+      } else {
+        new Notification(title, { body, icon: BRAND_ICON_SRC, tag: `domacnost-alerts-${todayISO()}` });
+      }
+      localStorage.setItem('domacnostPlus.lastSystemNotification', key);
+      return true;
+    } catch (error) {
+      console.warn('System notification failed', error);
+      return false;
+    }
+  }
+
+  function globalSearchRows(query = globalSearchQuery) {
+    const needle = normalizeKey(query);
+    if (!needle) return [];
+    const rows = [];
+    const add = (moduleId, tab, icon, title, meta, searchText = '') => {
+      const haystack = normalizeKey(`${title || ''} ${meta || ''} ${searchText || ''}`);
+      if (!haystack.includes(needle)) return;
+      rows.push({ moduleId, tab, icon, title: title || 'Bez názvu', meta: meta || '' });
+    };
+    (state.contracts || []).forEach((item) => add('contracts', 'overview', '📄', item.title || item.name, item.provider || item.type || 'Smlouva', `${item.contractNumber || item.contract_number || ''} ${item.note || ''}`));
+    (state.warranties || []).forEach((item) => add('warranties', '', '🧾', item.name || item.title, item.store || 'Záruka', `${item.note || ''} ${item.warrantyUntil || ''}`));
+    (state.notes || []).forEach((item) => add('tasks', '', '📝', item.title || item.name || 'Poznámka', item.section || 'Zápisník', `${item.body || item.text || ''} ${item.note || ''}`));
+    (state.homeTasks || []).forEach((item) => add('tasks', '', '✅', item.title || 'Úkol', item.done ? 'Hotovo' : 'Otevřený úkol', `${item.note || ''} ${item.category || ''}`));
+    (state.vehicles || []).forEach((item) => add('garage', 'overview', '🚗', item.name || `${item.brand || ''} ${item.model || ''}`.trim(), item.licensePlate || item.registration || 'Vozidlo', `${item.vin || ''} ${item.note || ''}`));
+    (state.subscriptions || []).forEach((item) => add('subscriptions', 'services', '🎬', item.name || item.title || 'Předplatné', formatCurrency(item.price || 0), item.note || ''));
+    (state.subscriptionPeople || []).forEach((item) => add('subscriptions', 'overview', '👤', item.name || 'Člen', 'Předplatné', item.note || ''));
+    (state.calendar || []).forEach((item) => add('calendar', 'overview', '📅', item.title || 'Událost', item.date ? formatDate(item.date) : 'Kalendář', `${item.location || ''} ${item.note || ''}`));
+    return rows.slice(0, 40);
+  }
+
+  function renderGlobalSearchResults(query = globalSearchQuery) {
+    const rows = globalSearchRows(query);
+    if (!String(query || '').trim()) return '<div class="global-tool-empty">Začni psát název, osobu, poznámku nebo číslo.</div>';
+    if (!rows.length) return '<div class="global-tool-empty">Nic jsem nenašel. Zkus kratší nebo jiný výraz.</div>';
+    return rows.map((item) => `
+      <button type="button" class="global-search-result" data-nav="${escapeHtml(item.moduleId)}" ${item.tab ? `data-target-tab="${escapeHtml(item.tab)}"` : ''}>
+        <span aria-hidden="true">${escapeHtml(item.icon)}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <em>${escapeHtml(item.meta)}</em>
+      </button>`).join('');
+  }
+
+  function renderGlobalSearchModal() {
+    if (!globalSearchOpen) return '';
+    return `
+      <div class="app-modal-backdrop global-tool-backdrop" data-modal-backdrop role="presentation">
+        <section class="app-modal global-tool-modal global-search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
+          <div class="app-modal-head"><div><span class="badge">všechny moduly</span><h2 id="global-search-title">Hledat v Domácnost+</h2><p>Smlouvy, záruky, poznámky, auta, předplatné a kalendář na jednom místě.</p></div><button class="icon-btn" type="button" data-action="close-global-tools" aria-label="Zavřít hledání">×</button></div>
+          <label class="global-search-field"><span aria-hidden="true">⌕</span><input class="input" type="search" value="${escapeHtml(globalSearchQuery)}" placeholder="Co hledáš?" autocomplete="off" data-global-search-input></label>
+          <div class="global-search-results" data-global-search-results>${renderGlobalSearchResults()}</div>
+        </section>
+      </div>`;
+  }
+
+  function renderGlobalQuickAddModal() {
+    if (!globalQuickAddOpen) return '';
+    const items = [
+      ['shopping', 'list', '🛒', 'Nákup', 'Položka do nákupního seznamu', '', 'form[data-form="add-shopping"] input[name="name"]'],
+      ['tasks', '', '✅', 'Úkol', 'Úkol s termínem a prioritou', 'task', 'form[data-form="add-task"] input[name="title"]'],
+      ['finance', 'add', '💸', 'Výdaj nebo příjem', 'Nový finanční pohyb', '', 'form[data-form="add-finance"] input[name="title"]'],
+      ['subscriptions', 'payments', '🎬', 'Platba předplatného', 'Zapsat přijatou platbu', '', 'form[data-form="add-subscription-payment"] input[name="amount"]'],
+      ['readings', 'entry', '📊', 'Odečet', 'Elektřina, voda nebo plyn', '', 'form[data-form="add-reading-entry"] input[name="value"]'],
+      ['calendar', 'add', '📅', 'Událost', 'Nová událost nebo připomínka', '', 'form[data-form="add-event"] input[name="title"]']
+    ];
+    return `
+      <div class="app-modal-backdrop global-tool-backdrop" data-modal-backdrop role="presentation">
+        <section class="app-modal global-tool-modal global-quick-add-modal" role="dialog" aria-modal="true" aria-labelledby="global-quick-add-title">
+          <div class="app-modal-head"><div><span class="badge good">rychlé přidání</span><h2 id="global-quick-add-title">Co chceš přidat?</h2><p>Vyber typ a otevře se rovnou správný formulář.</p></div><button class="icon-btn" type="button" data-action="close-global-tools" aria-label="Zavřít rychlé přidání">×</button></div>
+          <div class="global-quick-add-grid">
+            ${items.filter(([moduleId]) => isModuleEnabled(moduleId)).map(([moduleId, tab, icon, title, meta, quickCreate, focus]) => `
+              <button type="button" class="global-quick-add-item" data-nav="${moduleId}" ${tab ? `data-target-tab="${tab}"` : ''} ${quickCreate ? `data-quick-create="${quickCreate}"` : ''} data-focus-target="${escapeHtml(focus)}">
+                <span aria-hidden="true">${icon}</span><strong>${escapeHtml(title)}</strong><em>${escapeHtml(meta)}</em>
+              </button>`).join('')}
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderGlobalAlertsModal() {
+    if (!globalAlertsOpen) return '';
+    const rows = getNotificationItems();
+    return `
+      <div class="app-modal-backdrop global-tool-backdrop" data-modal-backdrop role="presentation">
+        <section class="app-modal global-tool-modal global-alerts-modal" role="dialog" aria-modal="true" aria-labelledby="global-alerts-title">
+          <div class="app-modal-head"><div><span class="badge ${rows.length ? 'warn' : 'good'}">${rows.length || 'klid'}</span><h2 id="global-alerts-title">Upozornění</h2><p>Termíny a platby, které teď potřebují pozornost.</p></div><button class="icon-btn" type="button" data-action="close-global-tools" aria-label="Zavřít upozornění">×</button></div>
+          <div class="global-alert-list">
+            ${rows.length ? rows.map((item) => `<button type="button" class="global-alert-item" data-nav="${escapeHtml(item.nav || 'home')}" ${item.tab ? `data-target-tab="${escapeHtml(item.tab)}"` : ''}><span aria-hidden="true">${escapeHtml(item.icon || '🔔')}</span><strong>${escapeHtml(item.title)}</strong><em>${escapeHtml(item.meta || '')}</em></button>`).join('') : '<div class="global-tool-empty good">Nic naléhavého. Domácnost je v pořádku.</div>'}
+          </div>
+          <div class="form-actions"><button class="ghost-btn" type="button" data-nav="settings" data-target-tab="notifications">Nastavit upozornění</button></div>
+        </section>
+      </div>`;
+  }
+
   function renderGlobalModals() {
-    return `${renderCalendarEventDetailModal()}${renderGarageRecordModal()}${renderWarrantyDetailModal()}${renderFilePreviewModal()}${renderLoyaltyCodeModal()}${renderLoyaltyMenuModal()}`;
+    return `${renderCalendarEventDetailModal()}${renderGarageRecordModal()}${renderWarrantyDetailModal()}${renderFilePreviewModal()}${renderLoyaltyCodeModal()}${renderLoyaltyMenuModal()}${renderGlobalSearchModal()}${renderGlobalQuickAddModal()}${renderGlobalAlertsModal()}`;
   }
 
   function renderCalendarEventDetailModal() {
-    return getCalendarModule().renderCalendarEventDetailModal();
+    return window.DomacnostCalendar ? getCalendarModule().renderCalendarEventDetailModal() : '';
   }
 
   function renderLoyaltyCodeModal() {
@@ -3966,6 +4238,9 @@
       || shoppingDoneModalOpen
       || loyaltyCardPreviewId
       || loyaltyCardMenuId
+      || globalQuickAddOpen
+      || globalSearchOpen
+      || globalAlertsOpen
       || hasOpenModuleOverlay()
     );
   }
@@ -3976,6 +4251,9 @@
     shoppingDoneModalOpen = false;
     loyaltyCardPreviewId = '';
     loyaltyCardMenuId = '';
+    globalQuickAddOpen = false;
+    globalSearchOpen = false;
+    globalAlertsOpen = false;
     garageEditRecord = null;
     closeFilePreviewModal();
     const moduleOverlayClosed = closeAllModuleOverlays();
@@ -3996,9 +4274,12 @@
     render();
   }
 
-  function openOverview(type) {
-    activeOverview = type || 'tasks';
+  async function openOverview(type) {
+    const nextType = type || 'tasks';
+    const target = overviewTarget(nextType);
     try {
+      await ensureModuleCodeForInteraction(target.nav);
+      activeOverview = nextType;
       render();
     } catch (error) {
       console.error('Overview render failed', type, error);
@@ -4031,7 +4312,8 @@
   }
 
   function renderHdoOverviewTables(rows = []) {
-    return getHdoModule().renderHdoOverviewTables(rows);
+    if (window.DomacnostHdo) return getHdoModule().renderHdoOverviewTables(rows);
+    return rows.map((item) => renderOverviewItem({ title: item.label || 'HDO okno', badge: `${item.start || '—'}–${item.end || '—'}`, icon: '💡' })).join('');
   }
 
   function renderOverviewContent(type) {
@@ -4132,10 +4414,10 @@
       const rows = debtRows.slice(0, 8);
       body = `${renderOverviewSummary([{ label: 'Lidí', value: summary.peopleRows.length }, { label: 'Dluží', value: debtRows.length, tone: debtRows.length ? 'warn' : 'good' }])}${rows.length ? `<div class="list compact-list overview-list">${rows.map((row) => renderOverviewItem({ title: row.person?.name || 'Osoba', badge: formatCurrency(row.debt), badgeClass: 'warn', icon: '💳' })).join('')}</div>` : renderEmptyCta({ icon: '💳', title: 'Všechno srovnáno', text: 'Nikdo aktuálně nedluží za tenhle měsíc.', nav: 'subscriptions', tab: 'overview', label: 'Otevřít předplatné' })}`;
     } else if (type === 'pool') {
-      const pools = getPoolModule().getPools();
+      const pools = summaryPools();
       const rows = pools.slice(0, 8);
       body = `${renderOverviewSummary([{ label: 'Bazény', value: pools.length }])}${rows.length ? `<div class="list compact-list overview-list">${rows.map((pool) => {
-        const dose = getPoolModule().poolPhDose(pool);
+        const dose = summaryPoolPhDose(pool);
         return renderOverviewItem({ title: pool.name || 'Bazén', badge: dose.status === 'ok' ? 'pH OK' : dose.status === 'missing' ? 'doplň pH' : dose.label, badgeClass: dose.status === 'ok' ? 'good' : dose.status === 'missing' ? '' : 'warn', icon: '🏊' });
       }).join('')}</div>` : renderEmptyCta({ icon: '🏊', title: 'Bazén není nastavený', text: 'Přidej rozměry bazénu a cílové pH.', nav: 'pool', tab: 'settings', label: 'Přidat bazén' })}`;
     } else if (type === 'vape') {
@@ -4424,27 +4706,27 @@
   const DEFAULT_CALENDAR_EVENT_MINUTES = 60;
 
   function calendarEventStartMs(event) {
-    return getCalendarModule().calendarEventStartMs(event);
+    return window.DomacnostCalendar ? getCalendarModule().calendarEventStartMs(event) : lazyDataCore.calendarEventStartMs(event);
   }
 
   function calendarEventIsRunning(event, referenceDate) {
-    return getCalendarModule().calendarEventIsRunning(event, referenceDate);
+    return window.DomacnostCalendar ? getCalendarModule().calendarEventIsRunning(event, referenceDate) : lazyDataCore.calendarEventIsRunning(event, referenceDate);
   }
 
   function sortCalendarEventsByStart(rows) {
-    return getCalendarModule().sortCalendarEventsByStart(rows);
+    return window.DomacnostCalendar ? getCalendarModule().sortCalendarEventsByStart(rows) : lazyDataCore.sortCalendarEventsByStart(rows);
   }
 
   function upcomingCalendarEvents(referenceDate) {
-    return getCalendarModule().upcomingCalendarEvents(referenceDate);
+    return window.DomacnostCalendar ? getCalendarModule().upcomingCalendarEvents(referenceDate) : lazyDataCore.upcomingCalendarEvents(referenceDate);
   }
 
   function calendarEventTimeLabel(event, referenceDate) {
-    return getCalendarModule().calendarEventTimeLabel(event, referenceDate);
+    return window.DomacnostCalendar ? getCalendarModule().calendarEventTimeLabel(event, referenceDate) : lazyDataCore.calendarEventTimeLabel(event, referenceDate);
   }
 
   function calendarEventMetaLabel(event, referenceDate) {
-    return getCalendarModule().calendarEventMetaLabel(event, referenceDate);
+    return window.DomacnostCalendar ? getCalendarModule().calendarEventMetaLabel(event, referenceDate) : lazyDataCore.calendarEventMetaLabel(event, referenceDate);
   }
 
 
@@ -4559,7 +4841,7 @@
   }
 
   function hdoWindowAfter(date) {
-    const next = getHdoModule().findNextHdoWindow(date);
+    const next = findNextHdoWindow(date);
     return next ? { start: next.item.start, end: next.item.end } : null;
   }
 
@@ -4694,11 +4976,11 @@
         return { label: 'Předplatné', value: summary.expectedReturn ? 'srovnáno' : 'bez sdílení', tone: summary.expectedReturn ? 'good' : '', overview: 'subscriptions' };
       }
       case 'pool': {
-        const pools = getPoolModule().getPools();
+        const pools = summaryPools();
         const pool = pools[0];
         if (!pool) return { label: 'Bazén', value: 'nenastaveno', tone: '', overview: 'pool' };
-        const dose = getPoolModule().poolPhDose(pool);
-        const latest = getPoolModule().latestPoolMeasurement(pool);
+        const dose = summaryPoolPhDose(pool);
+        const latest = summaryLatestPoolMeasurement(pool);
         const meta = latest ? `naposledy ${formatDate(latest.date)}${latest.waterTempC !== '' && latest.waterTempC !== undefined ? ` · voda ${latest.waterTempC} °C` : ''}` : '';
         return {
           label: 'Bazén',
@@ -4899,8 +5181,8 @@
 
   function renderHomePoolWidget(ctx) {
     if (!ctx.visibleModules.some((module) => module.id === 'pool')) return '';
-    const items = getPoolModule().getPools().slice(0, 5).map((pool) => {
-      const dose = getPoolModule().poolPhDose(pool);
+    const items = summaryPools().slice(0, 5).map((pool) => {
+      const dose = summaryPoolPhDose(pool);
       const meta = dose.status === 'ok' ? 'pH je v cíli' : dose.status === 'missing' ? 'Doplň rozměry/pH' : dose.label;
       return { icon: '🏊', title: pool.name, meta, nav: 'pool', tab: '' };
     });
@@ -5221,8 +5503,13 @@
       }
     }
 
+    const notificationTypeByTarget = { subscriptions: 'subscriptions', contracts: 'contracts', warranties: 'warranties', garage: 'vehicles', waste: 'waste', readings: 'readings', tasks: 'tasks' };
     return rows
       .filter((item) => item.title)
+      .filter((item) => {
+        const type = notificationTypeByTarget[item.overview || item.nav];
+        return !type || notificationTypeEnabled(type);
+      })
       .sort(compareHomeAttentionItems)
       .slice(0, 12);
   }
@@ -5237,9 +5524,9 @@
   }
 
   function buildHomePoolAttentionItem() {
-    const pools = getPoolModule().getPools();
+    const pools = summaryPools();
     for (const pool of pools) {
-      const dose = getPoolModule().poolPhDose(pool);
+      const dose = summaryPoolPhDose(pool);
       if (dose.status !== 'minus' && dose.status !== 'plus') continue;
       const volume = poolVolumeM3(pool);
       const grams = Math.max(0, Math.round(Number(dose.grams || 0)));
@@ -5563,7 +5850,7 @@
   }
 
   function getHdoHeroPresentation(ctx, options = {}) {
-    return getHdoModule().getHdoHeroPresentation(ctx, options);
+    return window.DomacnostHdo ? getHdoModule().getHdoHeroPresentation(ctx, options) : lazyDataCore.getHdoHeroPresentation(ctx, options);
   }
 
 
@@ -6100,6 +6387,32 @@
     });
   }
 
+  function cloudSyncRelativeLabel(value = state.cloud?.lastSyncAt) {
+    const timestamp = Date.parse(value || '');
+    if (!Number.isFinite(timestamp)) return 'zatím nesynchronizováno';
+    const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+    if (minutes < 1) return 'právě teď';
+    if (minutes === 1) return 'před minutou';
+    if (minutes < 60) return `před ${minutes} minutami`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `před ${hours} ${hours < 5 ? 'hodinami' : 'hodinami'}`;
+    return formatDateTime(value);
+  }
+
+  function renderUnifiedCloudControl(totalLocal = null, options = {}) {
+    const ready = cloudReady();
+    const pending = totalLocal === null ? getCloudSyncOverviewItems().reduce((sum, item) => sum + item.local, 0) : Number(totalLocal || 0);
+    const status = String(state.cloud?.autosyncStatus || 'idle');
+    const failed = ['error', 'blocked'].includes(status) || state.cloud?.realtimeStatus === 'channel_error';
+    const syncing = status === 'syncing';
+    if (!ready) return `<div class="unified-cloud-control offline"><span class="sync-status-dot"></span><div><strong>Cloud není připojený</strong><em>Data jsou zatím jen v tomto zařízení.</em></div><button class="ghost-btn" type="button" data-nav="settings" data-target-tab="cloud">Připojit</button></div>`;
+    return `<div class="unified-cloud-control ${failed ? 'error' : pending ? 'pending' : 'good'}" data-cloud-unified-status>
+      <span class="sync-status-dot"></span>
+      <div><strong>${failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}</em></div>
+      <button class="${failed || pending ? 'primary-btn' : 'ghost-btn'}" type="button" data-action="cloud-sync-unified" ${syncing ? 'disabled' : ''}>${failed ? 'Zkusit znovu' : pending ? 'Synchronizovat' : 'Zkontrolovat'}</button>
+    </div>`;
+  }
+
   function renderCloudSyncOverview(mode = 'dashboard') {
     const cloudReady = Boolean(state.cloud?.userId && state.cloud?.householdId);
     const items = getCloudSyncOverviewItems();
@@ -6128,7 +6441,7 @@
           <div class="mini-stat"><span>Autosync</span><strong>${cloudReady ? escapeHtml(autosyncStatus) : 'offline'}</strong></div>
           <div class="mini-stat"><span>Poslední autosync</span><strong>${state.cloud?.lastAutosyncAt ? escapeHtml(formatDateTime(state.cloud.lastAutosyncAt)) : 'nikdy'}</strong></div>
         </div>
-        ${cloudReady ? `<div class="cloud-automation-strip ${totalLocal ? 'warn' : 'good'}"><span class="sync-status-dot"></span><strong>${totalLocal ? `${totalLocal} položek čeká na cloud` : 'Cloud-first je čistý'}</strong><em>${autosyncEnabled ? 'Automatické dohnání je zapnuté.' : 'Automatické dohnání je vypnuté.'}</em></div>` : ''}
+        ${renderUnifiedCloudControl(totalLocal)}
         <div class="sync-overview-list">
           ${compactItems.map((item) => `
             <button class="sync-overview-row ${item.local ? 'pending' : item.cloud ? 'cloud-ok' : 'empty'}" type="button" data-nav="${escapeHtml(item.nav)}" ${item.tab ? `data-target-tab="${escapeHtml(item.tab)}"` : ''}>
@@ -6141,12 +6454,7 @@
             </button>
           `).join('')}
         </div>
-        <div class="form-actions">
-          ${cloudReady ? '<button class="ghost-btn" type="button" data-action="cloud-load-all">Načíst vše z cloudu</button><button class="ghost-btn" type="button" data-action="cloud-start-realtime">Zapnout živé změny</button><button class="ghost-btn" type="button" data-action="cloud-run-autosync-now">Synchronizovat teď</button>' : '<button class="ghost-btn" type="button" data-nav="settings">Napojit cloud v Nastavení</button>'}
-          ${cloudReady ? `<button class="ghost-btn" type="button" data-action="cloud-toggle-autosync">${autosyncEnabled ? 'Vypnout autosync' : 'Zapnout autosync'}</button>` : ''}
-          ${cloudReady && totalLocal ? '<button class="primary-btn" type="button" data-action="cloud-sync-pending">Dohnat lokální → cloud</button>' : ''}
-          ${cloudReady && totalLocal ? '<span class="badge warn">něco je jen v tomto zařízení</span>' : '<span class="badge good">cloud-first OK</span>'}
-        </div>
+        <div class="form-actions"><span class="badge ${autosyncEnabled ? 'good' : 'warn'}">automatická synchronizace ${autosyncEnabled ? 'zapnutá' : 'vypnutá'}</span></div>
       </section>
     `;
   }
@@ -6403,15 +6711,15 @@
   }
 
   function getCalendarSources() {
-    return getCalendarModule().getCalendarSources();
+    return window.DomacnostCalendar ? getCalendarModule().getCalendarSources() : lazyDataCore.getCalendarSources();
   }
 
   function normalizeCalendarSourceProvider(provider) {
-    return getCalendarModule().normalizeCalendarSourceProvider(provider);
+    return window.DomacnostCalendar ? getCalendarModule().normalizeCalendarSourceProvider(provider) : lazyDataCore.normalizeCalendarSourceProvider(provider);
   }
 
   function mapCalendarSource(row) {
-    return getCalendarModule().mapCalendarSource(row);
+    return window.DomacnostCalendar ? getCalendarModule().mapCalendarSource(row) : lazyDataCore.mapCalendarSource(row);
   }
 
   function getCalendarSource(sourceId) {
@@ -6949,6 +7257,204 @@
     return notesInstance;
   }
 
+  // Malé datové jádro pro Domů a migraci. Plné UI modulů zůstává v jejich
+  // samostatných souborech a stáhne se až při otevření daného modulu.
+  function createLazyDataCore() {
+    const numberOrEmpty = (value) => {
+      if (value === '' || value === null || value === undefined) return '';
+      const number = decimalValue(value);
+      return number > 0 ? number : '';
+    };
+    const normalizePoolMeasurement = (value = {}) => ({
+      id: normalizeText(value.id) || `pool-measure-${uid()}`,
+      date: normalizeText(value.date || value.measuredAt || value.createdAt || todayISO()).slice(0, 10) || todayISO(),
+      time: normalizeText(value.time || value.measuredTime || String(value.measuredAt || value.createdAt || '').slice(11, 16)).slice(0, 5),
+      ph: numberOrEmpty(value.ph),
+      waterTempC: value.waterTempC === '' || value.waterTempC === null || value.waterTempC === undefined ? '' : decimalValue(value.waterTempC ?? value.waterTemp ?? value.temperature),
+      note: normalizeText(value.note),
+      createdAt: normalizeText(value.createdAt) || new Date().toISOString()
+    });
+    const normalizePool = (value = {}, index = 0) => {
+      const shape = ['rect', 'round', 'oval', 'custom'].includes(value.shape) ? value.shape : 'rect';
+      const measurements = (Array.isArray(value.measurements) ? value.measurements : [])
+        .map(normalizePoolMeasurement)
+        .filter((item) => item.ph !== '' || item.waterTempC !== '')
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time).localeCompare(String(b.time)))
+        .slice(-120);
+      return {
+        id: normalizeText(value.id) || `pool-${uid()}`,
+        name: normalizeText(value.name) || `Bazén${index ? ` ${index + 1}` : ''}`,
+        shape,
+        length: numberOrEmpty(value.length), width: numberOrEmpty(value.width), diameter: numberOrEmpty(value.diameter), depth: numberOrEmpty(value.depth), volumeM3: numberOrEmpty(value.volumeM3),
+        ph: value.ph === '' || value.ph === null || value.ph === undefined ? '' : decimalValue(value.ph),
+        waterTempC: value.waterTempC === '' || value.waterTempC === null || value.waterTempC === undefined ? '' : decimalValue(value.waterTempC ?? value.waterTemp ?? value.temperature),
+        targetPh: value.targetPh === '' || value.targetPh === null || value.targetPh === undefined ? 7.2 : decimalValue(value.targetPh) || 7.2,
+        dosePer10m3Per01: numberOrEmpty(value.dosePer10m3Per01) || 100,
+        measurements,
+        note: normalizeText(value.note),
+        createdAt: normalizeText(value.createdAt) || new Date().toISOString(),
+        updatedAt: normalizeText(value.updatedAt)
+      };
+    };
+    const normalizePools = (value) => {
+      const seen = new Set();
+      return (Array.isArray(value) ? value : []).map(normalizePool).map((pool) => {
+        let id = pool.id;
+        while (seen.has(id)) id = `pool-${uid()}`;
+        seen.add(id);
+        return { ...pool, id };
+      });
+    };
+    const poolVolumeM3 = (pool) => {
+      if (!pool) return 0;
+      const item = normalizePool(pool);
+      if (item.shape === 'custom') return decimalValue(item.volumeM3);
+      const depth = decimalValue(item.depth);
+      if (depth <= 0) return 0;
+      if (item.shape === 'round') return Math.PI * Math.pow(decimalValue(item.diameter) / 2, 2) * depth;
+      if (item.shape === 'oval') return Math.PI * (decimalValue(item.length) / 2) * (decimalValue(item.width) / 2) * depth;
+      return decimalValue(item.length) * decimalValue(item.width) * depth;
+    };
+    const poolPhDose = (pool) => {
+      if (!pool) return { status: 'missing', label: 'Doplň rozměry a pH', grams: 0, delta: 0 };
+      const item = normalizePool(pool);
+      const current = decimalValue(item.ph);
+      const target = decimalValue(item.targetPh) || 7.2;
+      const volume = poolVolumeM3(item);
+      if (volume <= 0 || current <= 0 || target <= 0) return { status: 'missing', label: 'Doplň rozměry a pH', grams: 0, delta: 0 };
+      const delta = current - target;
+      if (Math.abs(delta) < 0.05) return { status: 'ok', label: 'pH je v cíli', grams: 0, delta };
+      return { status: delta > 0 ? 'minus' : 'plus', label: delta > 0 ? 'Přidat pH-' : 'Přidat pH+', grams: (volume / 10) * (Math.abs(delta) / 0.1) * (decimalValue(item.dosePer10m3Per01) || 100), delta };
+    };
+    const normalizeFinanceTemplate = (template = {}) => {
+      const type = template.type === 'income' ? 'income' : template.type === 'transfer' ? 'transfer' : 'expense';
+      const category = normalizeText(template.category) || (type === 'income' ? 'other_income' : 'other_expense');
+      return {
+        id: normalizeText(template.id) || `finance-template-${uid()}`,
+        householdId: template.householdId || runtimeStateRef?.household?.id || '', profileId: template.profileId || runtimeStateRef?.activeProfileId || '',
+        createdAt: template.createdAt || new Date().toISOString(), updatedAt: template.updatedAt || template.createdAt || new Date().toISOString(),
+        icon: normalizeText(template.icon) || '💳', name: normalizeText(template.name || template.title) || 'Šablona platby', type,
+        title: normalizeText(template.title) || FINANCE_CATEGORY_OPTIONS.find((item) => item[0] === category)?.[1] || 'Platba',
+        amount: template.amount === '' || template.amount === null || template.amount === undefined ? '' : decimalValue(template.amount),
+        category, paymentMethod: normalizeText(template.paymentMethod) || 'bank_transfer', accountId: normalizeText(template.accountId),
+        transferAccountId: type === 'transfer' ? normalizeText(template.transferAccountId) : '', note: normalizeText(template.note), system: Boolean(template.system), deleted: Boolean(template.deleted)
+      };
+    };
+    const normalizeFinanceTemplates = (templates = []) => {
+      const byId = new Map();
+      (Array.isArray(templates) ? templates : []).map(normalizeFinanceTemplate).forEach((item) => byId.set(String(item.id), item));
+      return [...byId.values()];
+    };
+    const normalizeFinanceLoan = (loan = {}) => {
+      const principal = Math.max(0, decimalValue(loan.principal ?? loan.originalAmount));
+      return {
+        id: normalizeText(loan.id) || `finance-loan-${uid()}`, householdId: loan.householdId || runtimeStateRef?.household?.id || '', profileId: loan.profileId || runtimeStateRef?.activeProfileId || '',
+        createdAt: loan.createdAt || new Date().toISOString(), updatedAt: loan.updatedAt || loan.createdAt || new Date().toISOString(),
+        name: normalizeText(loan.name || loan.title) || 'Půjčka', lender: normalizeText(loan.lender), loanType: normalizeText(loan.loanType || loan.type) || 'consumer',
+        principal, currentBalance: Math.max(0, decimalValue(loan.currentBalance ?? loan.balance ?? principal)), interestRate: Math.max(0, decimalValue(loan.interestRate ?? loan.apr)),
+        monthlyPayment: Math.max(0, decimalValue(loan.monthlyPayment ?? loan.payment)), remainingMonths: Math.max(0, Math.round(Number(loan.remainingMonths ?? loan.monthsLeft ?? 0)) || 0),
+        startDate: normalizeText(loan.startDate), nextPaymentDate: normalizeText(loan.nextPaymentDate), earlyRepaymentFee: Math.max(0, decimalValue(loan.earlyRepaymentFee ?? loan.payoffFee)), note: normalizeText(loan.note)
+      };
+    };
+    const normalizeFinanceLoans = (loans = []) => (Array.isArray(loans) ? loans : []).map(normalizeFinanceLoan).filter((item) => item.name && (item.currentBalance > 0 || item.monthlyPayment > 0 || item.principal > 0));
+    const mergeByFreshness = (normalizer, localItems, cloudItems, options = {}) => {
+      const byId = new Map();
+      const put = (item, source) => {
+        const normalized = normalizer([item])[0];
+        if (!normalized) return;
+        const existing = byId.get(normalized.id);
+        if (!existing || (options.preferLocal === true && source === 'local') || (Date.parse(normalized.updatedAt || normalized.createdAt || '') || 0) >= (Date.parse(existing.updatedAt || existing.createdAt || '') || 0)) byId.set(normalized.id, normalized);
+      };
+      normalizer(cloudItems).forEach((item) => put(item, 'cloud'));
+      normalizer(localItems).forEach((item) => put(item, 'local'));
+      return [...byId.values()];
+    };
+    const normalizeWarrantyStatus = (value) => WARRANTY_STATUS_OPTIONS.some(([id]) => id === normalizeKey(value || 'active')) ? normalizeKey(value || 'active') : 'active';
+    const warrantyYearsFromDates = (purchaseDate = '', warrantyUntil = '') => {
+      const start = Date.parse(`${purchaseDate}T00:00:00`);
+      const end = Date.parse(`${warrantyUntil}T00:00:00`);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+      return Math.min(10, Math.max(2, Math.round((end - start) / (365.25 * 86400000)) || 2));
+    };
+    const normalizeWarrantyYears = (value) => {
+      const parsed = Number.parseInt(String(value || '').replace(/\D/g, ''), 10);
+      return Number.isFinite(parsed) ? Math.min(10, Math.max(2, parsed)) : 2;
+    };
+    const normalizeWarrantyItem = (item = {}) => {
+      const purchaseDate = normalizeText(item.purchaseDate || item.purchase_date || item.date || todayISO());
+      const rawUntil = normalizeText(item.warrantyUntil || item.warranty_until || item.until || '');
+      const warrantyYears = normalizeWarrantyYears(item.warrantyYears || item.warranty_years || warrantyYearsFromDates(purchaseDate, rawUntil) || 2);
+      return { id: item.id || `warranty-${uid()}`, householdId: item.householdId || '', profileId: item.profileId || '', cloudId: item.cloudId || item.cloud_id || '', createdAt: item.createdAt || item.created_at || new Date().toISOString(), updatedAt: item.updatedAt || item.updated_at || '', name: normalizeText(item.name || item.title) || 'Věc v záruce', store: normalizeText(item.store || item.seller || ''), category: '', price: normalizeText(item.price || ''), purchaseDate, warrantyYears, warrantyUntil: rawUntil || addYearsIso(purchaseDate, warrantyYears), status: normalizeWarrantyStatus(item.status), note: normalizeText(item.note || item.notes || '') };
+    };
+    const normalizeWasteStorageItems = (items = []) => (Array.isArray(items) ? items : []).map((item) => ({ ...item, repeatRule: ['none', 'weekly', 'biweekly', 'monthly', 'custom'].includes(item?.repeatRule || item?.repeat_rule) ? (item.repeatRule || item.repeat_rule) : 'none', notifyBeforeHours: item?.notifyBeforeHours === '' || item?.notifyBeforeHours === undefined ? 12 : Number(item.notifyBeforeHours), enabled: item?.enabled !== false }));
+    const wasteRuntimeItems = (items = state.waste || []) => normalizeWasteStorageItems(items).map((item) => {
+      let date = String(item.date || '').slice(0, 10);
+      const step = item.repeatRule === 'weekly' ? 7 : item.repeatRule === 'biweekly' ? 14 : 0;
+      while (step && daysUntil(date) !== null && daysUntil(date) < 0) date = addDaysIso(date, step);
+      if (item.repeatRule === 'monthly') while (daysUntil(date) !== null && daysUntil(date) < 0) date = addMonthsIso(date, 1);
+      return { ...item, originalDate: item.date, date, days: daysUntil(date), isProjected: date !== item.date };
+    });
+    const safeHdoWindows = () => (Array.isArray(state.hdoWindows) ? state.hdoWindows : []).map((item) => ({ ...item, label: normalizeText(item.label || item.title || 'HDO okno') || 'HDO okno', start: normalizeText(item.start || item.start_time || item.from || '').slice(0, 5), end: normalizeText(item.end || item.end_time || item.to || '').slice(0, 5), days: [...new Set((Array.isArray(item.days) ? item.days : []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort(), enabled: item.enabled !== false && item.is_enabled !== false }));
+    const hdoMatches = (item, date) => item.days.includes(date.getDay()) || (isCzechPublicHolidayDate(date) && (item.days.includes(0) || item.days.includes(6)));
+    const findNextHdoWindow = (date = now) => {
+      const base = toSafeDate(date, new Date());
+      const rows = [];
+      safeHdoWindows().filter((item) => item.enabled).forEach((item) => {
+        const start = timeToMinutes(item.start);
+        if (start === null) return;
+        for (let offset = 0; offset <= 7; offset += 1) {
+          const candidate = new Date(base); candidate.setDate(base.getDate() + offset);
+          if (!hdoMatches(item, candidate)) continue;
+          candidate.setHours(Math.floor(start / 60), start % 60, 0, 0);
+          const diffMinutes = Math.round((candidate.getTime() - base.getTime()) / 60000);
+          if (diffMinutes > 0) rows.push({ item, diffMinutes });
+        }
+      });
+      return rows.sort((a, b) => a.diffMinutes - b.diffMinutes)[0] || null;
+    };
+    const calendarStart = (event) => event?.date ? new Date(`${event.date}T${event.time || '00:00'}`).getTime() : Number.MAX_SAFE_INTEGER;
+    const calendarEnd = (event) => {
+      if (!event?.date) return Number.MAX_SAFE_INTEGER;
+      const start = calendarStart(event);
+      if (!event.time) {
+        const endDate = event.endDate && event.endDate > event.date ? addDaysIso(event.endDate, -1) : event.date;
+        return new Date(`${endDate}T23:59:59`).getTime();
+      }
+      const end = new Date(`${event.endDate || event.date}T${event.endTime || event.time}`).getTime();
+      return end <= start ? end + 86400000 : event.endTime || event.endDate ? end : start + DEFAULT_CALENDAR_EVENT_MINUTES * 60000;
+    };
+    return {
+      normalizePools,
+      normalizePoolCloudState: (value = {}) => ({ loadedAt: normalizeText(value?.loadedAt), pendingAt: normalizeText(value?.pendingAt), deletedIds: Object.fromEntries(Object.entries(value?.deletedIds || {}).filter(([id, at]) => normalizeText(id) && Number.isFinite(Date.parse(at)))) }),
+      poolDeleteWinsOverCloud: (pool, deletedIds = {}) => Number.isFinite(Date.parse(deletedIds?.[pool?.id] || '')) && (!Number.isFinite(Date.parse(pool?.updatedAt || pool?.createdAt || '')) || Date.parse(pool.updatedAt || pool.createdAt) <= Date.parse(deletedIds[pool.id])),
+      getPools: () => normalizePools(state.pools), getActivePool: () => normalizePools(state.pools)[0] || null, poolVolumeM3, formatPoolVolume: (value) => Number(value || 0) > 0 ? `${Number(value).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} m³` : '0 m³', poolPhDose,
+      latestPoolMeasurement: (pool) => normalizePool(pool).measurements.slice(-1)[0] || null,
+      normalizeFinanceTemplates, normalizeFinanceLoans,
+      mergeFinanceTemplates: (localItems, cloudItems, options) => mergeByFreshness(normalizeFinanceTemplates, localItems, cloudItems, options),
+      mergeFinanceLoans: (localItems, cloudItems, options) => mergeByFreshness(normalizeFinanceLoans, localItems, cloudItems, options),
+      financeSelectedMonth: () => /^\d{4}-\d{2}$/.test(String(state.financeCloud?.monthFilter || '')) ? state.financeCloud.monthFilter : todayISO().slice(0, 7),
+      financeMonthLabel: (month) => { const safe = /^\d{4}-\d{2}$/.test(String(month || '')) ? month : todayISO().slice(0, 7); const [year, index] = safe.split('-').map(Number); return new Intl.DateTimeFormat('cs-CZ', { month: 'long', year: 'numeric' }).format(new Date(year, index - 1, 1)); },
+      financeMonthSummary: (month = (/^\d{4}-\d{2}$/.test(String(state.financeCloud?.monthFilter || '')) ? state.financeCloud.monthFilter : todayISO().slice(0, 7))) => (state.finance || []).reduce((sum, item) => { if (String(item.date || '').slice(0, 7) === month) { if (item.type === 'income') sum.income += Number(item.amount || 0); if (item.type === 'expense') sum.expense += Number(item.amount || 0); sum.balance = sum.income - sum.expense; } return sum; }, { income: 0, expense: 0, balance: 0 }),
+      normalizeWarrantyStatus, normalizeWarrantyYears, normalizeWarrantyItem, normalizeWarranties: (items = []) => (Array.isArray(items) ? items : []).map(normalizeWarrantyItem).filter((item) => item.name),
+      sortedWarranties: () => (state.warranties || []).map(normalizeWarrantyItem).sort((a, b) => String(a.warrantyUntil || '9999').localeCompare(String(b.warrantyUntil || '9999'))),
+      normalizeWasteStorageItems, getWasteRuntimeItems: wasteRuntimeItems,
+      getUpcomingWasteRuntimeItems: ({ maxDays = null, includeUnscheduled = false, limit = null } = {}) => { let rows = wasteRuntimeItems().filter((item) => (includeUnscheduled && item.days === null) || (item.days !== null && item.days >= 0)); if (maxDays !== null) rows = rows.filter((item) => item.days === null || item.days <= Number(maxDays)); rows.sort((a, b) => (a.days ?? 9999) - (b.days ?? 9999)); return limit ? rows.slice(0, Number(limit)) : rows; },
+      getSafeHdoWindows: safeHdoWindows,
+      sanitizeHdoDays: (days) => [...new Set((Array.isArray(days) ? days : []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort(),
+      sortHdoWindowsForOverview: (rows = []) => [...rows].sort((a, b) => (timeToMinutes(a.start) ?? 9999) - (timeToMinutes(b.start) ?? 9999)), findNextHdoWindow,
+      getHdoStatus: (date = now) => { const safe = toSafeDate(date, new Date()); const minute = safe.getHours() * 60 + safe.getMinutes(); const active = safeHdoWindows().find((item) => item.enabled && hdoMatches(item, safe) && isTimeInWindow(minute, item.start, item.end)); if (active) return { active: true, label: active.label, activeStart: active.start, activeEnd: active.end, message: `Právě běží ${active.label} (${active.start}–${active.end}).` }; const next = findNextHdoWindow(safe); return next ? { active: false, label: next.item.label, message: `Další nízký tarif za ${humanDuration(next.diffMinutes)}.`, nextLabel: next.item.label, nextStart: next.item.start, nextEnd: next.item.end, nextInMinutes: next.diffMinutes, nextInLabel: `za ${humanDuration(next.diffMinutes)}` } : { active: false, label: 'není nastaveno', message: 'Není nastavené žádné aktivní HDO okno.' }; },
+      getHdoHeroPresentation: (ctx, options = {}) => { const status = lazyDataCore.getHdoStatus(now); const rows = options.density === 'large' ? safeHdoWindows().slice(0, 5).map((item) => `${item.start}–${item.end}`) : []; return status.active ? { metric: 'Běží', text: `do ${status.activeEnd}`, detail: status.message, chips: [], extraRows: rows, tone: 'good' } : status.nextStart ? { metric: status.nextInLabel, text: `${status.nextStart}–${status.nextEnd}`, detail: '', chips: [], extraRows: rows, tone: 'warn' } : { metric: '—', text: 'HDO není nastavené', detail: 'Přidej okna nízkého tarifu', chips: [], extraRows: [], tone: 'neutral' }; },
+      getCalendarSources: () => Array.isArray(state.calendarCloud?.sources) ? state.calendarCloud.sources : [],
+      normalizeCalendarSourceProvider: (provider = '') => ['manual', 'family', 'work', 'ical', 'other'].includes(String(provider).toLowerCase()) ? String(provider).toLowerCase() : 'manual',
+      mapCalendarSource: (row = {}) => ({ id: row.id || row.cloudId || uid(), cloudId: row.cloudId || row.id || '', householdId: row.household_id || row.householdId || currentHouseholdId(), profileId: row.profile_id || row.profileId || '', name: row.name || 'Kalendář', provider: lazyDataCore.normalizeCalendarSourceProvider(row.provider), providerCalendarId: row.provider_calendar_id || row.providerCalendarId || '', providerConnectionId: row.provider_connection_id || row.providerConnectionId || '', color: /^#[0-9a-f]{6}$/i.test(String(row.color || '')) ? row.color : '#2563eb', isEnabled: row.is_enabled !== undefined ? Boolean(row.is_enabled) : row.isEnabled !== false, syncEnabled: row.sync_enabled !== undefined ? Boolean(row.sync_enabled) : Boolean(row.syncEnabled), lastSyncedAt: row.last_synced_at || row.lastSyncedAt || '', note: row.note || '', createdAt: row.created_at || row.createdAt || new Date().toISOString() }),
+      calendarEventStartMs: calendarStart, calendarEventIsRunning: (event, referenceDate = now) => calendarStart(event) <= toSafeDate(referenceDate, new Date()).getTime() && calendarEnd(event) > toSafeDate(referenceDate, new Date()).getTime(),
+      sortCalendarEventsByStart: (rows) => [...(rows || [])].sort((a, b) => calendarStart(a) - calendarStart(b) || String(a.title || '').localeCompare(String(b.title || ''))),
+      upcomingCalendarEvents: (referenceDate = now) => (state.calendar || []).filter((event) => calendarEnd(event) > toSafeDate(referenceDate, new Date()).getTime()).sort((a, b) => calendarStart(a) - calendarStart(b)),
+      calendarEventTimeLabel: (event, referenceDate = now) => { if (!event) return ''; if (!event.time) return event.date === todayISO() ? 'dnes · celý den' : `${shortDateText(event.date)} · celý den`; const range = event.endTime ? `${event.time}–${event.endTime}` : event.time; if (lazyDataCore.calendarEventIsRunning(event, referenceDate)) return event.endTime ? `probíhá do ${event.endTime}` : `probíhá od ${event.time}`; return event.date === todayISO() ? `dnes ${range}` : `${shortDateText(event.date)} · ${range}`; },
+      calendarEventMetaLabel: (event, referenceDate = now) => `${lazyDataCore.calendarEventTimeLabel(event, referenceDate)}${event?.location ? ` · ${event.location}` : ''}${event?.note ? ` · ${event.note}` : ''}`
+    };
+  }
+
   function getWarrantyModule() {
     if (warrantyInstance) return warrantyInstance;
     const factory = window.DomacnostWarranty?.createWarranty;
@@ -7321,7 +7827,7 @@
   }
 
   function financeMonthLabel(month) {
-    return getFinanceModule().financeMonthLabel(month);
+    return window.DomacnostFinance ? getFinanceModule().financeMonthLabel(month) : lazyDataCore.financeMonthLabel(month);
   }
 
   function renderCouponItem(coupon) {
@@ -8064,23 +8570,23 @@
   }
 
   function normalizeWarrantyStatus(value) {
-    return getWarrantyModule().normalizeWarrantyStatus(value);
+    return window.DomacnostWarranty ? getWarrantyModule().normalizeWarrantyStatus(value) : lazyDataCore.normalizeWarrantyStatus(value);
   }
 
   function normalizeWarrantyYears(value, purchaseDate = '') {
-    return getWarrantyModule().normalizeWarrantyYears(value, purchaseDate);
+    return window.DomacnostWarranty ? getWarrantyModule().normalizeWarrantyYears(value, purchaseDate) : lazyDataCore.normalizeWarrantyYears(value, purchaseDate);
   }
 
   function normalizeWarrantyItem(item = {}) {
-    return getWarrantyModule().normalizeWarrantyItem(item);
+    return window.DomacnostWarranty ? getWarrantyModule().normalizeWarrantyItem(item) : lazyDataCore.normalizeWarrantyItem(item);
   }
 
   function normalizeWarranties(items = []) {
-    return getWarrantyModule().normalizeWarranties(items);
+    return window.DomacnostWarranty ? getWarrantyModule().normalizeWarranties(items) : lazyDataCore.normalizeWarranties(items);
   }
 
   function sortedWarranties() {
-    return getWarrantyModule().sortedWarranties();
+    return window.DomacnostWarranty ? getWarrantyModule().sortedWarranties() : lazyDataCore.sortedWarranties();
   }
 
   function saveWarrantyDraftFromForm(form) {
@@ -8092,7 +8598,7 @@
   }
 
   function renderWarrantyDetailModal() {
-    return getWarrantyModule().renderWarrantyDetailModal();
+    return window.DomacnostWarranty ? getWarrantyModule().renderWarrantyDetailModal() : '';
   }
 
   function renderWarrantiesPanel(warranties) {
@@ -12750,19 +13256,19 @@
   }
 
   function normalizeFinanceTemplates(templates) {
-    return getFinanceModule().normalizeFinanceTemplates(templates);
+    return window.DomacnostFinance ? getFinanceModule().normalizeFinanceTemplates(templates) : lazyDataCore.normalizeFinanceTemplates(templates);
   }
 
   function mergeFinanceTemplates(localTemplates, cloudTemplates, options) {
-    return getFinanceModule().mergeFinanceTemplates(localTemplates, cloudTemplates, options);
+    return window.DomacnostFinance ? getFinanceModule().mergeFinanceTemplates(localTemplates, cloudTemplates, options) : lazyDataCore.mergeFinanceTemplates(localTemplates, cloudTemplates, options);
   }
 
   function normalizeFinanceLoans(loans) {
-    return getFinanceModule().normalizeFinanceLoans(loans);
+    return window.DomacnostFinance ? getFinanceModule().normalizeFinanceLoans(loans) : lazyDataCore.normalizeFinanceLoans(loans);
   }
 
   function mergeFinanceLoans(localLoans, cloudLoans, options) {
-    return getFinanceModule().mergeFinanceLoans(localLoans, cloudLoans, options);
+    return window.DomacnostFinance ? getFinanceModule().mergeFinanceLoans(localLoans, cloudLoans, options) : lazyDataCore.mergeFinanceLoans(localLoans, cloudLoans, options);
   }
 
   function renderFinance() {
@@ -12770,23 +13276,39 @@
   }
 
   function normalizePools(value) {
-    return getPoolModule().normalizePools(value);
+    return window.DomacnostPool ? getPoolModule().normalizePools(value) : lazyDataCore.normalizePools(value);
   }
 
   function normalizePoolCloudState(value = {}) {
-    return getPoolModule().normalizePoolCloudState(value);
+    return window.DomacnostPool ? getPoolModule().normalizePoolCloudState(value) : lazyDataCore.normalizePoolCloudState(value);
   }
 
   function poolDeleteWinsOverCloud(pool, deletedIds = {}) {
-    return getPoolModule().poolDeleteWinsOverCloud(pool, deletedIds);
+    return window.DomacnostPool ? getPoolModule().poolDeleteWinsOverCloud(pool, deletedIds) : lazyDataCore.poolDeleteWinsOverCloud(pool, deletedIds);
   }
 
   function poolVolumeM3(value) {
-    return getPoolModule().poolVolumeM3(value);
+    return window.DomacnostPool ? getPoolModule().poolVolumeM3(value) : lazyDataCore.poolVolumeM3(value);
   }
 
   function formatPoolVolume(value) {
-    return getPoolModule().formatPoolVolume(value);
+    return window.DomacnostPool ? getPoolModule().formatPoolVolume(value) : lazyDataCore.formatPoolVolume(value);
+  }
+
+  function summaryPools() {
+    return window.DomacnostPool ? getPoolModule().getPools() : lazyDataCore.getPools();
+  }
+
+  function summaryActivePool() {
+    return window.DomacnostPool ? getPoolModule().getActivePool() : lazyDataCore.getActivePool();
+  }
+
+  function summaryPoolPhDose(pool) {
+    return window.DomacnostPool ? getPoolModule().poolPhDose(pool) : lazyDataCore.poolPhDose(pool);
+  }
+
+  function summaryLatestPoolMeasurement(pool) {
+    return window.DomacnostPool ? getPoolModule().latestPoolMeasurement(pool) : lazyDataCore.latestPoolMeasurement(pool);
   }
 
   function renderPool() {
@@ -13170,6 +13692,34 @@
     `;
   }
 
+  function renderNotificationSettingsCard() {
+    const preferences = notificationPreferences();
+    const supported = 'Notification' in window;
+    const permission = supported ? Notification.permission : 'unsupported';
+    const systemEnabled = Boolean(state.settings?.systemNotificationsEnabled && permission === 'granted');
+    return `
+      <section class="card compact-settings-card notification-settings-card desktop-span-2">
+        <div class="card-header">
+          <div><h2>Chytrá upozornění</h2><p>Vyber, co má aplikace hlídat. Přehled funguje vždy; systémová upozornění jsou volitelná.</p></div>
+          <span class="badge ${getNotificationItems().length ? 'warn' : 'good'}">${getNotificationItems().length} aktivních</span>
+        </div>
+        <div class="notification-toggle-grid">
+          ${NOTIFICATION_TYPE_DEFS.map((item) => {
+            const active = preferences[item.id] !== false;
+            return `<button class="switch-row notification-switch ${active ? 'active' : ''}" type="button" role="switch" aria-checked="${active ? 'true' : 'false'}" data-action="toggle-notification-type" data-id="${escapeHtml(item.id)}">
+              <span class="switch-row-icon" aria-hidden="true">${escapeHtml(item.icon)}</span>
+              <span class="switch-row-copy"><strong>${escapeHtml(item.label)}</strong><em>${active ? 'upozornění zapnuté' : 'vypnuté'}</em></span>
+              <span class="ios-switch" aria-hidden="true"><span></span></span>
+            </button>`;
+          }).join('')}
+        </div>
+        <div class="notification-system-row">
+          <div><strong>Systémová upozornění</strong><span>${!supported ? 'Tento prohlížeč je nepodporuje.' : systemEnabled ? 'Povolena v zařízení.' : permission === 'denied' ? 'Zakázána v nastavení prohlížeče.' : 'Aplikace se nejdřív zeptá na povolení.'}</span></div>
+          ${supported && permission !== 'denied' ? `<button class="${systemEnabled ? 'ghost-btn' : 'primary-btn'}" type="button" data-action="enable-system-notifications">${systemEnabled ? 'Odeslat zkušební přehled' : 'Povolit v zařízení'}</button>` : ''}
+        </div>
+      </section>`;
+  }
+
   function renderSettings() {
     const enabled = new Set(normalizeModuleList(state.enabledModules));
     const activeTab = getModuleTab('settings', 'household');
@@ -13177,6 +13727,7 @@
       { id: 'household', label: 'Domácnost', icon: '🏠' },
       { id: 'dashboard', label: 'Vzhled', icon: '🎨' },
       { id: 'modules', label: 'Moduly', icon: '🧩', count: enabled.size },
+      { id: 'notifications', label: 'Upozornění', icon: '🔔', count: getNotificationItems().length },
       { id: 'cloud', label: 'Cloud', icon: '☁️' },
       { id: 'data', label: 'Data', icon: '💾' }
     ], 'household');
@@ -13207,7 +13758,7 @@
                 </div>
               `).join('')}
             </div>
-            ${state.cloud?.householdId ? `<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-sync-local-profiles">Odeslat lokální profily</button><button class="ghost-btn" type="button" data-action="cloud-load-all">Načíst profily z cloudu</button></div>` : ''}
+            ${state.cloud?.householdId ? `<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-sync-local-profiles">Synchronizovat profily</button></div>` : ''}
             <details class="action-details compact-edit-details settings-form-drawer" data-details-key="settings-add-profile" ${isDetailsOpen('settings-add-profile') ? 'open' : ''}>
               <summary><span>Přidat profil</span><em>další člen domácnosti</em></summary>
               <form data-form="add-profile" class="compact-form">
@@ -13242,6 +13793,10 @@
               `).join('')}
             </div>
           </section>
+        </div>
+
+        <div class="settings-panel panel-notifications">
+          ${renderNotificationSettingsCard()}
         </div>
 
         <div class="settings-panel panel-cloud grid two">
@@ -13495,11 +14050,7 @@
     return `
       <div class="cloud-household-panel">
         <div class="card-subheader"><h3>Cloud domácnosti</h3><p>Cloud je hlavní zdroj dat pro všechny členy domácnosti. Lokální úložiště zůstává jen jako cache a nouzový fallback.</p></div>
-        <div class="form-actions compact-actions">
-          <button class="ghost-btn" type="button" data-action="cloud-load-households">Načíst moje domácnosti</button>
-          <button class="ghost-btn" type="button" data-action="cloud-load-all">Načíst data aktivní domácnosti</button>
-          <button class="primary-btn" type="button" data-action="cloud-sync-pending">Dohnat lokální → cloud</button>
-        </div>
+        ${renderUnifiedCloudControl()}
         ${households.length ? `
           ${households.length > 1 ? '<div class="inline-note warn-note">Pod účtem je víc aktivních domácností. Appka teď novou nevytváří automaticky; duplicitní můžeš jen skrýt z tohoto účtu.</div>' : ''}
           <div class="cloud-household-list">
@@ -13929,7 +14480,7 @@
   }
 
   function getHdoStatus(date) {
-    return getHdoModule().getHdoStatus(date);
+    return window.DomacnostHdo ? getHdoModule().getHdoStatus(date) : lazyDataCore.getHdoStatus(date);
   }
 
   function isTimeInWindow(minutesNow, start, end) {
@@ -13951,19 +14502,19 @@
   }
 
   function sanitizeHdoDays(days) {
-    return getHdoModule().sanitizeHdoDays(days);
+    return window.DomacnostHdo ? getHdoModule().sanitizeHdoDays(days) : lazyDataCore.sanitizeHdoDays(days);
   }
 
   function getSafeHdoWindows() {
-    return getHdoModule().getSafeHdoWindows();
+    return window.DomacnostHdo ? getHdoModule().getSafeHdoWindows() : lazyDataCore.getSafeHdoWindows();
   }
 
   function sortHdoWindowsForOverview(rows = []) {
-    return getHdoModule().sortHdoWindowsForOverview(rows);
+    return window.DomacnostHdo ? getHdoModule().sortHdoWindowsForOverview(rows) : lazyDataCore.sortHdoWindowsForOverview(rows);
   }
 
   function findNextHdoWindow(date) {
-    return getHdoModule().findNextHdoWindow(date);
+    return window.DomacnostHdo ? getHdoModule().findNextHdoWindow(date) : lazyDataCore.findNextHdoWindow(date);
   }
 
   function humanDuration(minutes) {
@@ -15742,15 +16293,15 @@
 
 
   function normalizeWasteStorageItems(items = []) {
-    return getWasteModule().normalizeWasteStorageItems(items);
+    return window.DomacnostWaste ? getWasteModule().normalizeWasteStorageItems(items) : lazyDataCore.normalizeWasteStorageItems(items);
   }
 
   function getWasteRuntimeItems(items) {
-    return getWasteModule().getWasteRuntimeItems(items);
+    return window.DomacnostWaste ? getWasteModule().getWasteRuntimeItems(items) : lazyDataCore.getWasteRuntimeItems(items);
   }
 
   function getUpcomingWasteRuntimeItems(options = {}) {
-    return getWasteModule().getUpcomingWasteRuntimeItems(options);
+    return window.DomacnostWaste ? getWasteModule().getUpcomingWasteRuntimeItems(options) : lazyDataCore.getUpcomingWasteRuntimeItems(options);
   }
 
   function cloudLoadWaste(showMessage = true) {
@@ -16416,11 +16967,11 @@
 
 
   function financeMonthSummary(month) {
-    return getFinanceModule().financeMonthSummary(month);
+    return window.DomacnostFinance ? getFinanceModule().financeMonthSummary(month) : lazyDataCore.financeMonthSummary(month);
   }
 
   function financeSelectedMonth() {
-    return getFinanceModule().financeSelectedMonth();
+    return window.DomacnostFinance ? getFinanceModule().financeSelectedMonth() : lazyDataCore.financeSelectedMonth();
   }
 
   function financeTypeFilter() {
@@ -16731,6 +17282,13 @@
 
   async function runRealtimeLoaderByKey(key) {
     let result;
+    const moduleKey = key.startsWith('extras:') ? key.slice('extras:'.length) : key;
+    const deferredModuleId = moduleKey === 'warrantyFiles' ? 'warranties' : moduleKey;
+    if (['shopping', 'contracts', 'garage', 'hdo', 'waste', 'tasks', 'calendar', 'finance', 'warrantyFiles'].includes(moduleKey) && !moduleCodeReady(deferredModuleId)) {
+      // Realtime změna nesmí sama stáhnout dosud neotevřený modul. Při jeho
+      // prvním otevření se provede cílené načtení aktuálních dat.
+      return true;
+    }
     if (key === 'profiles') {
       result = await cloudLoadProfilesForCurrentHousehold();
     } else if (key === 'households') {
@@ -17178,12 +17736,10 @@
       await cloudLoadProfilesForCurrentHousehold();
       saveState({ immediate: true });
       requestBackgroundRender();
-      // Home hero panely obnovíme dřív; priority loader po dokončení sám spustí
-      // klasický background load pro zbytek modulů (s předaným skipModules).
-      scheduleBootHomePriorityCloudLoad();
+      // Data ostatních modulů se načtou až po jejich otevření. Warm start obnoví
+      // jen účet, domácnost, profily a lehký layout potřebný pro hlavní obrazovku.
       scheduleBootCloudMaintenance();
-      scheduleCalendarAutoSync('boot', { delay: 26000 });
-      if (showMessage) showToast('Cloud domácnost připravená, data se dočítají na pozadí');
+      if (showMessage) showToast('Cloud domácnost připravená');
     });
   }
 
@@ -17387,7 +17943,7 @@
         if (!options.silentWhenOffline) showToast('Nejdřív napoj domácnost na cloud');
         return;
       }
-      await Promise.all(['tasks', 'contracts'].map(ensureModuleCode));
+      await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
       const loaders = [
         cloudLoadUserVisualSettings,
         // cloudLoadAllModules dělá závěrečný requestRender() ve svém konci,
@@ -17426,6 +17982,43 @@
     });
   }
 
+  async function runUnifiedCloudSync(showMessage = true) {
+    if (!cloudReady()) {
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
+      persistModuleTabsSoon();
+      render();
+      return false;
+    }
+    state.cloud = { ...(state.cloud || {}), autosyncStatus: 'syncing' };
+    render();
+    try {
+      await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
+      await cloudLoadHouseholds(false);
+      await cloudSyncLocalPendingData(false);
+      await cloudLoadAllModules(false, { skipRealtimeSetup: true });
+      setupCloudRealtimeSubscriptions(true);
+      state.cloud = {
+        ...(state.cloud || {}),
+        autosyncStatus: 'done',
+        lastAutosyncAt: new Date().toISOString(),
+        lastSyncAt: new Date().toISOString()
+      };
+      touchState();
+      saveState({ immediate: true });
+      render();
+      if (showMessage) showToast('Všechno je synchronizované');
+      return true;
+    } catch (error) {
+      console.warn('Unified cloud sync failed', error);
+      state.cloud = { ...(state.cloud || {}), autosyncStatus: 'error' };
+      saveState();
+      render();
+      if (showMessage) showToast('Synchronizace se nepovedla. Zkus to znovu.');
+      return false;
+    }
+  }
+
   function setAppTheme(value) {
     state.settings.theme = normalizeAppTheme(value);
     persistVisualSettings(false);
@@ -17452,15 +18045,18 @@
     const action = button.dataset.action;
     if (action === 'open-overview') {
       if ((button.dataset.overview || '') === 'calendar') {
-        activeOverview = null;
-        activeModule = 'calendar';
-        moduleTabs = { ...(moduleTabs || {}), calendar: 'overview' };
-        persistActiveModuleSoon(activeModule);
-        persistModuleTabsSoon();
-        render();
-        keepActiveNavCentered('smooth');
-        keepActiveSectionTabsCentered('smooth');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        ensureModuleCodeForInteraction('calendar').then(() => {
+          activeOverview = null;
+          activeModule = 'calendar';
+          moduleTabs = { ...(moduleTabs || {}), calendar: 'overview' };
+          persistActiveModuleSoon(activeModule);
+          persistModuleTabsSoon();
+          render();
+          scheduleLazyCloudLoadForModule('calendar', { delay: 900, quietMs: 600 });
+          keepActiveNavCentered('smooth');
+          keepActiveSectionTabsCentered('smooth');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }).catch((error) => showToast(error?.message || 'Kalendář se nepodařilo načíst'));
         return;
       }
       openOverview(button.dataset.overview || 'tasks');
@@ -17645,6 +18241,49 @@
     }
     if (action === 'cloud-load-all') {
       cloudLoadAllModules(true);
+      return;
+    }
+    if (action === 'cloud-sync-unified') {
+      runUnifiedCloudSync(true);
+      return;
+    }
+    if (action === 'open-global-quick-add') {
+      globalQuickAddOpen = true;
+      globalSearchOpen = false;
+      globalAlertsOpen = false;
+      render();
+      return;
+    }
+    if (action === 'open-global-search') {
+      globalSearchOpen = true;
+      globalQuickAddOpen = false;
+      globalAlertsOpen = false;
+      render();
+      window.setTimeout(() => app.querySelector('[data-global-search-input]')?.focus(), 0);
+      return;
+    }
+    if (action === 'open-global-alerts') {
+      globalAlertsOpen = true;
+      globalQuickAddOpen = false;
+      globalSearchOpen = false;
+      render();
+      return;
+    }
+    if (action === 'close-global-tools') {
+      globalQuickAddOpen = false;
+      globalSearchOpen = false;
+      globalAlertsOpen = false;
+      render();
+      return;
+    }
+    if (action === 'toggle-notification-type') {
+      const type = button.dataset.id || '';
+      setNotificationPreference(type, !notificationTypeEnabled(type));
+      return;
+    }
+    if (action === 'enable-system-notifications') {
+      if (state.settings?.systemNotificationsEnabled && window.Notification?.permission === 'granted') maybeSendSystemNotifications(true);
+      else enableSystemNotifications();
       return;
     }
     if (action === 'cloud-load-extras') {
@@ -18709,6 +19348,8 @@
         profileUiSettings: structuredCloneSafe(state.settings?.profileUiSettings || {}),
         homeHeroItems: structuredCloneSafe(state.settings?.homeHeroItems || []),
         dashboardWidgets: structuredCloneSafe(state.settings?.dashboardWidgets || []),
+        notificationPreferences: structuredCloneSafe(notificationPreferences()),
+        systemNotificationsEnabled: Boolean(state.settings?.systemNotificationsEnabled),
         theme: state.settings?.theme || 'light'
       },
       loyaltyCards: structuredCloneSafe(normalizeLoyaltyCards(state.loyaltyCards || [])),
@@ -18945,6 +19586,9 @@
     else if (Array.isArray(layout.dashboardWidgets)) state.settings.dashboardWidgets = normalizeDashboardWidgetIds(layout.dashboardWidgets);
     if (Array.isArray(layout.heroItems)) state.settings.homeHeroItems = normalizeHomeHeroIds(layout.heroItems);
     else if (Array.isArray(layout.homeHeroItems)) state.settings.homeHeroItems = normalizeHomeHeroIds(layout.homeHeroItems);
+    if (layout.notificationPreferences && typeof layout.notificationPreferences === 'object') {
+      state.settings.notificationPreferences = normalizeNotificationPreferences(layout.notificationPreferences);
+    }
     if (layout.vehicleIconColors && typeof layout.vehicleIconColors === 'object') {
       state.settings.vehicleIconColors = normalizeVehicleIconColorMap(layout.vehicleIconColors);
       (state.vehicles || []).forEach((vehicle) => {
@@ -19053,6 +19697,7 @@
         vehicleServicePlans: normalizeVehicleServicePlanMap(state.settings?.vehicleServicePlans),
         visualSettings: getVisualSettingsSnapshot(),
         profileUiSettings: getProfileUiSettingsSnapshot(),
+        notificationPreferences: notificationPreferences(),
         warrantyBackupCount: normalizeWarranties(state.warranties).length,
         readingGroups: readingGroups(),
         readingMeters: readingsMeters(true),
@@ -19909,6 +20554,12 @@
     const nav = event.target.closest('[data-nav]');
     if (nav) {
       lastUserInteractionAt = Date.now();
+      const focusTarget = nav.dataset.focusTarget || '';
+      if (nav.closest('.global-tool-modal')) {
+        globalQuickAddOpen = false;
+        globalSearchOpen = false;
+        globalAlertsOpen = false;
+      }
       const navFromBottomBar = Boolean(nav.closest('.nav-shell'));
       const previousBottomNavId = navFromBottomBar ? currentRenderedBottomNavId(activeModule) : getActiveBottomNavId(activeModule);
       const legacyTargetTab = nav.dataset.targetTab || '';
@@ -19939,6 +20590,11 @@
           delete moduleTabs[activeModule];
           persistModuleTabsSoon();
         }
+        if (nav.dataset.quickCreate === 'task') {
+          moduleTabs = { ...(moduleTabs || {}), notebook: 'tasks', notebookCreate: 'task' };
+          persistModuleTabsSoon();
+        }
+        if (activeModule === 'readings' && nav.dataset.targetTab === 'entry') readingsEntryDrawerOpen = true;
         markModuleTransition();
         render();
         if (activeModule === 'shopping') scheduleShoppingCloudRefresh('shopping-open', { delay: 700, minAgeMs: 8000, quietMs: 700 });
@@ -19946,6 +20602,7 @@
         keepActiveNavCentered('smooth');
         keepActiveSectionTabsCentered('smooth');
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (focusTarget) window.setTimeout(() => app.querySelector(focusTarget)?.focus(), 80);
       } catch (error) {
         // render() může spadnout uprostřed přepisu app.innerHTML (chyba v
         // renderu konkrétního modulu) - bez tohohle by klik na navigaci
@@ -20153,6 +20810,13 @@
   });
 
   app.addEventListener('input', (event) => {
+    const globalSearchInput = event.target.closest('[data-global-search-input]');
+    if (globalSearchInput) {
+      globalSearchQuery = globalSearchInput.value || '';
+      const results = app.querySelector('[data-global-search-results]');
+      if (results) results.innerHTML = renderGlobalSearchResults(globalSearchQuery);
+      return;
+    }
     const weatherLocationSearch = event.target.closest('[data-weather-location-search]');
     if (weatherLocationSearch) { getWeatherModule().handleLocationSearchInput(weatherLocationSearch); return; }
     const loyaltySearchInput = event.target.closest('[data-loyalty-search]');
@@ -20274,6 +20938,10 @@
   setupInstallAndUpdateFlow();
   registerServiceWorker();
   installAppLikeTouchGuards();
+  window.setTimeout(() => maybeSendSystemNotifications(false), 12000);
+  window.setInterval(() => {
+    if (!document.hidden) maybeSendSystemNotifications(false);
+  }, 15 * 60 * 1000);
 
   if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
     window.__DOMACNOST_E2E_NAV__ = async (moduleId, tab = '') => {

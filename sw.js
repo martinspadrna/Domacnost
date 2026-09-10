@@ -1,28 +1,14 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-485`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-486`;
 const APP_ASSETS = [
   './',
   './index.html',
   './styles.css',
   './icon-assets.css',
   './module-loader.js',
-  './shopping.css',
   './supabase.js',
   './utils.js',
-  './shopping-utils.js',
-  './shopping-render.js',
-  './shopping-actions.js',
   './weather.js',
-  './notes.js',
-  './warranty.js',
-  './hdo.js',
-  './waste.js',
-  './finance.js',
-  './pool.js',
-  './vape.js',
-  './contracts.js',
-  './subscriptions.js',
-  './calendar.js',
   './pwa.js',
   './app.js',
   './sw.js',
@@ -41,6 +27,25 @@ const APP_ASSETS = [
   './icons/domacnost-plus-icon-512.png',
   './icons/domacnost-plus-maskable-192.png',
   './icons/domacnost-plus-maskable-512.png'
+];
+
+// Tyto soubory se nestahují při instalaci. Cache-first se stanou až po
+// prvním otevření modulu, takže další návštěva funguje i offline.
+const LAZY_APP_ASSETS = [
+  './shopping.css',
+  './shopping-utils.js',
+  './shopping-render.js',
+  './shopping-actions.js',
+  './notes.js',
+  './warranty.js',
+  './hdo.js',
+  './waste.js',
+  './finance.js',
+  './pool.js',
+  './vape.js',
+  './contracts.js',
+  './subscriptions.js',
+  './calendar.js'
 ];
 
 const CORE_FALLBACKS = {
@@ -74,6 +79,22 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification?.data?.url || './';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (windows) => {
+      const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+      if (existing) {
+        await existing.focus();
+        if ('navigate' in existing) await existing.navigate(targetUrl);
+        return existing;
+      }
+      return clients.openWindow(targetUrl);
+    })
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -128,7 +149,9 @@ self.addEventListener('fetch', (event) => {
   }
 
   const isNavigation = event.request.mode === 'navigate' || requestUrl.pathname.endsWith('/');
-  const isCoreAppFile = /\/(index\.html|app\.js|module-loader\.js|styles\.css|icon-assets\.css|shopping\.css|shopping-utils\.js|shopping-render\.js|shopping-actions\.js|sw\.js)$/.test(requestUrl.pathname);
+  const lazyAssetPath = `.${requestUrl.pathname}`;
+  const isCoreAppFile = /\/(index\.html|app\.js|module-loader\.js|styles\.css|icon-assets\.css|sw\.js)$/.test(requestUrl.pathname)
+    || LAZY_APP_ASSETS.includes(lazyAssetPath);
 
   // Start appky je cache-first: síť dřív blokovala každé spuštění (na mobilu
   // klidně několik vteřin, než dorazil index.html + app.js + styles.css), i

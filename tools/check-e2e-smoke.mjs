@@ -638,6 +638,12 @@ async function run() {
             tasks: !window.DomacnostNotes,
             contracts: !window.DomacnostContracts,
             subscriptions: !window.DomacnostSubscriptions,
+            warranties: !window.DomacnostWarranty,
+            hdo: !window.DomacnostHdo,
+            waste: !window.DomacnostWaste,
+            finance: !window.DomacnostFinance,
+            pool: !window.DomacnostPool,
+            calendar: !window.DomacnostCalendar,
             vape: !window.DomacnostVape
           },
           appRoot: Boolean(document.querySelector('#app')),
@@ -695,6 +701,39 @@ async function run() {
     if (!initialValue.navContracts) { fail('Po seed bootu není dostupná navigace Smlouvy.'); bootOk = false; }
     if (bootOk) ok('boot: nový Home, app root, verze, Finance, Bazén i Smlouvy navigace dostupné.');
 
+    await page.send('Runtime.evaluate', {
+      expression: `document.querySelector('[data-action="open-global-search"]')?.click()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    await page.send('Runtime.evaluate', {
+      expression: `(() => { const input = document.querySelector('[data-global-search-input]'); if (input) { input.value = 'Smoke'; input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Smoke', inputType: 'insertText' })); } })()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    const globalToolsCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const searchModal = document.querySelector('.global-search-modal');
+        const searchResults = document.querySelectorAll('.global-search-result').length;
+        const searchSurface = document.querySelector('#app')?.dataset?.lastRenderSurface || '';
+        document.querySelector('[data-action="close-global-tools"]')?.click();
+        document.querySelector('[data-action="open-global-quick-add"]')?.click();
+        const quickItems = document.querySelectorAll('.global-quick-add-item').length;
+        document.querySelector('[data-action="close-global-tools"]')?.click();
+        document.querySelector('[data-action="open-global-alerts"]')?.click();
+        const alertsModal = document.querySelector('.global-alerts-modal');
+        const alertsSettings = document.querySelector('.global-alerts-modal [data-nav="settings"][data-target-tab="notifications"]');
+        document.querySelector('[data-action="close-global-tools"]')?.click();
+        return { searchModal: Boolean(searchModal), searchResults, searchSurface, quickItems, alertsModal: Boolean(alertsModal), alertsSettings: Boolean(alertsSettings) };
+      })()`
+    });
+    const globalToolsValue = globalToolsCheck.result?.value || {};
+    let globalToolsOk = true;
+    if (!globalToolsValue.searchModal || globalToolsValue.searchResults < 1) { fail('Globální hledání nevrátilo seed data.'); globalToolsOk = false; }
+    if (globalToolsValue.searchSurface === 'shell') { fail('Globální hledání zbytečně překreslilo celý shell.'); globalToolsOk = false; }
+    if (globalToolsValue.quickItems < 6) { fail('Rychlé přidání nenabízí všechny hlavní typy záznamů.'); globalToolsOk = false; }
+    if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
+    if (globalToolsOk) ok('Globální nástroje: hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
+
     const firstPhysicalNav = await measurePhysicalNavClick(page, 'finance');
     if (process.env.E2E_DEBUG === '1') {
       console.log('DEBUG first physical nav:', JSON.stringify(firstPhysicalNav, null, 2));
@@ -708,6 +747,9 @@ async function run() {
     } else {
       ok(`Performance: prvni fyzicky klik na Finance ${firstPhysicalNav.latencyMs} ms.`);
     }
+    const financeLazyReady = await page.send('Runtime.evaluate', { returnByValue: true, expression: `Boolean(window.DomacnostFinance && document.querySelector('[data-tab-area="finance"]'))` });
+    if (!financeLazyReady.result?.value) fail('Finance se po prvním kliknutí nenačetly jako odložený modul.');
+    else ok('Lazy loading: Finance se stáhly a vykreslily až po prvním otevření.');
 
     await page.send('Runtime.evaluate', {
       expression: `window.__DOMACNOST_E2E_NAV__ ? window.__DOMACNOST_E2E_NAV__('more') : (() => { const item = document.querySelector('[data-nav="more"]'); item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); })()`
@@ -1118,6 +1160,39 @@ async function run() {
     if (!settingsValue.importDrawer) { fail('Nastavení Data nemá import drawer.'); settingsOk = false; }
     if (!settingsValue.importTextarea) { fail('Import JSON textarea nemá stabilní výšku.'); settingsOk = false; }
     if (settingsOk) ok('Nastavení: karty, volby vzhledu a import dat renderují v novém povrchu.');
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('settings', 'notifications')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const notificationSettingsCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const switches = document.querySelectorAll('[data-action="toggle-notification-type"]');
+        const first = switches[0];
+        const before = first?.getAttribute('aria-checked');
+        first?.click();
+        const after = document.querySelector('[data-action="toggle-notification-type"]')?.getAttribute('aria-checked');
+        return { panel: Boolean(document.querySelector('.panel-notifications')), count: switches.length, before, after };
+      })()`
+    });
+    const notificationSettingsValue = notificationSettingsCheck.result?.value || {};
+    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 7 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
+    else ok('Upozornění: sedm typů lze samostatně zapnout nebo vypnout.');
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('settings', 'cloud')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const unifiedCloudCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({ unified: document.querySelectorAll('.panel-cloud .unified-cloud-control').length, legacy: document.querySelectorAll('.panel-cloud [data-action="cloud-load-all"], .panel-cloud [data-action="cloud-sync-pending"], .panel-cloud [data-action="cloud-setup-realtime"]').length }))()`
+    });
+    const unifiedCloudValue = unifiedCloudCheck.result?.value || {};
+    if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0) fail('Cloud nastavení nemá právě jeden sjednocený ovládací prvek.');
+    else ok('Cloud: stav a ruční synchronizace jsou sjednocené do jednoho ovládacího prvku.');
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('pool') : document.querySelector('[data-nav="pool"]')?.click()`

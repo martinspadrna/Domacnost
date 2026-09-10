@@ -70,8 +70,9 @@ if (app && finance) {
 }
 
 if (app && pool && index && sw) {
-  expect(index, './pool.js?v=', 'index.html: pool.js se načítá v Home startovní sadě.');
-  expect(sw, "'./pool.js'", 'sw.js: pool.js je v APP_ASSETS.');
+  expectAbsent(index, './pool.js?v=', 'index.html: pool.js neblokuje první vykreslení.');
+  expect(moduleLoader, "pool: {\n      scripts: ['pool.js']", 'module-loader.js: Bazén se načítá při prvním použití.');
+  expect(sw, "'./pool.js'", 'sw.js: pool.js je v odložené offline cache.');
   expect(app, "{ id: 'pool'", 'app.js: pool je v module registry/Home konfiguraci.');
   expect(app, 'let poolInstance = null', 'app.js: pool má modulovou instanci.');
   expect(app, 'function getPoolModule()', 'app.js: getPoolModule factory wrapper existuje.');
@@ -349,7 +350,7 @@ if (pkg) {
 }
 
 if (app && index && moduleLoader) {
-  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'vape.js'].forEach((asset) => {
+  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'warranty.js', 'hdo.js', 'waste.js', 'finance.js', 'pool.js', 'calendar.js', 'vape.js'].forEach((asset) => {
     expectAbsent(index, `./${asset}?v=`, `index.html: ${asset} neblokuje první vykreslení.`);
     expect(moduleLoader, `'${asset}'`, `module-loader.js: ${asset} je dostupný na vyžádání.`);
   });

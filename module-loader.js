@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-485';
+  const ASSET_VERSION = '0-1-486';
   const definitions = {
     shopping: {
       styles: ['shopping.css'],
@@ -19,6 +19,30 @@
     subscriptions: {
       scripts: ['subscriptions.js'],
       ready: () => Boolean(window.DomacnostSubscriptions)
+    },
+    warranties: {
+      scripts: ['warranty.js'],
+      ready: () => Boolean(window.DomacnostWarranty)
+    },
+    hdo: {
+      scripts: ['hdo.js'],
+      ready: () => Boolean(window.DomacnostHdo)
+    },
+    waste: {
+      scripts: ['waste.js'],
+      ready: () => Boolean(window.DomacnostWaste)
+    },
+    finance: {
+      scripts: ['finance.js'],
+      ready: () => Boolean(window.DomacnostFinance)
+    },
+    pool: {
+      scripts: ['pool.js'],
+      ready: () => Boolean(window.DomacnostPool)
+    },
+    calendar: {
+      scripts: ['calendar.js'],
+      ready: () => Boolean(window.DomacnostCalendar)
     },
     vape: {
       scripts: ['vape.js'],
