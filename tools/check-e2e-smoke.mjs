@@ -741,6 +741,19 @@ async function run() {
     if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
     if (globalToolsOk) ok('Globální nástroje: Ctrl/⌘ + K, rozšířené hledání, rychlé přidání a upozornění fungují bez přestavby shellu.');
 
+    await page.send('Runtime.evaluate', {
+      expression: `document.querySelector('.nav-shell .nav-item[data-nav="finance"]')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }))`
+    });
+    const financeIntentWarm = await waitForExpression(page, `Boolean(window.DomacnostFinance)`, 2600, 40);
+    const financeIntentState = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `({ warmed: Boolean(window.DomacnostFinance), stayedHome: document.querySelector('.nav-shell .nav-item[data-nav="home"]')?.classList.contains('active') === true, busy: document.documentElement.classList.contains('app-module-loading') || document.querySelector('#module-load-status')?.classList.contains('is-visible') })`
+    });
+    if (!financeIntentWarm || !financeIntentState.result?.value?.warmed) fail('Performance: záměr otevřít Finance nepřipravil modul před kliknutím.');
+    else if (!financeIntentState.result?.value?.stayedHome) fail('Performance: přednačtení Financí samo změnilo otevřený modul.');
+    else if (financeIntentState.result?.value?.busy) fail('Performance: tiché přednačtení Financí zobrazilo rušivý stav načítání.');
+    else ok('Performance: najetí připraví Finance bez změny otevřené obrazovky.');
+
     const firstPhysicalNav = await measurePhysicalNavClick(page, 'finance');
     if (process.env.E2E_DEBUG === '1') {
       console.log('DEBUG first physical nav:', JSON.stringify(firstPhysicalNav, null, 2));
@@ -757,7 +770,7 @@ async function run() {
     const financeLazyReady = await page.send('Runtime.evaluate', { returnByValue: true, expression: `({ ready: Boolean(window.DomacnostFinance && document.querySelector('[data-tab-area="finance"]')), busy: document.documentElement.classList.contains('app-module-loading') || document.querySelector('#module-load-status')?.classList.contains('is-visible') })` });
     if (!financeLazyReady.result?.value?.ready) fail('Finance se po prvním kliknutí nenačetly jako odložený modul.');
     else if (financeLazyReady.result?.value?.busy) fail('Stav načítání zůstal viset i po otevření Financí.');
-    else ok('Lazy loading: Finance se stáhly a vykreslily až po prvním otevření.');
+    else ok('Lazy loading: připravené Finance se po prvním kliknutí správně vykreslily.');
 
     await page.send('Runtime.evaluate', {
       expression: `window.__DOMACNOST_E2E_NAV__ ? window.__DOMACNOST_E2E_NAV__('more') : (() => { const item = document.querySelector('[data-nav="more"]'); item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); })()`

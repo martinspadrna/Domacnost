@@ -370,6 +370,12 @@ if (app && index && moduleLoader) {
   expect(index, 'id="module-load-status"', 'index.html: pomalé načtení modulu má samostatný stavový prvek.');
   expect(app, 'let moduleLoadBusyCount = 0', 'app.js: souběžné načítání modulů používá bezpečný čítač.');
   expect(styles, '.module-load-status.is-visible', 'styles.css: stav načítání je viditelný až při práci modulu.');
+  expect(app, 'function moduleIdFromNavigationTarget', 'app.js: klik i přednačtení sdílí stejné určení cílového modulu.');
+  expect(app, 'function allowModuleIntentPrefetch', 'app.js: přednačítání respektuje úsporné a velmi pomalé připojení.');
+  expect(app, "app.addEventListener('pointerover', (event) => scheduleModuleIntentPrefetch(event.target))", 'app.js: najetí na navigaci připraví odložený modul.');
+  expect(app, "app.addEventListener('focusin', (event) => scheduleModuleIntentPrefetch(event.target))", 'app.js: klávesnicové zaměření připraví odložený modul.');
+  expect(app, "app.addEventListener('pointerdown', (event) => scheduleModuleIntentPrefetch(event.target, { immediate: true })", 'app.js: dotyk začne modul načítat ještě před kliknutím.');
+  expect(app, 'primeModuleCode(moduleId, { renderOnReady: false })', 'app.js: příprava modulu na základě záměru nepřekreslí otevřenou obrazovku.');
 }
 
 console.log('App wiring smoke pro Domácnost+');

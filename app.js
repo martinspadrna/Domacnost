@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_488';
-  const APP_BUILD = 488;
+  const APP_VERSION = 'Domácnost+ v.0.1_489';
+  const APP_BUILD = 489;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1122,11 +1122,61 @@
     }
   }
 
-  function primeModuleCode(moduleId) {
+  function primeModuleCode(moduleId, { renderOnReady = true } = {}) {
     if (moduleCodeReady(moduleId)) return;
     ensureModuleCode(moduleId)
-      .then(() => requestBackgroundRender())
+      .then(() => {
+        if (renderOnReady) requestBackgroundRender();
+      })
       .catch((error) => console.warn('Odložený modul se nepodařilo načíst', moduleId, error));
+  }
+
+  function moduleIdFromNavigationTarget(target) {
+    const nav = target?.closest?.('[data-nav]');
+    if (nav) {
+      const legacyTargetTab = nav.dataset.targetTab || '';
+      return nav.dataset.nav === 'homecare'
+        ? ({ hdo: 'hdo', waste: 'waste', tasks: 'tasks', warranties: 'warranties', 'polish-holidays': 'polishHolidays' }[legacyTargetTab] || 'hdo')
+        : nav.dataset.nav;
+    }
+    const overviewAction = target?.closest?.('[data-action="open-overview"]');
+    if (overviewAction) return overviewTarget(overviewAction.dataset.overview || 'tasks')?.nav || '';
+    return '';
+  }
+
+  function allowModuleIntentPrefetch() {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!connection) return true;
+    if (connection.saveData) return false;
+    return !/(^|-)2g$/i.test(String(connection.effectiveType || ''));
+  }
+
+  let moduleIntentTimer = 0;
+  let moduleIntentId = '';
+
+  function scheduleModuleIntentPrefetch(target, { immediate = false } = {}) {
+    const moduleId = moduleIdFromNavigationTarget(target);
+    if (!moduleId || moduleId === activeModule || moduleCodeReady(moduleId)) return;
+    if (!immediate && !allowModuleIntentPrefetch()) return;
+    window.clearTimeout(moduleIntentTimer);
+    moduleIntentId = moduleId;
+    const warm = () => {
+      moduleIntentTimer = 0;
+      moduleIntentId = '';
+      primeModuleCode(moduleId, { renderOnReady: false });
+    };
+    if (immediate) warm();
+    else moduleIntentTimer = window.setTimeout(warm, 90);
+  }
+
+  function cancelModuleIntentPrefetch(target, relatedTarget) {
+    if (!moduleIntentTimer || !moduleIntentId) return;
+    const moduleId = moduleIdFromNavigationTarget(target);
+    if (moduleId !== moduleIntentId) return;
+    if (relatedTarget && moduleIdFromNavigationTarget(relatedTarget) === moduleId) return;
+    window.clearTimeout(moduleIntentTimer);
+    moduleIntentTimer = 0;
+    moduleIntentId = '';
   }
 
   const lazyDataCore = createLazyDataCore();
@@ -20574,6 +20624,11 @@
     lastUserInteractionAt = Date.now();
   }, { passive: true });
 
+  app.addEventListener('pointerover', (event) => scheduleModuleIntentPrefetch(event.target));
+  app.addEventListener('pointerout', (event) => cancelModuleIntentPrefetch(event.target, event.relatedTarget));
+  app.addEventListener('focusin', (event) => scheduleModuleIntentPrefetch(event.target));
+  app.addEventListener('pointerdown', (event) => scheduleModuleIntentPrefetch(event.target, { immediate: true }), { passive: true });
+
   document.addEventListener('toggle', (event) => {
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement)) return;
@@ -20626,10 +20681,7 @@
       }
       const navFromBottomBar = Boolean(nav.closest('.nav-shell'));
       const previousBottomNavId = navFromBottomBar ? currentRenderedBottomNavId(activeModule) : getActiveBottomNavId(activeModule);
-      const legacyTargetTab = nav.dataset.targetTab || '';
-      const nextModule = nav.dataset.nav === 'homecare'
-        ? ({ hdo: 'hdo', waste: 'waste', tasks: 'tasks', warranties: 'warranties', 'polish-holidays': 'polishHolidays' }[legacyTargetTab] || 'hdo')
-        : nav.dataset.nav;
+      const nextModule = moduleIdFromNavigationTarget(nav);
       try {
         await ensureModuleCodeForInteraction(nextModule);
         if (nextModule !== activeModule) closeAllModuleOverlays();
