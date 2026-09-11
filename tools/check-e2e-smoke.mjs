@@ -1803,6 +1803,52 @@ async function run() {
     if (!modalValue.formSingleColumn) { fail('Modalni formular neni na mobilu jednosloupcovy.'); modalOk = false; }
     if (modalOk) ok('Modaly: garage tankovani se otevira jako novy mobilni sheet s formularovou akci.');
 
+    await page.send('Runtime.evaluate', {
+      expression: `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))`
+    });
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width: 1920,
+      height: 1080,
+      deviceScaleFactor: 1,
+      mobile: false
+    });
+    await page.send('Runtime.evaluate', {
+      expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('home') : document.querySelector('[data-nav="home"]')?.click()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    const desktopViewportCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const row = document.querySelector('.app-desktop-row');
+        const sidebar = document.querySelector('.app-sidebar');
+        const frame = document.querySelector('.app-desktop-row .app-frame');
+        const main = document.querySelector('.home-redesign-shell.home-app-shell .home-clean-frame > main');
+        const nav = document.querySelector('.nav-shell');
+        const rowRect = row?.getBoundingClientRect();
+        const sidebarRect = sidebar?.getBoundingClientRect();
+        const frameRect = frame?.getBoundingClientRect();
+        const mainRect = main?.getBoundingClientRect();
+        return {
+          row: Boolean(row),
+          sidebar: Boolean(sidebarRect && sidebarRect.width >= 240),
+          frame: Boolean(frameRect),
+          rightGap: frameRect ? Math.round(window.innerWidth - frameRect.right) : 9999,
+          availableWidthGap: frameRect && sidebarRect ? Math.round(window.innerWidth - sidebarRect.right - frameRect.width) : 9999,
+          bottomGap: mainRect ? Math.round(window.innerHeight - mainRect.bottom) : 9999,
+          rowWidth: rowRect ? Math.round(rowRect.width) : 0,
+          navHidden: nav ? getComputedStyle(nav).display === 'none' : true
+        };
+      })()`
+    });
+    const desktopViewportValue = desktopViewportCheck.result?.value || {};
+    let desktopViewportOk = true;
+    if (!desktopViewportValue.row || !desktopViewportValue.sidebar || !desktopViewportValue.frame) { fail('Desktop layout nema kompletni sidebar/frame strukturu.'); desktopViewportOk = false; }
+    if (Math.abs(Number(desktopViewportValue.rightGap || 0)) > 24) { fail(`Desktop obsah nevyuziva pravou hranu viewportu (mezera ${desktopViewportValue.rightGap}px).`); desktopViewportOk = false; }
+    if (Math.abs(Number(desktopViewportValue.availableWidthGap || 0)) > 24) { fail(`Desktop frame nevyuziva sirku vedle sidebaru (rozdil ${desktopViewportValue.availableWidthGap}px).`); desktopViewportOk = false; }
+    if (Math.abs(Number(desktopViewportValue.bottomGap || 0)) > 32) { fail(`Home na desktopu nevyuziva vysku viewportu (spodni mezera ${desktopViewportValue.bottomGap}px).`); desktopViewportOk = false; }
+    if (!desktopViewportValue.navHidden) { fail('Mobilni navigace zustala viditelna na desktopu.'); desktopViewportOk = false; }
+    if (desktopViewportOk) ok('Desktop: aplikace vyuziva celou sirku i vysku dostupne plochy.');
+
     const renderTimingCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {

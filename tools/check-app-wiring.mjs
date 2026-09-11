@@ -164,10 +164,19 @@ if (app && contracts && index && sw && moduleLoader) {
 }
 
 if (app) {
+  const autosyncBody = app.match(/async function runCloudAutosyncNow[\s\S]*?\n  function setCloudAutosyncEnabled/)?.[0] || '';
   expect(app, "const SUPABASE_STORAGE_KEY = 'domacnost-plus-auth-hyyehcskthqmncqlechi';", 'app.js: přihlášení má úložiště oddělené pro novou Supabase.');
   expect(app, "const LEGACY_SUPABASE_STORAGE_KEYS = ['domacnost-plus-auth'];", 'app.js: původní obecný auth klíč se bezpečně migruje nebo odstraní.');
   expect(app, 'function storedSupabaseSessionMatchesProject', 'app.js: uložený JWT se ověřuje proti aktuálnímu Supabase projektu.');
+  expect(app, "state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)", 'app.js: izolovaný E2E režim nemusí používat skutečný Supabase JWT.');
   expect(app, /prepareSupabaseAuthStorage\(\);\s*render\(\);/, 'app.js: kontrola Supabase relace proběhne před prvním vykreslením.');
+  expect(app, 'const CLOUD_AUTOSYNC_RETRY_DELAYS_MS = [15000, 30000, 60000, 120000];', 'app.js: autosync má omezené postupné opakování po výpadku.');
+  expect(app, 'function ensurePendingCloudModuleCode', 'app.js: autosync připraví jen moduly s čekajícími změnami.');
+  expectAbsent(autosyncBody, 'cloudLoadAllModules(', 'app.js: běžný autosync po jedné změně už nenačítá všechny moduly.');
+  expect(app, "window.addEventListener('online', () => {", 'app.js: návrat internetu obnoví cloudovou aktivitu.');
+  expect(app, "window.addEventListener('offline', () => {", 'app.js: ztráta internetu přepne synchronizaci do čekajícího stavu.');
+  expect(app, 'householdUiPendingAt', 'app.js: neodeslané společné nastavení domácnosti je trvale evidované.');
+  expect(app, 'entry.items.filter((item) => !item.cloudId || item.syncStatus)', 'app.js: přehled cloudu počítá i neodeslané úpravy existujících záznamů.');
   expect(app, 'function requestBackgroundRender()', 'app.js: background/cloud render ma tichy vstup.');
   expect(app, "document.documentElement.classList.add('app-quiet-render')", 'app.js: tiche rendery umi vypnout rusivou animaci obsahu.');
   expect(app, 'function markModuleTransition()', 'app.js: rucni prepnuti modulu ma explicitni prechod.');
@@ -244,6 +253,7 @@ if (app) {
   expect(e2e, 'async function measurePhysicalNavClick', 'tools/check-e2e-smoke.mjs: E2E meri skutecny fyzicky klik na prvni navigaci.');
   expect(e2e, 'Input.dispatchMouseEvent', 'tools/check-e2e-smoke.mjs: fyzicky nav test pouziva CDP vstup, ne interni helper.');
   expect(e2e, 'firstPhysicalNav.latencyMs', 'tools/check-e2e-smoke.mjs: fyzicky nav test hlida latenci prvniho prepnuti.');
+  expect(e2e, "ok('Desktop: aplikace vyuziva celou sirku i vysku dostupne plochy.')", 'tools/check-e2e-smoke.mjs: real-browser test hlídá plnou desktopovou plochu.');
   expectAbsent(app, 'function readNavRunnerSnapshot', 'app.js: klik na spodni navigaci nesmi pred renderem cist layout rozmery.');
   expectAbsent(app, 'placeNavRunnerAt', 'app.js: nav runner uz nepotrebuje pixel snapshot z klikoveho tasku.');
   expectAbsent(app, "localStorage.setItem('homeWeb.activeModule', activeModule);", 'app.js: přepnutí modulu nesmí synchronně zapisovat activeModule do localStorage.');

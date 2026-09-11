@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_494';
-  const APP_BUILD = 494;
+  const APP_VERSION = 'Domácnost+ v.0.1_495';
+  const APP_BUILD = 495;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -901,6 +901,8 @@
       profilesLoadedAt: '',
       lastRealtimeAt: '',
       lastAutosyncAt: '',
+      autosyncRetryAt: '',
+      householdUiPendingAt: '',
       localPendingCount: 0,
       autoSyncEnabled: true,
       autosyncStatus: 'idle',
@@ -1049,12 +1051,15 @@
   const AUTOSYNC_STATUS_LABELS = {
     idle: 'čeká',
     pending: 'čeká na sync',
+    waiting: 'čeká na internet',
     syncing: 'synchronizuje',
     done: 'hotovo',
     blocked: 'ručně dořešit',
     error: 'chyba',
     disabled: 'vypnuto'
   };
+
+  const CLOUD_AUTOSYNC_RETRY_DELAYS_MS = [15000, 30000, 60000, 120000];
 
   let lastVisualSettingsSignature = '';
   const ICON_HTML_CACHE_LIMIT = 360;
@@ -1300,6 +1305,7 @@
   const cloudRealtimePendingSources = new Set();
   let cloudAutosyncTimer = null;
   let cloudAutosyncRunning = false;
+  let cloudAutosyncFailureCount = 0;
   let homeHeroEditMode = false;
   let homeEditSheetOpen = false;
   let homeHeroLongPressTimer = null;
@@ -1968,6 +1974,8 @@
     migrated.cloud.autoSyncEnabled = migrated.cloud?.autoSyncEnabled !== false;
     migrated.cloud.autosyncStatus = migrated.cloud?.autosyncStatus || 'idle';
     migrated.cloud.lastAutosyncAt = migrated.cloud?.lastAutosyncAt || '';
+    migrated.cloud.autosyncRetryAt = migrated.cloud?.autosyncRetryAt || '';
+    migrated.cloud.householdUiPendingAt = migrated.cloud?.householdUiPendingAt || '';
     migrated.cloud.profilesLoadedAt = migrated.cloud?.profilesLoadedAt || '';
     migrated.cloud.localPendingCount = Number(migrated.cloud?.localPendingCount || 0);
     delete migrated.devices;
@@ -2941,7 +2949,7 @@
     // The browser smoke suite validates the seeded local UI. Letting the fake
     // signed-in session reach Supabase makes the result depend on network speed
     // and can replace the seed while the suite is still navigating modules.
-    if (state.meta?.mode === 'e2e-smoke') return;
+    if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) return;
     if (cloudWarmStartTimer) return;
     // If we believe the user is signed in (saved state), start eagerly so the
     // household loads quickly and the "not configured" login flash is minimised.
@@ -6513,6 +6521,14 @@
 
 
   function getCloudSyncOverviewItems() {
+    const snapshotSectionPending = Boolean(
+      state.subscriptionsCloud?.pendingAt
+      || state.readingsCloud?.pendingAt
+      || state.loyaltyCardsCloud?.pendingAt
+      || state.poolCloud?.pendingAt
+      || state.financeCloud?.templatesPendingAt
+    );
+    const householdUiFallbackPending = state.cloud?.householdUiPendingAt && !snapshotSectionPending ? 1 : 0;
     const counters = [
       { nav: 'settings', tab: 'household', icon: '👥', label: 'Profily', items: state.profiles || [], loadedAt: state.cloud?.profilesLoadedAt },
       { nav: 'shopping', tab: 'list', icon: '🛒', label: 'Nákupy', items: [...(state.shoppingLists || []), ...(state.shopping || [])], loadedAt: state.shoppingCloud?.loadedAt },
@@ -6522,20 +6538,27 @@
       { nav: 'garage', tab: 'overview', icon: '🚗', label: 'Garáž', items: [...(state.vehicles || []), ...(state.fuel || []), ...(state.services || [])] },
       { nav: 'hdo', tab: '', icon: '💡', label: 'HDO', items: state.hdoWindows || [], loadedAt: state.hdoCloud?.loadedAt },
       { nav: 'waste', tab: '', icon: '♻️', label: 'Odpad', items: state.waste || [], loadedAt: state.wasteCloud?.loadedAt },
-      { nav: 'readings', tab: 'overview', icon: '📊', label: 'Odečty', items: [...(state.readingMeters || []), ...(state.readings || [])], loadedAt: state.readingsCloud?.loadedAt || state.householdExtrasCloud?.loadedAt },
+      { nav: 'readings', tab: 'overview', icon: '📊', label: 'Odečty', items: [...(state.readingMeters || []), ...(state.readings || [])], loadedAt: state.readingsCloud?.loadedAt || state.householdExtrasCloud?.loadedAt, cloudSynced: Boolean(state.readingsCloud?.loadedAt && cloudReady()), pendingCount: state.readingsCloud?.pendingAt ? 1 : 0 },
       { nav: 'tasks', tab: '', icon: '🗒️', label: 'Zápisník a úkoly', items: [...(state.homeTasks || []), ...(state.notes || [])], loadedAt: state.tasksCloud?.loadedAt || state.householdExtrasCloud?.loadedAt },
       { nav: 'calendar', tab: 'overview', icon: '📅', label: 'Kalendář', items: state.calendar || [], loadedAt: state.calendarCloud?.loadedAt },
       { nav: 'calendar', tab: 'sources', icon: '🧩', label: 'Zdroje kalendáře', items: getCalendarSources(), loadedAt: state.calendarCloud?.sourcesLoadedAt },
       { nav: 'finance', tab: 'summary', icon: '💰', label: 'Finance', items: state.finance || [], loadedAt: state.financeCloud?.loadedAt },
-      { nav: 'subscriptions', tab: 'overview', icon: '🎬', label: 'Předplatné', items: [...(state.subscriptions || []), ...(state.subscriptionPeople || []), ...(state.subscriptionPayments || [])], loadedAt: state.subscriptionsCloud?.loadedAt, cloudSynced: Boolean(state.subscriptionsCloud?.loadedAt && cloudReady()) },
+      { nav: 'subscriptions', tab: 'overview', icon: '🎬', label: 'Předplatné', items: [...(state.subscriptions || []), ...(state.subscriptionPeople || []), ...(state.subscriptionPayments || [])], loadedAt: state.subscriptionsCloud?.loadedAt, cloudSynced: Boolean(state.subscriptionsCloud?.loadedAt && cloudReady()), pendingCount: state.subscriptionsCloud?.pendingAt ? 1 : 0 },
       { nav: 'warranties', tab: '', icon: '🧾', label: 'Záruky', items: state.warranties || [], loadedAt: state.householdExtrasCloud?.loadedAt },
-      { nav: 'shopping', tab: 'coupons', icon: '🏷️', label: 'Slevové kódy', items: state.coupons || [], loadedAt: state.householdExtrasCloud?.loadedAt }
+      { nav: 'shopping', tab: 'coupons', icon: '🏷️', label: 'Slevové kódy', items: state.coupons || [], loadedAt: state.householdExtrasCloud?.loadedAt },
+      { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0 },
+      { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0 },
+      { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: state.financeCloud?.templatesPendingAt ? 1 : 0 },
+      { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending }
     ];
     return counters.map((entry) => {
       const total = entry.items.length;
-      const cloud = entry.cloudSynced ? total : entry.items.filter((item) => item.cloudId).length;
-      const local = Math.max(total - cloud, 0);
-      const percent = total ? Math.round((cloud / total) * 100) : 100;
+      const itemLocal = entry.items.filter((item) => !item.cloudId || item.syncStatus).length;
+      const hasSnapshotStatus = Number.isFinite(entry.pendingCount) && (entry.cloudSynced || entry.pendingCount > 0);
+      const local = hasSnapshotStatus ? Math.max(0, Number(entry.pendingCount || 0)) : entry.cloudSynced ? 0 : itemLocal;
+      const cloud = entry.cloudSynced ? Math.max(total - local, 0) : Math.max(total - itemLocal, 0);
+      const trackedTotal = Math.max(total, cloud + local);
+      const percent = trackedTotal ? Math.round((cloud / trackedTotal) * 100) : 100;
       return { ...entry, total, cloud, local, percent };
     });
   }
@@ -6557,12 +6580,16 @@
     const pending = totalLocal === null ? getCloudSyncOverviewItems().reduce((sum, item) => sum + item.local, 0) : Number(totalLocal || 0);
     const status = String(state.cloud?.autosyncStatus || 'idle');
     const failed = ['error', 'blocked'].includes(status) || state.cloud?.realtimeStatus === 'channel_error';
+    const waiting = status === 'waiting' || !browserAppearsOnline();
     const syncing = status === 'syncing';
+    const retryAt = Date.parse(state.cloud?.autosyncRetryAt || '');
+    const retrySeconds = Number.isFinite(retryAt) ? Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
+    const retryText = status === 'pending' && retrySeconds > 0 ? ` · další pokus za ${retrySeconds} s` : '';
     if (!ready) return `<div class="unified-cloud-control offline"><span class="sync-status-dot"></span><div><strong>Cloud není připojený</strong><em>Data jsou zatím jen v tomto zařízení.</em></div><button class="ghost-btn" type="button" data-nav="settings" data-target-tab="cloud">Připojit</button></div>`;
-    return `<div class="unified-cloud-control ${failed ? 'error' : pending ? 'pending' : 'good'}" data-cloud-unified-status>
+    return `<div class="unified-cloud-control ${failed ? 'error' : waiting || pending ? 'pending' : 'good'}" data-cloud-unified-status>
       <span class="sync-status-dot"></span>
-      <div><strong>${failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}</em></div>
-      <button class="${failed || pending ? 'primary-btn' : 'ghost-btn'}" type="button" data-action="cloud-sync-unified" ${syncing ? 'disabled' : ''}>${failed ? 'Zkusit znovu' : pending ? 'Synchronizovat' : 'Zkontrolovat'}</button>
+      <div><strong>${waiting ? 'Čekám na internet' : failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'}${waiting ? ' · odešlou se automaticky po připojení' : `${retryText} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}`}</em></div>
+      <button class="${failed || pending ? 'primary-btn' : 'ghost-btn'}" type="button" data-action="cloud-sync-unified" ${syncing || waiting ? 'disabled' : ''}>${waiting ? 'Čekám' : failed ? 'Zkusit znovu' : pending ? 'Synchronizovat' : 'Zkontrolovat'}</button>
     </div>`;
   }
 
@@ -14122,6 +14149,9 @@
   }
 
   function prepareSupabaseAuthStorage() {
+    // E2E používá záměrně neplatnou lokální relaci, aby nikdy nezasahovalo do
+    // skutečné Supabase. Produkční běh tímto režimem projít nemůže.
+    if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) return;
     let currentRaw = '';
     let removedIncompatibleSession = false;
     try {
@@ -15619,7 +15649,7 @@
   function scheduleShoppingCloudRefresh(reason = 'auto', options = {}) {
     // E2E ověřuje přesně připravený lokální nákup. Automatický cloudový refresh
     // by mohl uprostřed testu přepsat seed podle rychlosti sítě runneru.
-    if (state.meta?.mode === 'e2e-smoke') return;
+    if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) return;
     if (!cloudReady()) return;
     if (activeModule !== 'shopping') return;
     if (document.hidden) return;
@@ -17403,23 +17433,73 @@
     }
   }
 
-  function scheduleCloudAutosync(source = 'save') {
+  function browserAppearsOnline() {
+    return navigator.onLine !== false;
+  }
+
+  function clearCloudAutosyncTimer() {
+    if (!cloudAutosyncTimer) return;
+    window.clearTimeout(cloudAutosyncTimer);
+    cloudAutosyncTimer = null;
+  }
+
+  function cloudAutosyncRetryDelayMs() {
+    const index = Math.min(Math.max(0, cloudAutosyncFailureCount - 1), CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length - 1);
+    return CLOUD_AUTOSYNC_RETRY_DELAYS_MS[index];
+  }
+
+  function pendingCloudModuleIds(items = null) {
+    const lazySyncModules = new Set(['shopping', 'tasks', 'contracts', 'warranties', 'garage', 'hdo', 'waste', 'calendar', 'finance', 'pool']);
+    const rows = items || getCloudSyncOverviewItems();
+    return [...new Set(rows.filter((item) => Number(item.local || 0) > 0).map((item) => item.nav).filter((id) => lazySyncModules.has(id)))];
+  }
+
+  async function ensurePendingCloudModuleCode(items = null) {
+    const ids = pendingCloudModuleIds(items);
+    await Promise.all(ids.map((id) => ensureModuleCode(id)));
+    return ids;
+  }
+
+  function scheduleCloudAutosync(source = 'save', options = {}) {
     if (!cloudReady()) return;
     if (state.cloud?.autoSyncEnabled === false) return;
     if (cloudAutosyncRunning || cloudRealtimeReloading || suppressToastDepth > 0) return;
     const pending = cloudLocalPendingCount();
     state.cloud.localPendingCount = pending;
-    if (!pending) return;
-    if (Date.now() - cloudAutosyncLastAttempt < 6500) return;
-    if (cloudAutosyncTimer) window.clearTimeout(cloudAutosyncTimer);
+    if (!pending) {
+      clearCloudAutosyncTimer();
+      state.cloud.autosyncRetryAt = '';
+      return;
+    }
+    if (!browserAppearsOnline()) {
+      clearCloudAutosyncTimer();
+      state.cloud.autosyncStatus = 'waiting';
+      state.cloud.autosyncSource = source;
+      state.cloud.autosyncRetryAt = '';
+      persistStateSnapshot();
+      requestBackgroundRender();
+      return;
+    }
+    const force = options.force === true;
+    const sinceLastAttempt = Date.now() - cloudAutosyncLastAttempt;
+    clearCloudAutosyncTimer();
     state.cloud.autosyncStatus = 'pending';
     state.cloud.autosyncSource = source;
-    persistStateSnapshot();
+    const requestedDelay = Number(options.delayMs);
     const quietMs = source === 'save' ? 3000 : 3600;
-    const baseDelay = source === 'save' ? 6500 : 9600;
+    let baseDelay = Number.isFinite(requestedDelay) ? Math.max(250, requestedDelay) : source === 'save' ? 6500 : 9600;
+    if (!force && sinceLastAttempt < 6500) baseDelay = Math.max(baseDelay, 6500 - sinceLastAttempt + 250);
+    state.cloud.autosyncRetryAt = new Date(Date.now() + baseDelay).toISOString();
+    persistStateSnapshot();
+    requestBackgroundRender();
     const attemptAutosync = () => {
+      if (!browserAppearsOnline()) {
+        cloudAutosyncTimer = null;
+        scheduleCloudAutosync('offline-wait', { force: true });
+        return;
+      }
       const elapsed = Date.now() - lastUserInteractionAt;
-      if (elapsed < quietMs) {
+      if (!force && elapsed < quietMs) {
         cloudAutosyncTimer = window.setTimeout(attemptAutosync, Math.max(500, quietMs - elapsed + 220));
         return;
       }
@@ -17436,15 +17516,27 @@
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
       return false;
     }
-    if (cloudAutosyncTimer) {
-      window.clearTimeout(cloudAutosyncTimer);
-      cloudAutosyncTimer = null;
+    clearCloudAutosyncTimer();
+    if (showMessage) cloudAutosyncFailureCount = 0;
+    if (!browserAppearsOnline()) {
+      state.cloud = {
+        ...(state.cloud || {}),
+        autosyncStatus: 'waiting',
+        autosyncRetryAt: '',
+        localPendingCount: cloudLocalPendingCount()
+      };
+      persistStateSnapshot();
+      requestBackgroundRender();
+      if (showMessage) showToast('Bez internetu. Změny zůstávají uložené a odešlou se po připojení.');
+      return false;
     }
     const before = cloudLocalPendingCount();
     state.cloud.localPendingCount = before;
     if (!before) {
       state.cloud.autosyncStatus = 'done';
       state.cloud.lastAutosyncAt = new Date().toISOString();
+      state.cloud.autosyncRetryAt = '';
+      cloudAutosyncFailureCount = 0;
       persistStateSnapshot();
       if (showMessage) showToast('Cloud je aktuální');
       requestBackgroundRender();
@@ -17453,33 +17545,42 @@
     cloudAutosyncRunning = true;
     cloudAutosyncLastAttempt = Date.now();
     state.cloud.autosyncStatus = 'syncing';
+    state.cloud.autosyncRetryAt = '';
     persistStateSnapshot();
     requestBackgroundRender();
+    let retryDelay = 0;
     try {
       await withMutedToasts(async () => {
+        await ensurePendingCloudModuleCode();
         await cloudSyncLocalPendingData(false);
-        await cloudLoadAllModules(false, { skipRealtimeSetup: true, silentWhenOffline: true });
       });
       const after = cloudLocalPendingCount();
+      if (after) cloudAutosyncFailureCount += 1;
+      else cloudAutosyncFailureCount = 0;
+      retryDelay = after && cloudAutosyncFailureCount <= CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length ? cloudAutosyncRetryDelayMs() : 0;
       state.cloud = {
         ...(state.cloud || {}),
-        autosyncStatus: after ? 'blocked' : 'done',
+        autosyncStatus: after ? retryDelay ? 'pending' : 'blocked' : 'done',
         lastAutosyncAt: new Date().toISOString(),
         localPendingCount: after,
-        lastAutosyncError: ''
+        lastAutosyncError: after ? state.cloud?.lastAutosyncError || 'Některé změny zatím zůstaly lokálně' : '',
+        autosyncRetryAt: retryDelay ? new Date(Date.now() + retryDelay).toISOString() : ''
       };
       touchState();
       persistStateSnapshot();
       requestBackgroundRender();
-      if (showMessage) showToast(after ? `Cloud sync hotový, ${after} položek chce ruční kontrolu` : 'Lokální záznamy jsou v cloudu');
+      if (showMessage) showToast(after ? retryDelay ? `Ještě zbývá ${after} změn, zkusím je znovu automaticky` : `Cloud sync hotový, ${after} položek chce ruční kontrolu` : 'Lokální záznamy jsou v cloudu');
       return !after;
     } catch (error) {
       console.warn('Cloud autosync failed', error);
+      cloudAutosyncFailureCount += 1;
+      retryDelay = cloudAutosyncFailureCount <= CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length ? cloudAutosyncRetryDelayMs() : 0;
       state.cloud = {
         ...(state.cloud || {}),
-        autosyncStatus: 'error',
+        autosyncStatus: retryDelay ? 'pending' : 'error',
         lastAutosyncError: error?.message || 'Autosync selhal',
-        localPendingCount: cloudLocalPendingCount()
+        localPendingCount: cloudLocalPendingCount(),
+        autosyncRetryAt: retryDelay ? new Date(Date.now() + retryDelay).toISOString() : ''
       };
       persistStateSnapshot();
       requestBackgroundRender();
@@ -17487,20 +17588,36 @@
       return false;
     } finally {
       cloudAutosyncRunning = false;
+      if (retryDelay) scheduleCloudAutosync('automatic-retry', { force: true, delayMs: retryDelay });
     }
   }
 
   function setCloudAutosyncEnabled(enabled) {
+    clearCloudAutosyncTimer();
+    cloudAutosyncFailureCount = 0;
     state.cloud = {
       ...(state.cloud || {}),
       autoSyncEnabled: Boolean(enabled),
-      autosyncStatus: enabled ? 'idle' : 'disabled'
+      autosyncStatus: enabled ? 'idle' : 'disabled',
+      autosyncRetryAt: ''
     };
     touchState();
     saveState();
     render();
     showToast(enabled ? 'Autosync zapnutý' : 'Autosync vypnutý');
     if (enabled) scheduleCloudAutosync('manual-toggle');
+  }
+
+  function resumeCloudActivity(source = 'online') {
+    if (!cloudReady()) return;
+    if (!browserAppearsOnline()) {
+      scheduleCloudAutosync('offline-wait', { force: true });
+      return;
+    }
+    if (source === 'online') cloudAutosyncFailureCount = 0;
+    const realtimeStatus = String(state.cloud?.realtimeStatus || 'offline').toLowerCase();
+    if (!['online', 'subscribed', 'refreshing'].includes(realtimeStatus)) setupCloudRealtimeSubscriptions(true);
+    scheduleCloudAutosync(source, { force: true, delayMs: source === 'online' ? 900 : 1800 });
   }
 
   function disposeCloudRealtime() {
@@ -17938,27 +18055,31 @@
         return;
       }
       const syncers = [
-        cloudSyncLocalProfiles,
-        cloudSyncLocalShoppingItems,
-        cloudSyncLocalContracts,
-        cloudSyncLocalContractFiles,
-        cloudSyncLocalWarrantyFiles,
-        cloudSyncLocalGarage,
-        cloudSyncLocalHdo,
-        cloudSyncLocalWaste,
-        cloudSyncLocalTasks,
-        cloudSyncLocalCalendarSources,
-        cloudSyncLocalCalendar,
-        cloudSyncLocalFinanceAccounts,
-        cloudSyncLocalFinance,
-        () => cloudSaveHouseholdUiSettings(false),
-        () => cloudSyncLocalExtraCollections(false)
+        { run: cloudSyncLocalProfiles },
+        { moduleId: 'shopping', run: cloudSyncLocalShoppingItems },
+        { moduleId: 'contracts', run: cloudSyncLocalContracts },
+        { moduleId: 'contracts', run: cloudSyncLocalContractFiles },
+        { moduleId: 'warranties', run: cloudSyncLocalWarrantyFiles },
+        { moduleId: 'garage', run: cloudSyncLocalGarage },
+        { moduleId: 'hdo', run: cloudSyncLocalHdo },
+        { moduleId: 'waste', run: cloudSyncLocalWaste },
+        { moduleId: 'tasks', run: cloudSyncLocalTasks },
+        { moduleId: 'calendar', run: cloudSyncLocalCalendarSources },
+        { moduleId: 'calendar', run: cloudSyncLocalCalendar },
+        { moduleId: 'finance', run: cloudSyncLocalFinanceAccounts },
+        { moduleId: 'finance', run: cloudSyncLocalFinance },
+        { run: () => cloudSaveHouseholdUiSettings(false) },
+        { run: () => cloudSyncLocalExtraCollections(false) }
       ];
       await withMutedToasts(async () => {
         for (const syncer of syncers) {
+          // Neotevřený modul bez čekajících změn není důvod stahovat jen kvůli
+          // pravidelnému autosyncu. Relevantní moduly připraví předem
+          // ensurePendingCloudModuleCode().
+          if (syncer.moduleId && !moduleCodeReady(syncer.moduleId)) continue;
           try {
             await yieldToMainThread();
-            await syncer();
+            await syncer.run();
           } catch (error) {
             console.warn('Cloud pending sync failed', error);
           }
@@ -20014,14 +20135,22 @@
       .update(includeName ? { ...householdUiPayload(), name: householdName() } : householdUiPayload())
       .eq('id', state.cloud.householdId);
     if (error) {
+      state.cloud = {
+        ...(state.cloud || {}),
+        householdUiPendingAt: new Date().toISOString(),
+        lastAutosyncError: error.message || 'Nastavení domácnosti čeká na odeslání'
+      };
+      persistStateSnapshot();
+      scheduleCloudAutosync('household-ui-retry');
       if (showMessage) showToast(error.message || 'Nastavení hlavní obrazovky se nepovedlo uložit do cloudu');
       return false;
     }
     const syncedAt = new Date().toISOString();
-    state.cloud.lastSyncAt = syncedAt;
+    state.cloud = { ...(state.cloud || {}), lastSyncAt: syncedAt, householdUiPendingAt: '', lastAutosyncError: '' };
     state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
     state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: syncedAt, templatesPendingAt: '' };
     // householdUiPayload() posílá i state.pools při KAŽDÉM volání téhle funkce,
     // ne jen když ho vyvolal pool.js - bez tohohle zůstal poolCloud.pendingAt
     // uvízlý po úspěšném uložení z jiné funkce (předplatné, věrnostní karty...),
@@ -21180,6 +21309,7 @@
       return;
     }
     scheduleShoppingCloudRefresh('app-visible', { delay: 700, minAgeMs: 15000 });
+    resumeCloudActivity('app-visible');
   });
 
   window.addEventListener('pagehide', () => {
@@ -21208,10 +21338,28 @@
 
   window.addEventListener('focus', () => {
     scheduleShoppingCloudRefresh('app-focus', { delay: 700, minAgeMs: 15000 });
+    resumeCloudActivity('app-focus');
   });
 
   window.addEventListener('online', () => {
     scheduleShoppingCloudRefresh('online', { delay: 900, minAgeMs: 5000 });
+    resumeCloudActivity('online');
+  });
+
+  window.addEventListener('offline', () => {
+    clearCloudAutosyncTimer();
+    disposeCloudRealtime();
+    if (!cloudReady()) return;
+    const pending = cloudLocalPendingCount();
+    state.cloud = {
+      ...(state.cloud || {}),
+      autosyncStatus: state.cloud?.autoSyncEnabled === false ? 'disabled' : pending ? 'waiting' : 'idle',
+      autosyncRetryAt: '',
+      localPendingCount: pending,
+      realtimeStatus: 'offline'
+    };
+    persistStateSnapshot();
+    requestBackgroundRender();
   });
 
   app.addEventListener('focusout', (event) => {
