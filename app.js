@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_493';
-  const APP_BUILD = 493;
+  const APP_VERSION = 'Domácnost+ v.0.1_494';
+  const APP_BUILD = 494;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -516,7 +516,10 @@
   const WARRANTY_FILE_ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
   const SUPABASE_URL = 'https://hyyehcskthqmncqlechi.supabase.co';
   const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_38RX0YiAzT1-CEkjgYNX4A_Yskw_1EQ';
-  const SUPABASE_STORAGE_KEY = 'domacnost-plus-auth';
+  // Auth storage is project-specific. Reusing one key after a Supabase migration
+  // makes the new project try to verify a JWT signed by the old project.
+  const SUPABASE_STORAGE_KEY = 'domacnost-plus-auth-hyyehcskthqmncqlechi';
+  const LEGACY_SUPABASE_STORAGE_KEYS = ['domacnost-plus-auth'];
   const APP_PUBLIC_URL = 'https://domacnost-plus.vercel.app/';
 
   const BRAND_ICON_SRC = './icons/domacnost-plus-icon-180.png';
@@ -14094,6 +14097,77 @@
     return 'cloud-ready / lokální režim';
   }
 
+  function storedSupabaseSessionAccessToken(raw) {
+    const session = safeParse(raw, null);
+    if (!session || typeof session !== 'object') return '';
+    return normalizeText(session.access_token || session.currentSession?.access_token);
+  }
+
+  function supabaseJwtIssuer(accessToken) {
+    const payloadPart = String(accessToken || '').split('.')[1] || '';
+    if (!payloadPart) return '';
+    try {
+      const padded = payloadPart.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payloadPart.length / 4) * 4, '=');
+      const binary = window.atob(padded);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      return normalizeText(JSON.parse(new TextDecoder().decode(bytes))?.iss).replace(/\/$/, '');
+    } catch {
+      return '';
+    }
+  }
+
+  function storedSupabaseSessionMatchesProject(raw) {
+    const expectedIssuer = `${SUPABASE_URL.replace(/\/$/, '')}/auth/v1`;
+    return supabaseJwtIssuer(storedSupabaseSessionAccessToken(raw)) === expectedIssuer;
+  }
+
+  function prepareSupabaseAuthStorage() {
+    let currentRaw = '';
+    let removedIncompatibleSession = false;
+    try {
+      currentRaw = localStorage.getItem(SUPABASE_STORAGE_KEY) || '';
+      if (currentRaw && !storedSupabaseSessionMatchesProject(currentRaw)) {
+        localStorage.removeItem(SUPABASE_STORAGE_KEY);
+        localStorage.removeItem(`${SUPABASE_STORAGE_KEY}-code-verifier`);
+        currentRaw = '';
+        removedIncompatibleSession = true;
+      }
+
+      LEGACY_SUPABASE_STORAGE_KEYS.forEach((legacyKey) => {
+        const legacyRaw = localStorage.getItem(legacyKey) || '';
+        if (legacyRaw) {
+          if (!currentRaw && storedSupabaseSessionMatchesProject(legacyRaw)) {
+            localStorage.setItem(SUPABASE_STORAGE_KEY, legacyRaw);
+            currentRaw = legacyRaw;
+          } else if (!storedSupabaseSessionMatchesProject(legacyRaw)) {
+            removedIncompatibleSession = true;
+          }
+        }
+        localStorage.removeItem(legacyKey);
+        localStorage.removeItem(`${legacyKey}-code-verifier`);
+      });
+    } catch {
+      return;
+    }
+
+    // Keep all household data, but do not let a remembered app-level state pose as
+    // an authenticated session after an old-project token has been discarded.
+    if (removedIncompatibleSession && !storedSupabaseSessionMatchesProject(currentRaw) && state.cloud?.status === 'signed-in') {
+      state.cloud = {
+        ...(state.cloud || {}),
+        supabaseUrl: SUPABASE_URL,
+        provider: 'supabase',
+        status: 'offline',
+        userId: '',
+        households: [],
+        invitations: []
+      };
+      onboardingMode = 'account';
+      try { sessionStorage.setItem('domacnostPlus.onboardingMode', 'account'); } catch {}
+      saveState();
+    }
+  }
+
   function getSupabaseClient() {
     if (supabaseClientInstance) return supabaseClientInstance;
     const factory = window.supabase?.createClient;
@@ -21235,6 +21309,7 @@
     };
   }
 
+  prepareSupabaseAuthStorage();
   render();
   scheduleBootCloudWarmStart();
   handleInitialAuthReturn().catch((error) => console.warn('Auth return handling failed', error));

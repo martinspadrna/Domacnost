@@ -16362,6 +16362,15 @@ body.home-active {
 }
 
 @media (min-width: 900px) {
+  .app-shell {
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .app-desktop-row .app-frame {
+    max-width: none;
+    margin: 0;
+  }
+
   .home-redesign-shell.home-app-shell .app-sidebar {
     height: 100%;
     min-height: 0;

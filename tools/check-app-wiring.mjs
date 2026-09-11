@@ -164,6 +164,10 @@ if (app && contracts && index && sw && moduleLoader) {
 }
 
 if (app) {
+  expect(app, "const SUPABASE_STORAGE_KEY = 'domacnost-plus-auth-hyyehcskthqmncqlechi';", 'app.js: přihlášení má úložiště oddělené pro novou Supabase.');
+  expect(app, "const LEGACY_SUPABASE_STORAGE_KEYS = ['domacnost-plus-auth'];", 'app.js: původní obecný auth klíč se bezpečně migruje nebo odstraní.');
+  expect(app, 'function storedSupabaseSessionMatchesProject', 'app.js: uložený JWT se ověřuje proti aktuálnímu Supabase projektu.');
+  expect(app, /prepareSupabaseAuthStorage\(\);\s*render\(\);/, 'app.js: kontrola Supabase relace proběhne před prvním vykreslením.');
   expect(app, 'function requestBackgroundRender()', 'app.js: background/cloud render ma tichy vstup.');
   expect(app, "document.documentElement.classList.add('app-quiet-render')", 'app.js: tiche rendery umi vypnout rusivou animaci obsahu.');
   expect(app, 'function markModuleTransition()', 'app.js: rucni prepnuti modulu ma explicitni prechod.');
@@ -215,6 +219,8 @@ if (app) {
   expect(app, 'function compareHomeAttentionItems', 'app.js: Home Nadchazejici ma vlastni comparator pro casove razeni.');
   expect(app, 'sortAt: calendarEventStartMs(event)', 'app.js: kalendarove udalosti na Home se radi podle skutecneho zacatku.');
   expect(styles, 'grid-template-columns: repeat(4, minmax(0, 1fr));', 'styles.css: Home Nadchazejici ma desktop 4 sloupce.');
+  expect(styles, '.app-desktop-row .app-frame {\n    max-width: none;\n    margin: 0;', 'styles.css: desktopový obsah využívá celou dostupnou šířku.');
+  expect(styles, 'padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;', 'styles.css: desktop už nedědí spodní rezervu mobilní navigace.');
   expect(app, 'function readingGroupIdOrDefault', 'app.js: Odecty maji bezpecny fallback pro skupinu meridla.');
   expect(app, 'groupId: readingGroupIdOrDefault(data.groupId)', 'app.js: pridani meridla uklada jen existujici skupinu.');
   expect(app, 'groupId: readingGroupIdOrDefault(data.groupId || original.groupId)', 'app.js: uprava meridla uklada jen existujici skupinu.');
