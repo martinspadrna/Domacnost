@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync('app.js', 'utf8');
+const readings = readFileSync('readings.js', 'utf8');
 const warranty = readFileSync('warranty.js', 'utf8');
+const readingsSurface = `${app}\n${readings}`;
 
 const checks = [
   {
@@ -33,53 +35,53 @@ const checks = [
     // se stihl zeptat JS potvrzovací dialog (viz check níže), takže po výměně
     // měřidla nešlo zadat legitimně nižší stav vůbec.
     name: 'reading entry form uses last-value placeholder without a hard native min block',
-    ok: app.includes('readingEntryValuePlaceholder') &&
-      app.includes('readingEntryValueField') &&
-      app.includes('naposledy') &&
-      !app.includes(' min="${escapeHtml(String(latest.value))}"')
+    ok: readingsSurface.includes('readingEntryValuePlaceholder') &&
+      readingsSurface.includes('readingEntryValueField') &&
+      readingsSurface.includes('naposledy') &&
+      !readingsSurface.includes(' min="${escapeHtml(String(latest.value))}"')
   },
   {
     name: 'reading entries stay open after save and confirm before accepting a lower current value',
-    ok: app.includes('readingsEntryDrawerOpen = true;') &&
-      app.includes('item.value < Number(latest.value)') &&
-      app.includes('value < Number(latest.value)') &&
-      app.includes('Vyměnil/a jsi měřidlo? Uložit i tak?')
+    ok: readingsSurface.includes('readingsEntryDrawerOpen = true;') &&
+      readingsSurface.includes('item.value < Number(latest.value)') &&
+      readingsSurface.includes('value < Number(latest.value)') &&
+      readingsSurface.includes('Vyměnil/a jsi měřidlo? Uložit i tak?')
   },
   {
     name: 'average reading price is direct unit price first',
-    ok: app.includes('const direct = decimalValue(meter?.pricePerUnit);') &&
-      app.includes('directAverageFields') &&
-      app.includes('Průměrná cena za')
+    ok: readingsSurface.includes('const direct = decimalValue(meter?.pricePerUnit);') &&
+      readingsSurface.includes('directAverageFields') &&
+      readingsSurface.includes('Průměrná cena za')
   },
   {
     name: 'reading price mode toggles without full form render',
-    ok: app.includes('function syncReadingPriceModeFields(form)') &&
-      app.includes('const readingsPricingModeControl = event.target.closest') &&
-      !app.includes('const readingsMeterStructureControl = event.target.closest')
+    ok: readingsSurface.includes('function syncReadingPriceModeFields(form)') &&
+      readingsSurface.includes('const readingsPricingModeControl = event.target.closest') &&
+      !readingsSurface.includes('const readingsMeterStructureControl = event.target.closest')
   },
   {
     name: 'reading submeter relation is normalized and netted from parent',
-    ok: app.includes('parentMeterId: normalizeText(item.parentMeterId') &&
-      app.includes('function readingParentMeterOptions') &&
-      app.includes('parent.type !== item.type || parent.unit !== item.unit') &&
-      app.includes('parent.submeterValue = Number') &&
-      app.includes('relationNote')
+    ok: readingsSurface.includes('parentMeterId: normalizeText(item.parentMeterId') &&
+      readingsSurface.includes('function readingParentMeterOptions') &&
+      readingsSurface.includes('parent.type !== item.type || parent.unit !== item.unit') &&
+      readingsSurface.includes('parent.submeterValue = Number') &&
+      readingsSurface.includes('relationNote')
   },
   {
     name: 'reading meter monthly deposit is entered and compared per meter',
-    ok: app.includes('monthlyDeposit: normalizeReadingPricePart') &&
-      app.includes("field('Měsíční záloha', 'monthlyDeposit'") &&
-      app.includes('function readingCostBalance(meter = null, row = null)') &&
-      app.includes('const latestByMeter = new Map();') &&
-      app.includes('renderReadingsCostSummary(consumptionRows)')
+    ok: readingsSurface.includes('monthlyDeposit: normalizeReadingPricePart') &&
+      readingsSurface.includes("field('Měsíční záloha', 'monthlyDeposit'") &&
+      readingsSurface.includes('function readingCostBalance(meter = null, row = null)') &&
+      readingsSurface.includes('const latestByMeter = new Map();') &&
+      readingsSurface.includes('renderReadingsCostSummary(consumptionRows)')
   },
   {
     name: 'reading meter billing period overrides group period and rolls yearly',
-    ok: app.includes('function readingMeterBillingPeriod(meter = null, referenceDate = todayISO())') &&
-      app.includes('rolledFrom: base.from') &&
-      app.includes("field('Fakturační období od', 'billingFrom'") &&
-      app.includes("field('Fakturační období do', 'billingTo'") &&
-      app.includes('readingMeterBillingLabel(item.meter)')
+    ok: readingsSurface.includes('function readingMeterBillingPeriod(meter = null, referenceDate = todayISO())') &&
+      readingsSurface.includes('rolledFrom: base.from') &&
+      readingsSurface.includes("field('Fakturační období od', 'billingFrom'") &&
+      readingsSurface.includes("field('Fakturační období do', 'billingTo'") &&
+      readingsSurface.includes('readingMeterBillingLabel(item.meter)')
   },
   {
     name: 'warranty files survive renders through an in-memory queue',

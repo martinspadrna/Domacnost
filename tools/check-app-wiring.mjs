@@ -37,6 +37,7 @@ function expectAbsent(source, pattern, label) {
 const app = read('app.js');
 const finance = read('finance.js');
 const pool = read('pool.js');
+const readings = read('readings.js');
 const subscriptions = read('subscriptions.js');
 const contracts = read('contracts.js');
 const calendar = read('calendar.js');
@@ -106,6 +107,21 @@ if (app && pool && index && sw) {
   expect(pool, 'function addPoolMeasurementFromForm', 'pool.js: nové měření se ukládá bez zásahu do nastavení bazénu.');
   expect(app, "'pool-add-measurement': () => addPoolMeasurementFromForm(data, form)", 'app.js: nové měření bazénu má form handler.');
   expect(pool, "id: 'settings', label: 'Nastavení'", 'pool.js: bazén má samostatnou záložku Nastavení.');
+}
+
+if (app && readings && index && sw && moduleLoader) {
+  expectAbsent(index, './readings.js?v=', 'index.html: readings.js neblokuje první vykreslení.');
+  expect(moduleLoader, "readings: {\n      scripts: ['readings.js']", 'module-loader.js: Odečty se načítají při prvním otevření.');
+  expect(sw, "'./readings.js'", 'sw.js: readings.js je v odložené offline cache.');
+  expect(app, 'let readingsInstance = null', 'app.js: Odečty mají samostatnou modulovou instanci.');
+  expect(app, 'function getReadingsModule()', 'app.js: getReadingsModule factory wrapper existuje.');
+  expect(app, 'return getReadingsModule().renderReadings()', 'app.js: renderer Odečtů jde přes samostatný modul.');
+  expectAbsent(app, 'function renderReadingMeterCard(', 'app.js: karty měřidel už nejsou v hlavním souboru.');
+  expect(readings, 'function createReadings(deps)', 'readings.js: factory samostatného modulu existuje.');
+  expect(readings, 'function renderReadingMeterCard(', 'readings.js: karty měřidel žijí v modulu.');
+  expect(readings, 'function renderReadingsLineChart(', 'readings.js: graf Odečtů žije v modulu.');
+  expect(readings, 'function renderReadingDetailPanel(', 'readings.js: detail Odečtů žije v modulu.');
+  expect(readings, 'window.DomacnostReadings = { createReadings }', 'readings.js: modul publikuje factory rozhraní.');
 }
 
 if (app && pool && subscriptions && calendar && warranty) {
@@ -233,7 +249,7 @@ if (app) {
   expect(app, 'function readingGroupIdOrDefault', 'app.js: Odecty maji bezpecny fallback pro skupinu meridla.');
   expect(app, 'groupId: readingGroupIdOrDefault(data.groupId)', 'app.js: pridani meridla uklada jen existujici skupinu.');
   expect(app, 'groupId: readingGroupIdOrDefault(data.groupId || original.groupId)', 'app.js: uprava meridla uklada jen existujici skupinu.');
-  expect(app, '<strong>Místa</strong><span>skupiny, ceny, zálohy</span>', 'app.js: Odecty ukazuji spravu skupin jako Mista, ne jen jako Ceny.');
+  expect(readings, '<strong>Místa</strong><span>skupiny, ceny, zálohy</span>', 'readings.js: Odečty ukazují správu skupin jako Místa, ne jen jako Ceny.');
   expect(app, 'function resetSubscriptionMonthToCurrentForOpen', 'app.js: Predplatne ma reset mesice pri otevreni modulu.');
   expect(app, "if (activeModule === 'subscriptions') resetSubscriptionMonthToCurrentForOpen();", 'app.js: otevreni Predplatneho prepne prehled na aktualni mesic.');
   expect(app, 'function isHorizontallyScrollableTarget', 'app.js: swipe guard umí poznat horizontálně scrollovatelný blok.');
@@ -373,7 +389,7 @@ if (pkg) {
 }
 
 if (app && index && moduleLoader) {
-  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'warranty.js', 'hdo.js', 'waste.js', 'finance.js', 'pool.js', 'calendar.js', 'vape.js'].forEach((asset) => {
+  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'warranty.js', 'hdo.js', 'waste.js', 'finance.js', 'pool.js', 'readings.js', 'calendar.js', 'vape.js'].forEach((asset) => {
     expectAbsent(index, `./${asset}?v=`, `index.html: ${asset} neblokuje první vykreslení.`);
     expect(moduleLoader, `'${asset}'`, `module-loader.js: ${asset} je dostupný na vyžádání.`);
   });

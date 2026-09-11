@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-495';
+  const ASSET_VERSION = '0-1-496';
   const ASSET_LOAD_TIMEOUT_MS = 15000;
   const definitions = {
     shopping: {
@@ -40,6 +40,10 @@
     pool: {
       scripts: ['pool.js'],
       ready: () => Boolean(window.DomacnostPool)
+    },
+    readings: {
+      scripts: ['readings.js'],
+      ready: () => Boolean(window.DomacnostReadings)
     },
     calendar: {
       scripts: ['calendar.js'],

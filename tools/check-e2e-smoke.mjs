@@ -289,6 +289,10 @@ function smokeSeedScript() {
   const advancePaymentDate = new Date();
   advancePaymentDate.setMonth(advancePaymentDate.getMonth() - 2, 1);
   const advancePaymentMonth = `${advancePaymentDate.getFullYear()}-${String(advancePaymentDate.getMonth() + 1).padStart(2, '0')}`;
+  const readingPreviousDate = new Date();
+  readingPreviousDate.setMonth(readingPreviousDate.getMonth() - 2, 1);
+  const readingLatestDate = new Date();
+  readingLatestDate.setMonth(readingLatestDate.getMonth() - 1, 1);
   const seed = {
     meta: { schemaVersion: 85, appBuild: Number(expectedBuild), mode: 'e2e-smoke', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
     household: { id: 'household-e2e-smoke', name: 'Smoke domácnost', isConfigured: true, createdAt: new Date().toISOString() },
@@ -398,6 +402,51 @@ function smokeSeedScript() {
       title: 'Smoke servis',
       price: 2500,
       note: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    readingGroups: [{
+      id: 'reading-group-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      name: 'Smoke dům',
+      prices: { electricityT1: 6.2, electricityT2: '', gas: '', water: '' },
+      deposits: { electricity: 1800, gas: '', water: '' },
+      billing: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    readingMeters: [{
+      id: 'reading-meter-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      groupId: 'reading-group-e2e-smoke',
+      type: 'electricity',
+      name: 'Smoke elektroměr',
+      unit: 'kWh',
+      serial: 'SMOKE-EL-1',
+      location: 'Dům',
+      pricePerUnit: 6.2,
+      monthlyDeposit: 1800,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    readings: [{
+      id: 'reading-entry-previous-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      meterId: 'reading-meter-e2e-smoke',
+      date: readingPreviousDate.toISOString().slice(0, 10),
+      value: 12000,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, {
+      id: 'reading-entry-latest-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      meterId: 'reading-meter-e2e-smoke',
+      date: readingLatestDate.toISOString().slice(0, 10),
+      value: 12150,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }],
@@ -665,6 +714,7 @@ async function run() {
             waste: !window.DomacnostWaste,
             finance: !window.DomacnostFinance,
             pool: !window.DomacnostPool,
+            readings: !window.DomacnostReadings,
             calendar: !window.DomacnostCalendar,
             vape: !window.DomacnostVape
           },
@@ -1332,6 +1382,50 @@ async function run() {
     if (!poolAddValue.form) { fail('Bazén po kliknutí nerenderuje pool-settings formulář.'); poolOk = false; }
     if (!poolAddValue.tempInput) { fail('Bazén po kliknutí nemá vstup pro teplotu vody.'); poolOk = false; }
     if (poolOk) ok('Bazén: přehled (objem/pH/teplota/graf) i záložka Nové měření s formulářem renderují.');
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('readings', 'overview')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 800));
+    const readingsOverviewCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        moduleLoaded: Boolean(window.DomacnostReadings),
+        module: Boolean(document.querySelector('.readings-module.readings-tab-overview')),
+        meter: Boolean(document.querySelector('.reading-meter-card')),
+        seedText: (document.body?.innerText || '').includes('Smoke elektroměr')
+      }))()`
+    });
+    const readingsOverviewValue = readingsOverviewCheck.result?.value || {};
+    let readingsOk = true;
+    if (!readingsOverviewValue.moduleLoaded) { fail('Odečty se při prvním otevření nenačetly jako samostatný modul.'); readingsOk = false; }
+    if (!readingsOverviewValue.module || !readingsOverviewValue.meter || !readingsOverviewValue.seedText) { fail('Odečty po načtení nerenderují přehled a kartu měřidla.'); readingsOk = false; }
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('readings', 'entry')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+    const readingsEntryReady = await waitForExpression(page, `Boolean(document.querySelector('form[data-form="add-reading-entry"] input[name="value"]'))`, 2500, 40);
+    if (!readingsEntryReady) { fail('Odečty: záložka Odečet nemá formulář pro zadání stavu.'); readingsOk = false; }
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('readings', 'detail')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+    const readingsDetailReady = await waitForExpression(page, `Boolean(document.querySelector('.readings-module.readings-tab-detail .readings-line-chart svg'))`, 2500, 40);
+    if (!readingsDetailReady) { fail('Odečty: detail měřidla nerenderuje graf spotřeby.'); readingsOk = false; }
+
+    await page.send('Runtime.evaluate', {
+      expression: `window.__DOMACNOST_E2E_NAV__('readings', 'history')`,
+      awaitPromise: true
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+    const readingsHistoryReady = await waitForExpression(page, `document.querySelectorAll('.readings-module.readings-tab-history .readings-history-list .item').length >= 2`, 2500, 40);
+    if (!readingsHistoryReady) { fail('Odečty: historie nerenderuje uložené odečty.'); readingsOk = false; }
+    if (readingsOk) ok('Odečty: samostatný lazy modul, přehled, zadání, detail s grafem i historie renderují.');
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('finance', 'loans') : document.querySelector('[data-nav="finance"]')?.click()`
