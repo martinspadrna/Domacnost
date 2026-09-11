@@ -38,6 +38,7 @@ const app = read('app.js');
 const finance = read('finance.js');
 const pool = read('pool.js');
 const readings = read('readings.js');
+const garage = read('garage.js');
 const subscriptions = read('subscriptions.js');
 const contracts = read('contracts.js');
 const calendar = read('calendar.js');
@@ -122,6 +123,26 @@ if (app && readings && index && sw && moduleLoader) {
   expect(readings, 'function renderReadingsLineChart(', 'readings.js: graf Odečtů žije v modulu.');
   expect(readings, 'function renderReadingDetailPanel(', 'readings.js: detail Odečtů žije v modulu.');
   expect(readings, 'window.DomacnostReadings = { createReadings }', 'readings.js: modul publikuje factory rozhraní.');
+}
+
+if (app && garage && index && sw && moduleLoader) {
+  expectAbsent(index, './garage.js?v=', 'index.html: garage.js neblokuje první vykreslení.');
+  expect(moduleLoader, "garage: {\n      scripts: ['garage.js']", 'module-loader.js: Garáž se načítá při prvním otevření.');
+  expect(sw, "'./garage.js'", 'sw.js: garage.js je v odložené offline cache.');
+  expect(app, 'let garageInstance = null', 'app.js: Garáž má samostatnou modulovou instanci.');
+  expect(app, 'function getGarageModule()', 'app.js: getGarageModule factory wrapper existuje.');
+  expect(app, 'return getGarageModule().renderGarage()', 'app.js: renderer Garáže jde přes samostatný modul.');
+  expect(app, 'return getGarageModule().renderGarageRecordEditForm(collection, item)', 'app.js: modal úpravy záznamu používá rozhraní Garáže.');
+  expect(app, 'async function saveServicePlanItemFromForm', 'app.js: ukládání servisního plánu zůstává v datové vrstvě.');
+  expectAbsent(app, 'function renderGarageStatsPanel(', 'app.js: statistické UI Garáže už není v hlavním souboru.');
+  expectAbsent(app, 'function renderVehicleDetail(', 'app.js: detail auta už není v hlavním souboru.');
+  expect(garage, 'function createGarage(deps)', 'garage.js: factory samostatného modulu existuje.');
+  expect(garage, 'function renderGarageStatsPanel(', 'garage.js: statistiky auta žijí v modulu.');
+  expect(garage, 'function renderGarageTripCalculator(', 'garage.js: kalkulačka cesty žije v modulu.');
+  expect(garage, 'function renderVehicleDetail(', 'garage.js: detail auta žije v modulu.');
+  expect(garage, 'function renderFuelioImport(', 'garage.js: Fuelio import žije v modulu.');
+  expectAbsent(garage, 'async function saveServicePlanItemFromForm', 'garage.js: vizuální modul nepřebírá ukládání servisního plánu.');
+  expect(garage, 'window.DomacnostGarage = { createGarage }', 'garage.js: modul publikuje factory rozhraní.');
 }
 
 if (app && pool && subscriptions && calendar && warranty) {
@@ -389,7 +410,7 @@ if (pkg) {
 }
 
 if (app && index && moduleLoader) {
-  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'warranty.js', 'hdo.js', 'waste.js', 'finance.js', 'pool.js', 'readings.js', 'calendar.js', 'vape.js'].forEach((asset) => {
+  ['shopping-utils.js', 'shopping-render.js', 'shopping-actions.js', 'notes.js', 'contracts.js', 'subscriptions.js', 'warranty.js', 'hdo.js', 'waste.js', 'finance.js', 'pool.js', 'readings.js', 'garage.js', 'calendar.js', 'vape.js'].forEach((asset) => {
     expectAbsent(index, `./${asset}?v=`, `index.html: ${asset} neblokuje první vykreslení.`);
     expect(moduleLoader, `'${asset}'`, `module-loader.js: ${asset} je dostupný na vyžádání.`);
   });

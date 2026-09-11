@@ -715,6 +715,7 @@ async function run() {
             finance: !window.DomacnostFinance,
             pool: !window.DomacnostPool,
             readings: !window.DomacnostReadings,
+            garage: !window.DomacnostGarage,
             calendar: !window.DomacnostCalendar,
             vape: !window.DomacnostVape
           },
@@ -1632,6 +1633,7 @@ async function run() {
         const chartCardStyle = chartCard ? getComputedStyle(chartCard) : null;
         const chartSvgStyle = chartSvg ? getComputedStyle(chartSvg) : null;
         return {
+          moduleLoaded: Boolean(window.DomacnostGarage),
           module: Boolean(module),
           overviewSurface: Boolean(overviewStyle && parseFloat(overviewStyle.borderTopLeftRadius) >= 16),
           pickerSurface: Boolean(pickerStyle && parseFloat(pickerStyle.borderTopLeftRadius) >= 16),
@@ -1651,6 +1653,7 @@ async function run() {
       console.log('DEBUG garageOverview:', JSON.stringify(garageOverviewValue, null, 2));
     }
     let garageOk = true;
+    if (!garageOverviewValue.moduleLoaded) { fail('Garáž se při prvním otevření nenačetla jako samostatný modul.'); garageOk = false; }
     if (!garageOverviewValue.module) { fail('Garáž se neotevřela do module-tabbed layoutu.'); garageOk = false; }
     if (!garageOverviewValue.overviewSurface) { fail('Garáž přehled nemá sjednocený panelový povrch.'); garageOk = false; }
     if (!garageOverviewValue.pickerSurface) { fail('Garáž výběr auta nemá nový povrch.'); garageOk = false; }

@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-496`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-497`;
 const APP_ASSETS = [
   './',
   './index.html',
@@ -43,6 +43,7 @@ const LAZY_APP_ASSETS = [
   './finance.js',
   './pool.js',
   './readings.js',
+  './garage.js',
   './vape.js',
   './contracts.js',
   './subscriptions.js',
