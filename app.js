@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_500';
-  const APP_BUILD = 500;
+  const APP_VERSION = 'Domácnost+ v.0.1_501';
+  const APP_BUILD = 501;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1342,9 +1342,17 @@
   const UI_INTERACTION_QUIET_MS = 1400;
   const FORM_RENDER_QUIET_MS = 1800;
   const FORM_RENDER_MAX_WAIT_MS = 7000;
+  const FORM_DRAFT_STORAGE_KEY = 'domacnostPlus.formDrafts.v1';
+  const FORM_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+  const FORM_DRAFT_LIMIT = 30;
+  const FORM_DRAFT_VALUE_LIMIT = 20000;
+  const formDrafts = new Map();
+  let formDraftPersistTimer = 0;
+  let formDraftRestoreDepth = 0;
   const lazyModuleCloudLoads = new Map();
 
   const app = document.getElementById('app');
+  loadSessionFormDrafts();
   applyVisualSettings();
 
   window.addEventListener?.('error', (event) => {
@@ -3113,6 +3121,122 @@
     return namedFormControls(form).some(isFormControlDirty);
   }
 
+  function isSessionDraftForm(form) {
+    if (!form || !app?.contains?.(form) || form.dataset?.noDraft === 'true') return false;
+    const name = String(form.dataset?.form || '').trim();
+    if (!name || /(?:login|signup|password|forgot|import-data|delete-own-account|month-filter|polish-holidays-year)/i.test(name)) return false;
+    if (form.querySelector?.('input[type="password"]')) return false;
+    return true;
+  }
+
+  function formDraftScopeKey() {
+    const household = String(state?.cloud?.householdId || state?.household?.id || 'local');
+    const profile = String(state?.activeProfileId || 'default');
+    return `${household}::${profile}::${activeModule || 'home'}`;
+  }
+
+  function sessionFormDraftKey(form, forms = null) {
+    return `${formDraftScopeKey()}::${formStabilityKey(form, forms)}`;
+  }
+
+  function boundedDraftValue(value) {
+    if (!value) return value;
+    if (value.kind === 'value') return { kind: 'value', value: String(value.value ?? '').slice(0, FORM_DRAFT_VALUE_LIMIT) };
+    if (value.kind === 'multi') return { kind: 'multi', values: (value.values || []).slice(0, 100).map((item) => String(item).slice(0, 500)) };
+    if (value.kind === 'checked') return { kind: 'checked', checked: Boolean(value.checked) };
+    return null;
+  }
+
+  function formDraftSnapshot(form, forms = null) {
+    const nameCounts = new Map();
+    const fields = [];
+    namedFormControls(form).forEach((control) => {
+      const value = boundedDraftValue(controlValueSnapshot(control));
+      if (!value) return;
+      const name = control.getAttribute('name') || '';
+      const nameIndex = nameCounts.get(name) || 0;
+      nameCounts.set(name, nameIndex + 1);
+      fields.push({ name, nameIndex, value });
+    });
+    return {
+      key: sessionFormDraftKey(form, forms),
+      updatedAt: Date.now(),
+      fields
+    };
+  }
+
+  function loadSessionFormDrafts() {
+    const stored = safeParse(sessionStorage.getItem(FORM_DRAFT_STORAGE_KEY), []);
+    const cutoff = Date.now() - FORM_DRAFT_TTL_MS;
+    if (!Array.isArray(stored)) return;
+    stored.forEach((entry) => {
+      if (!entry?.key || !Array.isArray(entry.fields) || Number(entry.updatedAt || 0) < cutoff) return;
+      formDrafts.set(String(entry.key), entry);
+    });
+  }
+
+  function persistSessionFormDrafts() {
+    if (formDraftPersistTimer) return;
+    formDraftPersistTimer = window.setTimeout(flushSessionFormDrafts, 260);
+  }
+
+  function flushSessionFormDrafts() {
+    if (formDraftPersistTimer) window.clearTimeout(formDraftPersistTimer);
+    formDraftPersistTimer = 0;
+    const entries = [...formDrafts.values()]
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+      .slice(0, FORM_DRAFT_LIMIT);
+    formDrafts.clear();
+    entries.forEach((entry) => formDrafts.set(entry.key, entry));
+    if (!entries.length) sessionStorage.removeItem(FORM_DRAFT_STORAGE_KEY);
+    else sessionStorage.setItem(FORM_DRAFT_STORAGE_KEY, JSON.stringify(entries));
+  }
+
+  function rememberSessionFormDraft(form) {
+    if (formDraftRestoreDepth > 0 || !isSessionDraftForm(form)) return;
+    const allForms = Array.from(app?.querySelectorAll?.('form') || []);
+    const key = sessionFormDraftKey(form, allForms);
+    if (!shouldPreserveForm(form)) {
+      if (formDrafts.delete(key)) persistSessionFormDrafts();
+      return;
+    }
+    const snapshot = formDraftSnapshot(form, allForms);
+    if (!snapshot.fields.length) return;
+    formDrafts.set(key, snapshot);
+    persistSessionFormDrafts();
+  }
+
+  function clearSessionFormDraft(form) {
+    if (!form) return;
+    const allForms = Array.from(app?.querySelectorAll?.('form') || []);
+    if (formDrafts.delete(sessionFormDraftKey(form, allForms))) persistSessionFormDrafts();
+  }
+
+  function clearAllSessionFormDrafts() {
+    formDrafts.clear();
+    flushSessionFormDrafts();
+  }
+
+  function restoreSessionFormDrafts() {
+    if (!app || !formDrafts.size) return;
+    const allForms = Array.from(app.querySelectorAll('form'));
+    formDraftRestoreDepth += 1;
+    try {
+      allForms.filter(isSessionDraftForm).forEach((form) => {
+        const draft = formDrafts.get(sessionFormDraftKey(form, allForms));
+        if (!draft?.fields?.length) return;
+        const controls = namedFormControls(form);
+        draft.fields.forEach((field) => {
+          const matches = controls.filter((control) => (control.getAttribute('name') || '') === field.name);
+          applyControlSnapshot(matches[field.nameIndex] || matches[0], field.value);
+        });
+        form.dataset.draftRestored = 'true';
+      });
+    } finally {
+      formDraftRestoreDepth = Math.max(0, formDraftRestoreDepth - 1);
+    }
+  }
+
   function captureFormStabilitySnapshot() {
     if (!app) return null;
     // Jedno querySelectorAll('form') pro celou appku, sdílené jak pro filtr
@@ -3501,6 +3625,7 @@
       app.dataset.lastRenderSurface = mainChanged ? 'module' : overlayChanged ? 'overlay' : 'none';
       app.dataset.lastRenderScope = 'module-only';
     } finally {
+      restoreSessionFormDrafts();
       restoreFormStabilitySnapshot(formSnapshot);
       renderInProgress = false;
       if (!renderDeferDepth && renderDeferredPending) {
@@ -3668,6 +3793,7 @@
         schedulePostRenderLayoutWork(navMotion, navMotionFromIndex, activeBottomNavIndex);
       }
     } finally {
+      restoreSessionFormDrafts();
       restoreFormStabilitySnapshot(formSnapshot);
       renderInProgress = false;
       if (!renderDeferDepth && renderDeferredPending) {
@@ -19946,6 +20072,7 @@
     garageVehicleId = null;
     activeModule = 'home';
     localStorage.removeItem(STORAGE_KEY);
+    clearAllSessionFormDrafts();
     saveState();
     render();
     sessionStorage.removeItem('domacnostPlus.onboardingMode');
@@ -20177,13 +20304,22 @@
 
   app.addEventListener('submit', (event) => {
     event.preventDefault();
-    Promise.resolve(guardedHandleForm(event.target)).catch((error) => {
-      console.error('Form failed', event.target?.dataset?.form, error);
+    const form = event.target;
+    clearSessionFormDraft(form);
+    Promise.resolve(guardedHandleForm(form)).then(() => {
+      // Neúspěšná validace nechá formulář na místě. V tom případě
+      // rozepsané hodnoty znovu zachytíme; po úspěšném uložení bývá
+      // formulář resetovaný nebo nahrazený renderem a koncept zůstane smazaný.
+      if (app?.contains?.(form)) rememberSessionFormDraft(form);
+    }).catch((error) => {
+      if (app?.contains?.(form)) rememberSessionFormDraft(form);
+      console.error('Form failed', form?.dataset?.form, error);
       showToast('Formulář se nepovedlo uložit.');
     });
   });
 
   app.addEventListener('change', (event) => {
+    rememberSessionFormDraft(event.target.closest?.('form'));
     const loyaltyPhotoInput = event.target.closest('[data-loyalty-card-photo]');
     if (loyaltyPhotoInput) {
       handleLoyaltyPhotoInput(loyaltyPhotoInput);
@@ -20351,6 +20487,7 @@
   });
 
   app.addEventListener('input', (event) => {
+    rememberSessionFormDraft(event.target.closest?.('form'));
     const globalSearchInput = event.target.closest('[data-global-search-input]');
     if (globalSearchInput) {
       globalSearchQuery = globalSearchInput.value || '';
@@ -20422,6 +20559,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
+      flushSessionFormDrafts();
       flushDeferredUiStorage();
       flushStatePersist();
       return;
@@ -20431,6 +20569,7 @@
   });
 
   window.addEventListener('pagehide', () => {
+    flushSessionFormDrafts();
     flushDeferredUiStorage();
     flushStatePersist();
   });
@@ -20440,6 +20579,7 @@
   // visibilitychange/pagehide (které se u samostatné (home-screen) PWA na
   // iOS občas vůbec nespustí, než systém proces ukončí).
   window.addEventListener('freeze', () => {
+    flushSessionFormDrafts();
     flushDeferredUiStorage();
     flushStatePersist();
   });

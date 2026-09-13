@@ -879,6 +879,39 @@ async function run() {
     else if (financeLazyReady.result?.value?.busy) fail('Stav načítání zůstal viset i po otevření Financí.');
     else ok('Lazy loading: připravené Finance se po prvním kliknutí správně vykreslily.');
 
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance', 'add')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 140));
+    await page.send('Runtime.evaluate', {
+      expression: `(() => {
+        const input = document.querySelector('form[data-form="add-finance"] input[name="title"]');
+        if (!input) return false;
+        input.value = 'Rozepsaný nákup E2E';
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Rozepsaný nákup E2E', inputType: 'insertText' }));
+        return true;
+      })()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 340));
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('home')`, awaitPromise: true });
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance', 'add')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 160));
+    const financeDraftCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const form = document.querySelector('form[data-form="add-finance"]');
+        return {
+          value: form?.querySelector('input[name="title"]')?.value || '',
+          restored: form?.dataset?.draftRestored === 'true',
+          stored: (sessionStorage.getItem('domacnostPlus.formDrafts.v1') || '').includes('Rozepsaný nákup E2E')
+        };
+      })()`
+    });
+    const financeDraftValue = financeDraftCheck.result?.value || {};
+    if (financeDraftValue.value !== 'Rozepsaný nákup E2E' || !financeDraftValue.restored || !financeDraftValue.stored) {
+      fail(`Koncept formuláře se po přechodu mezi moduly neobnovil (${JSON.stringify(financeDraftValue)}).`);
+    } else {
+      ok('Formuláře: rozepsané údaje přežijí přechod do jiného modulu i session uložení.');
+    }
+
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('home')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     const restoredHomeScroll = await page.send('Runtime.evaluate', {

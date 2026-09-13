@@ -13,6 +13,15 @@ const checks = [
       app.includes('namedFormControls(form)')
   },
   {
+    name: 'dirty business forms survive module navigation and page reload in session storage',
+    ok: app.includes("const FORM_DRAFT_STORAGE_KEY = 'domacnostPlus.formDrafts.v1'") &&
+      app.includes('function rememberSessionFormDraft(form)') &&
+      app.includes('function restoreSessionFormDrafts()') &&
+      app.includes('restoreSessionFormDrafts();\n      restoreFormStabilitySnapshot(formSnapshot)') &&
+      app.includes('clearSessionFormDraft(form);') &&
+      app.includes('flushSessionFormDrafts();')
+  },
+  {
     name: 'scrollable app panels preserve their own scroll across renders',
     ok: app.includes('data-preserve-scroll="home-edit-sheet"') &&
       app.includes('data-preserve-scroll="module-main-${escapeHtml(active.id)}"') &&
