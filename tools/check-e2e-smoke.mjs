@@ -1322,7 +1322,7 @@ async function run() {
     else ok('Upozornění: sedm typů lze samostatně zapnout nebo vypnout.');
 
     await page.send('Runtime.evaluate', {
-      expression: `window.__DOMACNOST_E2E_NAV__('settings', 'cloud')`,
+      expression: `(window.__DOMACNOST_E2E_SET_CLOUD_STATUS__?.(), window.__DOMACNOST_E2E_NAV__('settings', 'cloud'))`,
       awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));

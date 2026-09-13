@@ -2227,9 +2227,6 @@ button.kpi.kpi-clickable {
 
 
 
-.visual-choice-preview-skoda .scheme-preview-dots i:nth-child(1) { background: #0f8a5f; }
-.visual-choice-preview-skoda .scheme-preview-dots i:nth-child(2) { background: #1e88e5; }
-.visual-choice-preview-skoda .scheme-preview-dots i:nth-child(3) { background: #a3e635; }
 .visual-choice-preview-aqua .scheme-preview-dots i:nth-child(1) { background: #0891b2; }
 .visual-choice-preview-aqua .scheme-preview-dots i:nth-child(2) { background: #22d3ee; }
 .visual-choice-preview-aqua .scheme-preview-dots i:nth-child(3) { background: #14b8a6; }
@@ -6683,16 +6680,6 @@ html[data-color-scheme="graphite"] {
 }
 
 
-html[data-color-scheme="skoda"] {
-  --primary: #0f8a5f;
-  --primary-2: #1e88e5;
-  --accent: #0f8a5f;
-  --accent-2: #1e88e5;
-  --accent-soft: rgba(15, 138, 95, .14);
-  --accent-glow: rgba(15, 138, 95, .24);
-  --bg: radial-gradient(circle at 20% 10%, rgba(15,138,95,.16), transparent 36%), linear-gradient(180deg, #f7fbf9, #eef6f2);
-}
-
 html[data-color-scheme="aqua"] {
   --primary: #0891b2;
   --primary-2: #22d3ee;
@@ -6723,7 +6710,6 @@ html[data-color-scheme="mono"] {
   --bg: linear-gradient(180deg, #fbfbfb, #f1f2f4);
 }
 
-html[data-theme="dark"][data-color-scheme="skoda"] { --primary: #5eead4; --primary-2: #60a5fa; --accent: #5eead4; --accent-2: #60a5fa; }
 html[data-theme="dark"][data-color-scheme="aqua"] { --primary: #67e8f9; --primary-2: #0ea5e9; --accent: #67e8f9; --accent-2: #0ea5e9; }
 html[data-theme="dark"][data-color-scheme="nord"] { --primary: #bfdbfe; --primary-2: #64748b; --accent: #bfdbfe; --accent-2: #64748b; }
 html[data-theme="dark"][data-color-scheme="mono"] { --primary: #f8fafc; --primary-2: #94a3b8; --accent: #f8fafc; --accent-2: #94a3b8; }
@@ -7176,39 +7162,6 @@ html[data-icon-theme="oneui"] .module-theme-icon .icon-tile,
 }
 
 
-html[data-icon-theme="rak"] .module-theme-icon,
-.visual-choice-preview-rak .module-theme-icon {
-  filter: none;
-}
-html[data-icon-theme="rak"] .module-theme-icon .icon-tile,
-.visual-choice-preview-rak .module-theme-icon .icon-tile {
-  display: none;
-  fill: none !important;
-  stroke: none !important;
-}
-html[data-icon-theme="rak"] .module-theme-icon .icon-primary,
-html[data-icon-theme="rak"] .module-theme-icon .icon-secondary,
-html[data-icon-theme="rak"] .module-theme-icon .icon-accent,
-.visual-choice-preview-rak .module-theme-icon .icon-primary,
-.visual-choice-preview-rak .module-theme-icon .icon-secondary,
-.visual-choice-preview-rak .module-theme-icon .icon-accent {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: .98;
-}
-html[data-icon-theme="rak"] .module-theme-icon .icon-line,
-.visual-choice-preview-rak .module-theme-icon .icon-line {
-  stroke: currentColor;
-  stroke-width: 3;
-}
-html[data-icon-theme="rak"] .mini-module-icon,
-html[data-icon-theme="rak"] .module-illustration-slot,
-.visual-choice-preview-rak .module-theme-icon {
-  color: var(--primary);
-}
 /* All selectable icon styles must stay without background tile. */
 .module-theme-icon .icon-tile,
 .visual-icon-preview-row .module-theme-icon .icon-tile,
@@ -16229,7 +16182,7 @@ html[data-theme="dark"] select optgroup {
   color: var(--text, #eef2f8);
 }
 
-/* Domacnost+ v0.1_436 - iOS PWA start guard (recept z RaK appky):
+/* Domacnost+ v0.1_436 - iOS PWA start guard:
    iOS po studenem startu drzi viewport zkraceny o status bar a fixed dock
    sedi vys, dokud se neklepne. Kdyz je ale dokument uz pred prvnim paintem
    natazeny na plnou vysku obrazovky (px hodnota z inline skriptu = max

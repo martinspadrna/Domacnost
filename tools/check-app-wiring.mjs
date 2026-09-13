@@ -43,6 +43,7 @@ const subscriptions = read('subscriptions.js');
 const contracts = read('contracts.js');
 const calendar = read('calendar.js');
 const shoppingRender = read('shopping-render.js');
+const shoppingActions = read('shopping-actions.js');
 const notesModule = read('notes.js');
 const hdoModule = read('hdo.js');
 const wasteModule = read('waste.js');
@@ -52,6 +53,7 @@ const weather = read('weather.js');
 const vape = read('vape.js');
 const index = read('index.html');
 const sw = read('sw.js');
+const pwa = read('pwa.js');
 const pkg = read('package.json');
 const styles = read('styles.css');
 const shoppingCss = read('shopping.css');
@@ -192,6 +194,15 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   expectAbsent(moduleSurfaces, /data-action=["']cloud-(?:load|sync)/, 'Moduly: uživatelská rozhraní nemají duplicitní ruční cloudová ovládání.');
   expect(shoppingRender, 'Čeká na automatickou synchronizaci:', 'Nákupy: čekající změny vysvětlují automatické odeslání.');
   expect(e2e, "retry: document.querySelectorAll('.panel-cloud [data-action=\"cloud-sync-unified\"]').length", 'tools/check-e2e-smoke.mjs: prohlížeč hlídá, že běžný cloud stav nenabízí ruční tlačítko.');
+  expect(app, 'window.__DOMACNOST_E2E_SET_CLOUD_STATUS__', 'app.js: E2E cloudová kontrola používá deterministický lokální stav bez cizí databáze.');
+}
+
+if (app && index && styles && pwa) {
+  const productSurfaces = [index, styles, pwa].join('\n');
+  expect(app, "const SUPABASE_URL = 'https://hyyehcskthqmncqlechi.supabase.co';", 'Izolace projektu: Domácnost+ používá vlastní Supabase.');
+  expectAbsent(app, /cgshssdjgzzuprlwnabl|skoda-spada|\bHradn[ií]k\b/i, 'Izolace projektu: hlavní aplikace neodkazuje na starou Supabase, RaK ani Hradník.');
+  expectAbsent(productSurfaces, /\bRaK\b|skoda-spada|\bHradn[ií]k\b/i, 'Izolace značky: uživatelské povrchy a komentáře neobsahují RaK ani Hradník.');
+  expectAbsent(styles, /data-(?:icon-theme|color-scheme)="(?:rak|skoda)"|visual-choice-preview-(?:rak|skoda)/i, 'Izolace vzhledu: odstraněné mrtvé styly pojmenované podle jiných projektů.');
 }
 
 if (app && contracts && index && sw && moduleLoader) {
@@ -419,8 +430,13 @@ if (shoppingCss) {
   expect(shoppingCss, '.loyalty-wallet-grid .loyalty-card-item:not(.is-editing) {\n  min-height: 158px;', 'shopping.css: kompaktni vernostni karty ziji ve finalni vrstve bez !important override.');
 }
 
-if (app) {
+if (app && shoppingRender && shoppingActions) {
   expect(app, 'window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__', 'app.js: E2E umi otevrit Nakup Hotovo modal deterministicky.');
+  expect(app, "${shoppingDoneModalOpen ? getShoppingRenderer().renderShoppingDoneOverlay() : ''}", 'app.js: Nakup Hotovo modal se vykresluje v samostatne overlay vrstve.');
+  expect(app, 'renderOverlays: renderOverlaysOnly', 'app.js: Nakupni akce mohou prekreslit jen overlay vrstvu.');
+  expect(shoppingRender, 'function renderShoppingDoneOverlay()', 'shopping-render.js: Hotovo modal ma samostatny overlay renderer.');
+  expectAbsent(shoppingRender, "${viewState.doneModalOpen ? renderShoppingDoneModal", 'shopping-render.js: Hotovo modal uz neni soucasti HTML modulu.');
+  expect(shoppingActions, 'deps.renderOverlays?.();', 'shopping-actions.js: otevreni a zavreni Hotovo meni jen overlay.');
 }
 
 if (pkg) {

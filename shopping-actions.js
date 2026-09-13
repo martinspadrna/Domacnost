@@ -298,7 +298,7 @@
 
     function setDoneModalOpen(open) {
       deps.setDoneModalOpen?.(Boolean(open));
-      deps.requestRender?.();
+      deps.renderOverlays?.();
     }
 
     async function updateShoppingQuantity(id, delta) {

@@ -35,7 +35,6 @@
     function renderShopping() {
       deps.ensureShoppingListsReady();
       const state = getState();
-      const viewState = deps.getShoppingViewState ? deps.getShoppingViewState() : {};
       const activeShoppingTab = deps.getModuleTab('shopping', 'list');
       const isShoppingListTab = activeShoppingTab === 'list';
       const isShoppingCatalogTab = activeShoppingTab === 'catalog';
@@ -46,11 +45,9 @@
       const activeList = lists.find((list) => list.id === activeListId) || lists[0] || null;
       const listStats = deps.buildShoppingListStats(lists);
       const activeStats = listStats.get(activeListId) || { total: 0, open: 0, done: 0 };
-      const needsActiveItems = isShoppingListTab || viewState.doneModalOpen;
-      const activeItems = needsActiveItems ? deps.shoppingItemsForList(activeListId) : [];
+      const activeItems = isShoppingListTab ? deps.shoppingItemsForList(activeListId) : [];
       const { openItems, doneItems } = splitShoppingItems(activeItems);
       const groupedOpen = isShoppingListTab ? deps.groupShoppingItemsByKind(openItems) : [];
-      const groupedDone = viewState.doneModalOpen ? deps.groupShoppingItemsByKind(doneItems) : [];
       const cloudReady = Boolean(state.cloud?.userId && state.cloud?.householdId);
       const units = (isShoppingListTab || isShoppingCatalogTab) ? deps.getShoppingUnits() : [];
       const categories = (isShoppingListTab || isShoppingCatalogTab) ? deps.getShoppingCategories() : [];
@@ -217,8 +214,21 @@
         ${couponsPanel}
         ${loyaltyPanel}
       </div>
-      ${viewState.doneModalOpen ? renderShoppingDoneModal(groupedDone, doneItems, activeList) : ''}
     `;
+    }
+
+    function renderShoppingDoneOverlay() {
+      const viewState = deps.getShoppingViewState ? deps.getShoppingViewState() : {};
+      if (!viewState.doneModalOpen) return '';
+      deps.ensureShoppingListsReady();
+      const lists = deps.getShoppingLists();
+      const activeListId = deps.getActiveShoppingListId();
+      const activeList = lists.find((list) => list.id === activeListId) || lists[0] || null;
+      const doneItems = activeList
+        ? deps.shoppingItemsForList(activeList.id).filter((item) => item?.done)
+        : [];
+      const groupedDone = deps.groupShoppingItemsByKind(doneItems);
+      return renderShoppingDoneModal(groupedDone, doneItems, activeList);
     }
 
     function renderShoppingDoneModal(groupedDone, doneItems, activeList) {
@@ -283,7 +293,7 @@
     `;
     }
 
-    return { renderShopping };
+    return { renderShopping, renderShoppingDoneOverlay };
   }
 
   window.DomacnostShoppingRender = { createRenderer };

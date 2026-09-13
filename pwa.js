@@ -179,7 +179,7 @@
           <div class="install-steps">
             <div class="install-step"><strong>iPhone / iPad</strong><span>Safari → Sdílet → Přidat na plochu. iOS bere hlavně apple-touch-icon, proto je kontrolujeme zvlášť.</span></div>
             <div class="install-step"><strong>Android / Chrome</strong><span>Menu prohlížeče → Instalovat aplikaci. Tlačítko se objeví jen když Chrome pošle instalační prompt.</span></div>
-            <div class="install-step"><strong>Update</strong><span>Nový deploy přes Vercel se kontroluje přes service worker podobně jako u RaK.</span></div>
+            <div class="install-step"><strong>Update</strong><span>Nová verze se po nasazení přes Vercel zkontroluje automaticky pomocí service workeru.</span></div>
           </div>
           <div class="form-actions">
             ${pwa.canPrompt ? `<button class="primary-btn" type="button" data-action="pwa-install">Instalovat aplikaci</button>` : ''}
