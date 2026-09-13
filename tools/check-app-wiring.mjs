@@ -170,6 +170,11 @@ if (app && pool && subscriptions && calendar && warranty) {
   expect(app, 'function renderOverlaysOnly()', 'app.js: modaly a rychlé přehledy mají samostatnou render cestu.');
   expect(app, "app.dataset.lastRenderSurface = changed ? 'overlay' : 'none'", 'app.js: overlay render neoznačuje změnu hlavního modulu.');
   expect(app, 'renderOverlays: renderOverlaysOnly', 'app.js: modulům se předává úzká overlay render cesta.');
+  expect(app, 'function renderActiveModuleOnly()', 'app.js: otevřený modul má vlastní render cestu bez přestavby shellu.');
+  expect(app, "app.dataset.lastRenderScope = 'module-only'", 'app.js: modulový render je diagnosticky odlišitelný od plného renderu.');
+  expect(app, 'requestRender: requestActiveModuleRender', 'app.js: asynchronní změny modulů používají úzkou render frontu.');
+  expect(app, 'requestActiveModuleRender({ quiet: true })', 'app.js: cloudové změny na pozadí obnovují jen právě otevřený modul.');
+  expect(e2e, 'Modulový render: filtr překreslí jen otevřený modul', 'tools/check-e2e-smoke.mjs: prohlížeč hlídá zachování shellu při modulové akci.');
   expectAbsent(app, 'calendarDetailEventId', 'app.js: shell už nedrží interní stav detailu Kalendáře.');
   expectAbsent(app, 'activeWarrantyDetailId', 'app.js: shell už nedrží interní stav detailu Záruk.');
 }

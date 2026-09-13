@@ -1535,6 +1535,40 @@ async function run() {
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
     await page.send('Runtime.evaluate', {
+      expression: `(() => {
+        window.__DOMACNOST_E2E_SHELL_NODES__ = {
+          sidebar: document.querySelector('.app-sidebar'),
+          nav: document.querySelector('.nav-shell'),
+          frame: document.querySelector('.app-frame'),
+          overlays: document.querySelector('[data-app-overlays]')
+        };
+        document.querySelector('[data-action="subscription-filter"][data-filter="debtors"]')?.click();
+      })()`
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    const moduleOnlyRenderCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const saved = window.__DOMACNOST_E2E_SHELL_NODES__ || {};
+        return {
+          scope: document.querySelector('#app')?.dataset?.lastRenderScope || '',
+          surface: document.querySelector('#app')?.dataset?.lastRenderSurface || '',
+          sidebarSame: saved.sidebar === document.querySelector('.app-sidebar'),
+          navSame: saved.nav === document.querySelector('.nav-shell'),
+          frameSame: saved.frame === document.querySelector('.app-frame'),
+          overlaysSame: saved.overlays === document.querySelector('[data-app-overlays]'),
+          filterActive: Boolean(document.querySelector('[data-action="subscription-filter"][data-filter="debtors"].active'))
+        };
+      })()`
+    });
+    const moduleOnlyRenderValue = moduleOnlyRenderCheck.result?.value || {};
+    let moduleOnlyRenderOk = true;
+    if (moduleOnlyRenderValue.scope !== 'module-only') { fail(`Předplatné: filtr nepoužil render pouze modulu (${moduleOnlyRenderValue.scope || 'bez scope'}).`); moduleOnlyRenderOk = false; }
+    if (moduleOnlyRenderValue.surface !== 'module') { fail(`Předplatné: modulový filtr neoznačil změnu hlavního obsahu (${moduleOnlyRenderValue.surface || 'bez surface'}).`); moduleOnlyRenderOk = false; }
+    if (!moduleOnlyRenderValue.sidebarSame || !moduleOnlyRenderValue.navSame || !moduleOnlyRenderValue.frameSame || !moduleOnlyRenderValue.overlaysSame) { fail('Předplatné: modulový filtr znovu vytvořil část aplikačního shellu.'); moduleOnlyRenderOk = false; }
+    if (!moduleOnlyRenderValue.filterActive) { fail('Předplatné: filtr Dlužníci se po modulovém renderu neaktivoval.'); moduleOnlyRenderOk = false; }
+    if (moduleOnlyRenderOk) ok('Modulový render: filtr překreslí jen otevřený modul a zachová celý aplikační shell.');
+    await page.send('Runtime.evaluate', {
       expression: `document.querySelector('[data-action="subscription-debtor-info"]')?.click()`
     });
     const subscriptionInputReady = await waitForExpression(

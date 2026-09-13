@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_497';
-  const APP_BUILD = 497;
+  const APP_VERSION = 'Domácnost+ v.0.1_498';
+  const APP_BUILD = 498;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1318,9 +1318,11 @@
   let renderDeferredPending = false;
   let renderInProgress = false;
   let renderFrameRequest = 0;
+  let renderFrameSurface = 'full';
   let renderQuietTimer = 0;
   let renderForcedDepth = 0;
   let renderDeferredQuietPending = false;
+  let renderDeferredSurfacePending = 'full';
   let renderQuietMotionUntil = 0;
   let renderQuietMotionCleanupTimer = 0;
   let moduleTransitionCleanupTimer = 0;
@@ -2829,9 +2831,11 @@
       renderDeferDepth = Math.max(0, renderDeferDepth - 1);
       if (!renderDeferDepth && renderDeferredPending) {
         const quiet = renderDeferredQuietPending;
+        const surface = renderDeferredSurfacePending;
         renderDeferredPending = false;
         renderDeferredQuietPending = false;
-        requestRender({ quiet });
+        renderDeferredSurfacePending = 'full';
+        requestRender({ quiet, surface });
       }
     };
     try {
@@ -3349,34 +3353,50 @@
   // dřív naplánovaný hlasitý/animovaný render (např. přepnutí modulu), který
   // na to spoléhal. Hlasitý požadavek proto vždy shodí quiet zpátky na false,
   // ať přijde v jakémkoli pořadí.
-  function markRenderDeferred(quiet) {
-    if (!renderDeferredPending) renderDeferredQuietPending = quiet;
+  function markRenderDeferred(quiet, surface = 'full') {
+    if (!renderDeferredPending) {
+      renderDeferredQuietPending = quiet;
+      renderDeferredSurfacePending = surface;
+    }
     else if (!quiet) renderDeferredQuietPending = false;
+    if (surface !== 'module') renderDeferredSurfacePending = 'full';
     renderDeferredPending = true;
   }
 
   function requestRender(options = {}) {
     const quiet = options?.quiet === true;
+    const surface = options?.surface === 'module' ? 'module' : 'full';
     if (quiet) markQuietRender();
     if (renderDeferDepth > 0 || renderInProgress) {
-      markRenderDeferred(quiet);
+      markRenderDeferred(quiet, surface);
       return;
     }
     if (shouldDelayBackgroundRender()) {
-      markRenderDeferred(quiet);
+      markRenderDeferred(quiet, surface);
       scheduleQuietRender();
       return;
     }
-    if (renderFrameRequest) return;
+    if (renderFrameRequest) {
+      if (surface === 'full') renderFrameSurface = 'full';
+      return;
+    }
+    renderFrameSurface = surface;
     const schedule = window.requestAnimationFrame || window.webkitRequestAnimationFrame || ((fn) => window.setTimeout(fn, 0));
     renderFrameRequest = schedule(() => {
+      const scheduledSurface = renderFrameSurface;
       renderFrameRequest = 0;
-      render();
+      renderFrameSurface = 'full';
+      if (scheduledSurface === 'module') renderActiveModuleOnly();
+      else render();
     });
   }
 
+  function requestActiveModuleRender(options = {}) {
+    requestRender({ ...options, surface: 'module' });
+  }
+
   function requestBackgroundRender() {
-    requestRender({ quiet: true });
+    requestActiveModuleRender({ quiet: true });
   }
 
   function renderMainSurface(active, moduleHtml) {
@@ -3418,6 +3438,86 @@
     if (changed) overlays.innerHTML = overlayHtml;
     lastRenderedOverlayHtml = overlayHtml;
     app.dataset.lastRenderSurface = changed ? 'overlay' : 'none';
+    app.dataset.lastRenderScope = 'overlay-only';
+    return true;
+  }
+
+  function updateGlobalAlertBadge() {
+    const button = app?.querySelector?.('.global-action-btn.alerts');
+    if (!button) return;
+    const count = Math.min(99, getNotificationItems().length);
+    let badge = button.querySelector(':scope > span');
+    if (!count) {
+      badge?.remove?.();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('span');
+      button.appendChild(badge);
+    }
+    badge.textContent = String(count);
+  }
+
+  // Běžná akce uvnitř modulu nemění navigaci ani desktopový shell. Tato
+  // cesta proto znovu sestaví jen <main> aktivního modulu a jeho overlaye.
+  // Když shell ještě neexistuje (první start / změna modulu), bezpečně spadne
+  // zpět na plný render.
+  function renderActiveModuleOnly() {
+    if (renderDeferDepth > 0 || renderInProgress) {
+      markRenderDeferred(false, 'module');
+      return false;
+    }
+    const activeId = activeModule || 'home';
+    const existingMain = app?.querySelector?.('.app-frame main');
+    const existingOverlays = app?.querySelector?.('[data-app-overlays]');
+    if (lastRenderedSurfaceMode !== 'app' || lastRenderedModuleId !== activeId || !existingMain || !existingOverlays) {
+      render();
+      return false;
+    }
+
+    const visibleModules = getVisibleModules();
+    const active = [...visibleModules, MORE_MODULE].find((module) => module.id === activeId);
+    if (!active) {
+      render();
+      return false;
+    }
+
+    const renderStartedAt = performance?.now ? performance.now() : Date.now();
+    const formSnapshot = captureFormStabilitySnapshot();
+    renderInProgress = true;
+    try {
+      applyVisualSettings();
+      document.body.classList.toggle('overview-open', Boolean(activeOverview || hasOpenAppModal()));
+      const mainHtml = renderMainSurface(active, renderModule(active.id));
+      const overlayHtml = renderOverlaySurface();
+      const mainChanged = mainHtml !== lastRenderedMainHtml;
+      const overlayChanged = overlayHtml !== lastRenderedOverlayHtml;
+      if (mainChanged) existingMain.innerHTML = mainHtml;
+      if (overlayChanged) existingOverlays.innerHTML = overlayHtml;
+      updateGlobalAlertBadge();
+      lastRenderedMainHtml = mainHtml;
+      lastRenderedOverlayHtml = overlayHtml;
+      app.dataset.lastRenderSurface = mainChanged ? 'module' : overlayChanged ? 'overlay' : 'none';
+      app.dataset.lastRenderScope = 'module-only';
+    } finally {
+      restoreFormStabilitySnapshot(formSnapshot);
+      renderInProgress = false;
+      if (!renderDeferDepth && renderDeferredPending) {
+        const quiet = renderDeferredQuietPending;
+        const surface = renderDeferredSurfacePending;
+        renderDeferredPending = false;
+        renderDeferredQuietPending = false;
+        renderDeferredSurfacePending = 'full';
+        window.setTimeout(() => requestRender({ quiet, surface }), 0);
+      }
+      clearQuietRenderClass();
+      if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
+        const renderMs = Math.round((performance?.now ? performance.now() : Date.now()) - renderStartedAt);
+        const timings = window.__DOMACNOST_E2E_RENDER_TIMINGS__ || [];
+        timings.push({ module: activeId, ms: renderMs, surface: 'module-only', at: Date.now() });
+        window.__DOMACNOST_E2E_RENDER_TIMINGS__ = timings.slice(-80);
+      }
+    }
     return true;
   }
 
@@ -3426,7 +3526,7 @@
       // render() je vždy hlasitá cesta (uživatelská akce) - i tady musí vynulovat
       // renderDeferredQuietPending, jinak by dřívější tichý požadavek na pozadí
       // mohl "vyhrát" a odloženému renderu sebrat přechodovou animaci.
-      markRenderDeferred(false);
+      markRenderDeferred(false, 'full');
       return;
     }
     const renderStartedAt = performance?.now ? performance.now() : Date.now();
@@ -3554,6 +3654,8 @@
           if (app) app.dataset.lastRenderSurface = 'shell';
         }
 
+        if (app) app.dataset.lastRenderScope = 'full';
+
         if (app) app.setAttribute?.('data-boot-ok', '1');
         lastRenderedSurfaceMode = 'app';
         lastRenderedModuleId = active.id;
@@ -3569,9 +3671,11 @@
       renderInProgress = false;
       if (!renderDeferDepth && renderDeferredPending) {
         const quiet = renderDeferredQuietPending;
+        const surface = renderDeferredSurfacePending;
         renderDeferredPending = false;
         renderDeferredQuietPending = false;
-        window.setTimeout(() => requestRender({ quiet }), 0);
+        renderDeferredSurfacePending = 'full';
+        window.setTimeout(() => requestRender({ quiet, surface }), 0);
       }
       clearQuietRenderClass();
       if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
@@ -3723,7 +3827,7 @@
       document.body.classList.remove('overview-open');
     }
     persistModuleTabsSoon();
-    render();
+    renderActiveModuleOnly();
     keepActiveSectionTabsCentered('smooth');
   }
 
@@ -7324,8 +7428,8 @@
       trackShoppingUsage,
       touchState,
       saveState,
-      requestRender,
-      render,
+      requestRender: requestActiveModuleRender,
+      render: renderActiveModuleOnly,
       showToast,
       cloudReady,
       cloudAddShoppingList,
@@ -7365,7 +7469,7 @@
       setModuleTab,
       renderSectionTabs,
       saveState,
-      render,
+      render: renderActiveModuleOnly,
       touchState,
       cloudSaveHouseholdUiSettings,
       getSupabaseClient,
@@ -7419,8 +7523,8 @@
       daysUntil,
       showToast,
       saveState,
-      render,
-      requestRender,
+      render: renderActiveModuleOnly,
+      requestRender: requestActiveModuleRender,
       touchState,
       currentHouseholdId,
       currentProfileId,
@@ -7673,9 +7777,9 @@
       currentProfileId,
       touchState,
       saveState,
-      render,
+      render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
-      requestRender,
+      requestRender: requestActiveModuleRender,
       putStoredWarrantyFile,
       getStoredWarrantyFile,
       deleteStoredWarrantyFile,
@@ -7711,8 +7815,8 @@
       renderEmptyCta,
       showToast,
       saveState,
-      render,
-      requestRender,
+      render: renderActiveModuleOnly,
+      requestRender: requestActiveModuleRender,
       touchState,
       currentHouseholdId,
       currentProfileId,
@@ -7751,8 +7855,8 @@
       dueBadge,
       showToast,
       saveState,
-      render,
-      requestRender,
+      render: renderActiveModuleOnly,
+      requestRender: requestActiveModuleRender,
       touchState,
       currentHouseholdId,
       currentProfileId,
@@ -7802,9 +7906,9 @@
       parseDateValue,
       keepActiveSectionTabsCentered,
       persistStateSnapshot,
-      requestRender,
+      requestRender: requestActiveModuleRender,
       yieldToMainThread,
-      render,
+      render: renderActiveModuleOnly,
       saveState,
       touchState,
       showToast,
@@ -7842,7 +7946,7 @@
       formatDateTime,
       touchState,
       saveState,
-      render,
+      render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
       showToast,
       cloudReady,
@@ -8056,7 +8160,7 @@
       formatCurrency,
       touchState,
       saveState,
-      render,
+      render: renderActiveModuleOnly,
       showToast,
       cloudReady,
       cloudSaveHouseholdUiSettings
@@ -8081,8 +8185,8 @@
       currentProfileId,
       touchState,
       saveState,
-      render,
-      requestRender,
+      render: renderActiveModuleOnly,
+      requestRender: requestActiveModuleRender,
       showToast,
       getSupabaseClient,
       refreshCloudSession,
@@ -8130,7 +8234,7 @@
       currentProfileId,
       touchState,
       saveState,
-      render,
+      render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
       showToast,
       persistStateSnapshot,
@@ -8176,9 +8280,9 @@
       showToast,
       saveState,
       touchState,
-      render,
+      render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
-      requestRender,
+      requestRender: requestActiveModuleRender,
       runWhenUiQuiet,
       toSafeDate,
       addDaysIso,
@@ -17480,7 +17584,7 @@
     }
     if (action === 'home-hero-edit-done') {
       homeHeroEditMode = false;
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'home-hero-move-left') {
@@ -17584,7 +17688,7 @@
     }
     if (action === 'toggle-coupon-edit') {
       couponEditId = couponEditId === button.dataset.id ? '' : (button.dataset.id || '');
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'open-loyalty-menu') {
@@ -17595,7 +17699,7 @@
     if (action === 'toggle-loyalty-edit') {
       loyaltyCardEditId = loyaltyCardEditId === button.dataset.id ? '' : (button.dataset.id || '');
       loyaltyCardMenuId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'close-loyalty-edit') {
@@ -17603,7 +17707,7 @@
         loyaltyCardEditId = '';
       }
       loyaltyCardMenuId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'toggle-loyalty-add') {
@@ -17612,7 +17716,7 @@
         resetLoyaltyCardScan();
         clearLoyaltyAddDraft();
       }
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'open-loyalty-code') {
@@ -17628,7 +17732,7 @@
     if (action === 'clear-loyalty-scan') {
       resetLoyaltyCardScan();
       loyaltyAddDetailsOpen = true;
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'delete-loyalty-card') {
@@ -17756,7 +17860,7 @@
       if (action === 'calendar-month-next') calendarViewMonth = shiftCalendarMonth(calendarViewMonth, 1);
       if (action === 'calendar-month-today') calendarViewMonth = todayISO().slice(0, 7);
       localStorage.setItem('domacnostPlus.calendarViewMonth', calendarViewMonth);
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'calendar-event-detail') {
@@ -17842,7 +17946,7 @@
       persistModuleTabsSoon();
       touchState();
       saveState();
-      render();
+      renderActiveModuleOnly();
       const removed = Math.max(0, beforeFuel - (state.fuel || []).length) + Math.max(0, beforeServices - (state.services || []).length) + Math.max(0, beforeVehicles - (state.vehicles || []).length);
       showToast(removed ? `Duplicity v Garáži opravené: ${removed} odstraněno ze zobrazení` : 'Garáž zkontrolovaná, duplicity se nenašly');
       return;
@@ -17871,13 +17975,13 @@
       const id = button.dataset.id || '';
       garageServicePlanEditId = garageServicePlanEditId === id ? '' : id;
       garageServicePlanOpen = true;
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'cancel-service-plan-edit') {
       garageServicePlanEditId = '';
       garageServicePlanOpen = true;
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'delete-service-plan-item') {
@@ -17889,7 +17993,7 @@
       garageStatsVehicleId = garageVehicleId;
       moduleTabs = { ...(moduleTabs || {}), garage: 'overview' };
       persistModuleTabsSoon();
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'quick-fuel') {
@@ -17971,7 +18075,7 @@
     }
     if (action === 'clear-fuelio-preview') {
       fuelioPreview = null;
-      render();
+      renderActiveModuleOnly();
       showToast('Náhled zrušen');
       return;
     }
@@ -17987,7 +18091,7 @@
       state.settings = { ...(state.settings || {}), polishShopShowNonTradingSundays: !showPolishShopSundayClosures() };
       touchState();
       saveState();
-      render();
+      renderActiveModuleOnly();
       showToast(state.settings.polishShopShowNonTradingSundays ? 'Neděle nehandlowe se zobrazují' : 'Neděle nehandlowe skryté');
       return;
     }
@@ -18121,7 +18225,7 @@
       localStorage.setItem('domacnostPlus.readingsMeterToolPage', readingsMeterToolPage);
       moduleTabs = { ...(moduleTabs || {}), readings: 'meters' };
       persistModuleTabsSoon();
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'import-easy-home-offtake') {
@@ -18135,7 +18239,7 @@
       moduleTabs = { ...(moduleTabs || {}), readings: 'entry' };
       localStorage.setItem('domacnostPlus.readingsEntryMeterId', readingsEntryMeterId);
       persistModuleTabsSoon();
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'delete-reading-entry') {
@@ -18157,7 +18261,7 @@
       else localStorage.removeItem('domacnostPlus.readingsEditingMeterId');
       moduleTabs = { ...(moduleTabs || {}), readings: 'meters' };
       persistModuleTabsSoon();
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'toggle-reading-meter') {
@@ -18223,7 +18327,7 @@
     }
     if (action === 'finance-account-edit-cancel') {
       financeAccountEditId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'cloud-sync-finance-account') {
@@ -18260,12 +18364,12 @@
     }
     if (action === 'finance-copy-cancel') {
       financeCopyId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'finance-edit-cancel') {
       financeEditId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'finance-save-form-template') {
@@ -18278,7 +18382,7 @@
     }
     if (action === 'finance-template-edit-cancel') {
       financeTemplateEditId = '';
-      render();
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'delete-finance-template') {
@@ -20406,10 +20510,12 @@
         try { (window.cancelAnimationFrame || window.webkitCancelAnimationFrame)?.(renderFrameRequest); } catch {}
       }
       renderFrameRequest = 0;
+      renderFrameSurface = 'full';
       renderDeferDepth = 0;
       renderInProgress = false;
       renderDeferredPending = false;
       renderDeferredQuietPending = false;
+      renderDeferredSurfacePending = 'full';
       activeOverview = null;
       activeModule = nextModule;
       if (activeModule === 'subscriptions') resetSubscriptionMonthToCurrentForOpen();
