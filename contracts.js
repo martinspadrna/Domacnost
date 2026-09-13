@@ -714,7 +714,6 @@
           </div>
           <div class="item-actions">
             <button class="ghost-btn" type="button" data-action="select-contract" data-id="${escapeHtml(contract.id)}">Detail</button>
-            ${state.cloud?.householdId && !contract.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-contract" data-id="${escapeHtml(contract.id)}">Odeslat</button>` : ''}
             <span class="badge">${files} příloh</span>
             <button class="danger-btn" type="button" data-action="delete" data-collection="contracts" data-id="${escapeHtml(contract.id)}">Smazat</button>
           </div>
@@ -747,7 +746,7 @@
             <strong>Ukládání příloh</strong><br>Online domácnost ukládá přílohy rovnou do soukromého Supabase Storage a ostatní členové je otevřou přes dočasný odkaz. IndexedDB zůstává jen jako offline fallback.
           </div>
         </div>
-        <div class="card-header small compact-files-head"><div><h3>Přílohy</h3><p>${cloudFiles} cloud · ${localFiles} lokálně</p></div><div class="form-actions compact-actions">${contract.cloudId && state.cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-contract-files">Načíst cloud přílohy</button>' : ''}${cloudReady() && localFiles ? '<button class="primary-btn" type="button" data-action="cloud-sync-local-contract-files">Odeslat lokální přílohy</button>' : ''}</div></div>
+        <div class="card-header small compact-files-head"><div><h3>Přílohy</h3><p>${cloudFiles} cloud · ${localFiles} lokálně</p></div></div>
         ${files.length ? `<div class="file-list compact-file-list">${files.map((file) => `
           <div class="file-row compact-file-row">
             <div>
@@ -847,7 +846,7 @@
                 <input id="newContractFiles" class="input" type="file" name="files" multiple accept="application/pdf,image/*,.pdf">
                 <p>Přílohy se nahrají hned po uložení smlouvy - u online domácnosti do Supabase Storage, jinak lokálně.</p>
               </div>
-              <div class="form-actions"><button class="primary-btn" type="submit">Uložit</button>${state.cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-contracts">Načíst cloud smlouvy</button>' : ''}${state.cloud?.householdId && (state.contracts || []).some((contract) => !contract.cloudId) ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-contracts">Odeslat lokální (${(state.contracts || []).filter((contract) => !contract.cloudId).length})</button>` : ''}</div>
+              <div class="form-actions"><button class="primary-btn" type="submit">Uložit</button></div>
             </form>
             <div class="inline-note">Základ smlouvy může být v cloudu podle domácnosti. PDF a fotky dokumentů se ukládají do Supabase Storage, lokálně jen jako offline fallback.</div>
           </section>

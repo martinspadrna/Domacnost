@@ -96,10 +96,9 @@
               <strong>${cloudReady ? `Sdíleno: ${escapeHtml(householdName)}` : 'Nákupy jsou teď jen v tomto zařízení'}</strong>
               <span>${cloudReady ? (refreshStatus === 'loading' ? 'Obnovuji cloud nákupy…' : refreshStatus === 'error' ? escapeHtml(refreshError || 'Poslední obnovení se nepovedlo') : `Naposledy načteno ${relativeShoppingTime(loadedAt)}`) : 'Přihlas oba účty do stejné domácnosti, aby seznam viděla i manželka.'}</span>
             </div>
-            ${cloudReady ? `<button class="ghost-btn shopping-refresh-btn" type="button" data-action="cloud-load-shopping" ${refreshStatus === 'loading' ? 'disabled' : ''}>${refreshStatus === 'loading' ? 'Obnovuji…' : 'Obnovit'}</button>` : ''}
           </div>
 
-          ${cloudReady && localOnlyTotalCount ? `<div class="inline-note compact-note shopping-pending-note"><strong>Čeká na cloud:</strong> ${localOnlyTotalCount} položek/seznamů z tohoto zařízení. <button class="text-link-btn" type="button" data-action="cloud-sync-local-shopping">Odeslat teď</button></div>` : ''}
+          ${cloudReady && localOnlyTotalCount ? `<div class="inline-note compact-note shopping-pending-note"><strong>Čeká na automatickou synchronizaci:</strong> ${localOnlyTotalCount} položek/seznamů z tohoto zařízení.</div>` : ''}
 
           <div class="shopping-list-switcher">
             ${lists.map((list) => {
@@ -125,7 +124,6 @@
             </div>
             <div class="form-actions">
               <button class="primary-btn" type="submit" ${addButtonDisabled}>Přidat do ${escapeHtml(activeList?.name || 'seznamu')}</button>
-              ${cloudReady && localOnlyShoppingCount ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-shopping">Odeslat lokální (${localOnlyShoppingCount})</button>` : ''}
             </div>
           </form>
 

@@ -105,7 +105,7 @@
             <div class="item hdo-module-row">
               <div class="item-top"><div class="item-title">${escapeHtml(item.label)}</div><span class="badge ${item.enabled ? 'good' : ''}">${item.enabled ? 'aktivní' : 'vypnuto'}</span></div>
               <div class="item-meta">${escapeHtml(item.start)}–${escapeHtml(item.end)} · ${escapeHtml(daysLabel(item.days))}${item.cloudId ? ' · cloud' : ' · lokálně'}</div>
-              <div class="item-actions"><button class="ghost-btn" type="button" data-action="toggle-hdo" data-id="${item.id}">${item.enabled ? 'Vypnout' : 'Zapnout'}</button>${getState().cloud?.householdId && !item.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-hdo" data-id="${item.id}">Odeslat</button>` : ''}<button class="danger-btn" type="button" data-action="delete-hdo" data-id="${item.id}">Smazat</button></div>
+              <div class="item-actions"><button class="ghost-btn" type="button" data-action="toggle-hdo" data-id="${item.id}">${item.enabled ? 'Vypnout' : 'Zapnout'}</button><button class="danger-btn" type="button" data-action="delete-hdo" data-id="${item.id}">Smazat</button></div>
             </div>`).join('')}</div>` : `<div class="inline-note compact-note">Pro tuhle skupinu není nastavené žádné okno.</div>`}
         </div>`;
     }
@@ -565,7 +565,7 @@
             ${hdoTimeField('Do', 'end', '2200 nebo 22:00', true)}
             ${selectField('Dny', 'daysMode', [['all', 'Každý den'], ['workdays', 'Po–Pá'], ['weekend', 'Víkend']])}
           </div>
-          <div class="form-actions"><button class="primary-btn" type="submit">Přidat HDO okno</button>${S.cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-hdo">Načíst cloud HDO</button>' : ''}${S.cloud?.householdId && S.hdoWindows.some((item) => !item.cloudId) ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-hdo">Odeslat lokální HDO (${S.hdoWindows.filter((item) => !item.cloudId).length})</button>` : ''}</div>
+          <div class="form-actions"><button class="primary-btn" type="submit">Přidat HDO okno</button></div>
         </form>
       `;
     }

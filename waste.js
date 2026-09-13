@@ -286,7 +286,7 @@
             ${field('Upozornit předem (hod)', 'notifyBeforeHours', 'number', '12')}
             ${field('Poznámka', 'note', 'text', 'volitelné')}
           </div>
-          <div class="form-actions"><button class="primary-btn" type="submit">Přidat svoz</button>${S.cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-waste">Načíst cloud odpad</button>' : ''}${S.cloud?.householdId && waste.some((item) => !item.cloudId) ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-waste">Odeslat lokální svozy (${waste.filter((item) => !item.cloudId).length})</button>` : ''}</div>
+          <div class="form-actions"><button class="primary-btn" type="submit">Přidat svoz</button></div>
         </form>
       `;
     }
@@ -311,7 +311,7 @@
             <div class="item">
               <div class="item-top"><div class="item-title">${escapeHtml(item.type)}</div><span class="badge ${daysUntil(item.date) <= 1 ? 'warn' : ''}">${formatDate(item.date)}</span></div>
               <div class="item-meta">${escapeHtml(wasteRepeatLabel(item.repeatRule))}${item.notifyBeforeHours ? ` · připomenout ${escapeHtml(String(item.notifyBeforeHours))} h předem` : ''}${item.note ? ` · ${escapeHtml(item.note)}` : ''}${item.cloudId ? ' · cloud' : ' · lokálně'}</div>
-              <div class="item-actions">${S.cloud?.householdId && !item.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-waste" data-id="${escapeHtml(item.id)}">Odeslat</button>` : ''}<button class="danger-btn" type="button" data-action="delete-waste" data-id="${escapeHtml(item.id)}">Smazat</button></div>
+              <div class="item-actions"><button class="danger-btn" type="button" data-action="delete-waste" data-id="${escapeHtml(item.id)}">Smazat</button></div>
             </div>`).join('')}</div>` : renderEmptyCta({ icon: '♻️', title: 'Svoz odpadu není nastavený', text: 'Přidej první svoz a aplikace ho ukáže v přehledu Dnes a brzy.', nav: 'waste', tab: 'add', label: 'Přidat svoz' }))}
           </div>
         </section>`;

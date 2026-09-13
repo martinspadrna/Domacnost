@@ -738,7 +738,7 @@
             <span class="badge ${event.cloudId ? 'good' : ''}">${event.cloudId ? 'cloud' : 'lokálně'}</span>
           </div>
           <div class="item-meta">${escapeHtml(calendarEventMetaLabel(event, getNow()))} · ${escapeHtml(calendarSourceName(event.sourceId))}</div>
-          ${withDelete ? `<div class="item-actions">${getState().cloud?.householdId && !event.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-calendar" data-id="${event.id}">Odeslat</button>` : ''}<button class="danger-btn" type="button" data-action="delete-calendar" data-id="${event.id}">Smazat</button></div>` : ''}
+          ${withDelete ? `<div class="item-actions"><button class="danger-btn" type="button" data-action="delete-calendar" data-id="${event.id}">Smazat</button></div>` : ''}
         </div>
       `).join('')}</div>`;
     }

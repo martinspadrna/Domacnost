@@ -347,7 +347,6 @@
             <button class="ghost-btn" type="submit">Přidat</button>
           </form>
           <div class="item-actions">
-            ${getState().cloud?.householdId && !page.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-note" data-id="${escapeHtml(page.id)}">Odeslat</button>` : ''}
             <button class="danger-btn" type="button" data-action="delete" data-collection="notes" data-id="${escapeHtml(page.id)}">Smazat stránku</button>
           </div>
         </article>
@@ -416,7 +415,7 @@
           </div>
           <div class="notebook-task-side">
             <span class="badge ${escapeHtml(taskDueTone(task))}">${escapeHtml(taskDueBadgeText(task))}</span>
-            <div class="item-actions notebook-task-actions">${getState().cloud?.householdId && !task.cloudId ? `<button class="ghost-btn tiny-btn" type="button" data-action="cloud-sync-task" data-id="${escapeHtml(task.id)}">Odeslat</button>` : ''}<button class="danger-btn tiny-btn" type="button" data-action="task-delete" data-id="${escapeHtml(task.id)}">Smazat</button></div>
+            <div class="item-actions notebook-task-actions"><button class="danger-btn tiny-btn" type="button" data-action="task-delete" data-id="${escapeHtml(task.id)}">Smazat</button></div>
           </div>
         </article>
       `;
@@ -702,7 +701,6 @@
                   </form>
                 </section>
               `}
-              <div class="form-actions compact-actions">${S.cloud?.householdId ? (notebookCreateType === 'task' ? '<button class="ghost-btn" type="button" data-action="cloud-load-tasks">Načíst cloud úkoly</button>' : '<button class="ghost-btn" type="button" data-action="cloud-load-extras">Načíst cloud poznámky</button>') : ''}${S.cloud?.householdId && (tasks.some((task) => !task.cloudId) || notes.some((item) => !item.cloudId)) ? '<button class="ghost-btn" type="button" data-action="cloud-sync-pending">Odeslat lokální změny</button>' : ''}</div>
             </div>
           ` : `
           ${renderSectionTabs('notebook', [

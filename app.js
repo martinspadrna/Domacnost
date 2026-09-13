@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_498';
-  const APP_BUILD = 498;
+  const APP_VERSION = 'Domácnost+ v.0.1_499';
+  const APP_BUILD = 499;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -6685,7 +6685,8 @@
     const ready = cloudReady();
     const pending = totalLocal === null ? getCloudSyncOverviewItems().reduce((sum, item) => sum + item.local, 0) : Number(totalLocal || 0);
     const status = String(state.cloud?.autosyncStatus || 'idle');
-    const failed = ['error', 'blocked'].includes(status) || state.cloud?.realtimeStatus === 'channel_error';
+    const disabled = state.cloud?.autoSyncEnabled === false;
+    const failed = disabled || ['error', 'blocked'].includes(status) || state.cloud?.realtimeStatus === 'channel_error';
     const waiting = status === 'waiting' || !browserAppearsOnline();
     const syncing = status === 'syncing';
     const retryAt = Date.parse(state.cloud?.autosyncRetryAt || '');
@@ -6694,8 +6695,8 @@
     if (!ready) return `<div class="unified-cloud-control offline"><span class="sync-status-dot"></span><div><strong>Cloud není připojený</strong><em>Data jsou zatím jen v tomto zařízení.</em></div><button class="ghost-btn" type="button" data-nav="settings" data-target-tab="cloud">Připojit</button></div>`;
     return `<div class="unified-cloud-control ${failed ? 'error' : waiting || pending ? 'pending' : 'good'}" data-cloud-unified-status>
       <span class="sync-status-dot"></span>
-      <div><strong>${waiting ? 'Čekám na internet' : failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'}${waiting ? ' · odešlou se automaticky po připojení' : `${retryText} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}`}</em></div>
-      <button class="${failed || pending ? 'primary-btn' : 'ghost-btn'}" type="button" data-action="cloud-sync-unified" ${syncing || waiting ? 'disabled' : ''}>${waiting ? 'Čekám' : failed ? 'Zkusit znovu' : pending ? 'Synchronizovat' : 'Zkontrolovat'}</button>
+      <div><strong>${disabled ? 'Automatická synchronizace je vypnutá' : waiting ? 'Čekám na internet' : failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'}${disabled ? ' · zapnutím se bezpečně odešlou' : waiting ? ' · odešlou se automaticky po připojení' : `${retryText} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}`}</em></div>
+      ${failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ? 'Zapnout automatiku' : 'Zkusit znovu'}</button>` : ''}
     </div>`;
   }
 
@@ -13100,7 +13101,6 @@
                 </div>
               `).join('')}
             </div>
-            ${state.cloud?.householdId ? `<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-sync-local-profiles">Synchronizovat profily</button></div>` : ''}
             <details class="action-details compact-edit-details settings-form-drawer" data-details-key="settings-add-profile" ${isDetailsOpen('settings-add-profile') ? 'open' : ''}>
               <summary><span>Přidat profil</span><em>další člen domácnosti</em></summary>
               <form data-form="add-profile" class="compact-form">
@@ -16722,6 +16722,9 @@
   }
 
   function resumeCloudActivity(source = 'online') {
+    // Prohlížečový smoke test používá záměrně falešnou cloudovou relaci. Událost
+    // focus/online proto nesmí během testu rozběhnout skutečný Realtime ani sync.
+    if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) return;
     if (!cloudReady()) return;
     if (!browserAppearsOnline()) {
       scheduleCloudAutosync('offline-wait', { force: true });
@@ -17498,7 +17501,7 @@
       render();
       return false;
     }
-    state.cloud = { ...(state.cloud || {}), autosyncStatus: 'syncing' };
+    state.cloud = { ...(state.cloud || {}), autoSyncEnabled: true, autosyncStatus: 'syncing' };
     render();
     try {
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));

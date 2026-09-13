@@ -42,6 +42,10 @@ const garage = read('garage.js');
 const subscriptions = read('subscriptions.js');
 const contracts = read('contracts.js');
 const calendar = read('calendar.js');
+const shoppingRender = read('shopping-render.js');
+const notesModule = read('notes.js');
+const hdoModule = read('hdo.js');
+const wasteModule = read('waste.js');
 const warranty = read('warranty.js');
 const edgeCalendarIcs = read('edge-calendar-ics-sync.ts');
 const weather = read('weather.js');
@@ -177,6 +181,17 @@ if (app && pool && subscriptions && calendar && warranty) {
   expect(e2e, 'Modulový render: filtr překreslí jen otevřený modul', 'tools/check-e2e-smoke.mjs: prohlížeč hlídá zachování shellu při modulové akci.');
   expectAbsent(app, 'calendarDetailEventId', 'app.js: shell už nedrží interní stav detailu Kalendáře.');
   expectAbsent(app, 'activeWarrantyDetailId', 'app.js: shell už nedrží interní stav detailu Záruk.');
+}
+
+if (app && shoppingRender && finance && contracts && hdoModule && wasteModule && notesModule && calendar) {
+  const moduleSurfaces = [shoppingRender, finance, contracts, hdoModule, wasteModule, notesModule, calendar].join('\n');
+  expect(app, 'function renderUnifiedCloudControl(totalLocal = null, options = {})', 'app.js: cloud má jeden společný stavový prvek.');
+  expect(app, '${failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ?', 'app.js: ruční cloudová akce se nabídne jen při chybě nebo vypnuté automatice.');
+  expect(app, "autoSyncEnabled: true, autosyncStatus: 'syncing'", 'app.js: jednotná opravná akce znovu zapne automatickou synchronizaci.');
+  expectAbsent(app, '>Synchronizovat profily</button>', 'app.js: profily nemají vlastní ruční synchronizaci.');
+  expectAbsent(moduleSurfaces, /data-action=["']cloud-(?:load|sync)/, 'Moduly: uživatelská rozhraní nemají duplicitní ruční cloudová ovládání.');
+  expect(shoppingRender, 'Čeká na automatickou synchronizaci:', 'Nákupy: čekající změny vysvětlují automatické odeslání.');
+  expect(e2e, "retry: document.querySelectorAll('.panel-cloud [data-action=\"cloud-sync-unified\"]').length", 'tools/check-e2e-smoke.mjs: prohlížeč hlídá, že běžný cloud stav nenabízí ruční tlačítko.');
 }
 
 if (app && contracts && index && sw && moduleLoader) {

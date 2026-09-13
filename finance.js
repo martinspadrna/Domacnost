@@ -325,7 +325,6 @@
             <button class="primary-btn" type="submit">${isEdit ? 'Uložit úpravu' : 'Přidat pohyb'}</button>
             <button class="ghost-btn" type="button" data-action="finance-save-form-template">Uložit jako šablonu</button>
             ${isEdit ? '<button class="ghost-btn" type="button" data-action="finance-edit-cancel">Zrušit úpravu</button>' : ''}
-            ${!isEdit && getState().cloud?.householdId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-finance">Odeslat lokální pohyby</button>` : ''}
           </div>
         </form>
       `;
@@ -591,10 +590,6 @@
             <details class="action-details compact-edit-details finance-form-drawer" data-details-key="finance-add-account" ${getDetailsOpen('finance-add-account') ? 'open' : ''}>
               <summary><span>Přidat účet / peněženku</span><em>banka, hotovost, obálka nebo osoba</em></summary>
               ${renderFinanceAccountForm(null)}
-              <div class="form-actions cloud-inline-actions">
-                ${getState().cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-finance">Načíst cloud finance</button>' : ''}
-                ${getState().cloud?.householdId && localAccounts ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-finance-accounts">Odeslat účty (${localAccounts})</button>` : ''}
-              </div>
             </details>
           </section>
 
@@ -664,10 +659,6 @@
             ${renderFinanceSplitOverview(incomeItems, expenseItems)}
             <div class="card-header finance-list-head"><div><h2>Pohyby na účtu</h2><p>${escapeHtml(typeFilter === 'all' ? 'Všechny pohyby' : typeFilter === 'income' ? 'Jen příjmy' : typeFilter === 'expense' ? 'Jen výdaje' : 'Jen přesuny')} za ${escapeHtml(financeMonthLabel(selectedMonth))}</p></div><span class="badge">${visibleItems.length}</span></div>
             ${visibleItems.length ? `<div class="list compact-list finance-movement-list">${visibleItems.slice(0, 80).map(renderFinanceItem).join('')}</div>` : renderEmptyCta({ icon: '💰', title: 'Měsíc je bez pohybů', text: 'Přidej příjem, výdaj nebo přesun mezi účty. Přehled se začne počítat automaticky.', nav: 'finance', tab: 'add', label: 'Přidat pohyb' })}
-            <div class="form-actions cloud-inline-actions">
-              ${getState().cloud?.householdId ? '<button class="ghost-btn" type="button" data-action="cloud-load-finance">Načíst cloud finance</button>' : ''}
-              ${getState().cloud?.householdId && (localOnly || localAccounts) ? `<button class="ghost-btn" type="button" data-action="cloud-sync-local-finance-all">Odeslat čekající finance (${localOnly + localAccounts})</button>` : ''}
-            </div>
           </section>`;
       }
 
@@ -689,7 +680,6 @@
           <div class="item-meta">${escapeHtml(financeAccountTypeLabel(account.accountType))}${account.ownerLabel ? ` · ${escapeHtml(account.ownerLabel)}` : ''}${account.includeInTotal === false ? ' · mimo celkový součet' : ''}${account.note ? ` · ${escapeHtml(account.note)}` : ''}${account.cloudId ? ' · cloud' : ' · lokálně'}</div>
           <div class="item-actions">
             <button class="ghost-btn" type="button" data-action="finance-account-edit" data-id="${escapeHtml(account.id)}">Upravit</button>
-            ${getState().cloud?.householdId && !account.cloudId ? `<button class="ghost-btn" type="button" data-action="cloud-sync-finance-account" data-id="${account.id}">Odeslat</button>` : ''}
             <button class="danger-btn" type="button" data-action="delete-finance-account" data-id="${account.id}">Smazat</button>
           </div>
         </div>
@@ -720,7 +710,6 @@
           <div class="item-actions finance-item-actions">
             <button class="ghost-btn" type="button" data-action="finance-edit" data-id="${escapeHtml(item.id)}">Upravit</button>
             <button class="ghost-btn" type="button" data-action="finance-copy" data-id="${escapeHtml(item.id)}">Kopírovat</button>
-            ${getState().cloud?.householdId && (!item.cloudId || item.syncStatus) ? `<button class="ghost-btn" type="button" data-action="cloud-sync-finance" data-id="${escapeHtml(item.id)}">Odeslat</button>` : ''}
             <button class="danger-btn" type="button" data-action="delete-finance" data-id="${escapeHtml(item.id)}">Smazat</button>
           </div>
         </div>

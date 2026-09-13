@@ -588,7 +588,7 @@ function smokeSeedScript() {
       email: 'smoke@example.test',
       householdId: 'household-e2e-smoke',
       lastSyncAt: '',
-      autoSyncEnabled: false
+      autoSyncEnabled: true
     }
   };
   const auth = {
@@ -1328,11 +1328,16 @@ async function run() {
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     const unifiedCloudCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
-      expression: `(() => ({ unified: document.querySelectorAll('.panel-cloud .unified-cloud-control').length, legacy: document.querySelectorAll('.panel-cloud [data-action="cloud-load-all"], .panel-cloud [data-action="cloud-sync-pending"], .panel-cloud [data-action="cloud-setup-realtime"]').length }))()`
+      expression: `(() => ({
+        unified: document.querySelectorAll('.panel-cloud .unified-cloud-control').length,
+        legacy: document.querySelectorAll('.panel-cloud [data-action="cloud-load-all"], .panel-cloud [data-action="cloud-sync-pending"], .panel-cloud [data-action="cloud-setup-realtime"]').length,
+        retry: document.querySelectorAll('.panel-cloud [data-action="cloud-sync-unified"]').length,
+        text: document.querySelector('.panel-cloud .unified-cloud-control')?.innerText || ''
+      }))()`
     });
     const unifiedCloudValue = unifiedCloudCheck.result?.value || {};
-    if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0) fail('Cloud nastavení nemá právě jeden sjednocený ovládací prvek.');
-    else ok('Cloud: stav a ruční synchronizace jsou sjednocené do jednoho ovládacího prvku.');
+    if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0 || unifiedCloudValue.retry !== 0 || !/změn[a-y ]*ček/i.test(unifiedCloudValue.text)) fail('Cloud nastavení nemá jediný automatický stav bez nadbytečné ruční akce.');
+    else ok('Cloud: běžný stav i čekající změny jsou sjednocené bez ručních synchronizačních tlačítek.');
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('pool') : document.querySelector('[data-nav="pool"]')?.click()`
