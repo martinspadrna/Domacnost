@@ -32,6 +32,7 @@
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const sanitizeStorageFileName = deps.sanitizeStorageFileName || ((name) => String(name || 'priloha'));
     const currentHouseholdId = deps.currentHouseholdId || (() => '');
     const currentProfileId = deps.currentProfileId || (() => '');
@@ -55,6 +56,21 @@
     const WARRANTY_IMAGE_MAX_DIMENSION = deps.WARRANTY_IMAGE_MAX_DIMENSION || 1600;
     const WARRANTY_IMAGE_JPEG_QUALITY = deps.WARRANTY_IMAGE_JPEG_QUALITY || 0.82;
     let activeWarrantyDetailId = '';
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
+
+    function restoreAt(items, item, index, matches = (entry) => entry.id === item.id) {
+      const next = Array.isArray(items) ? [...items] : [];
+      if (next.some(matches)) return next;
+      next.splice(Math.max(0, Math.min(Number(index) || 0, next.length)), 0, item);
+      return next;
+    }
 
     // Draft formuláře záruky – dříve modulová proměnná v app.js, používaná jen zárukami.
     let warrantyFormDraft = (() => {
@@ -729,29 +745,38 @@
       }
     }
 
+    async function permanentlyDeleteWarrantyFile(meta) {
+      if (!meta) return;
+      if (meta.cloudId) {
+        const client = getSupabaseClient();
+        if (!client || !getState().cloud?.householdId) return;
+        const { error: dbError } = await client.from('household_warranty_files').delete().eq('id', meta.cloudId).eq('household_id', getState().cloud.householdId);
+        if (dbError) { console.warn('Cloud sync (smazání přílohy záruky) na pozadí selhal', dbError.message); return; }
+        if (meta.storagePath) await client.storage.from('warranty-files').remove([meta.storagePath]).catch?.(() => {});
+        getState().cloud.lastSyncAt = new Date().toISOString();
+        saveState();
+      } else {
+        await deleteStoredWarrantyFile(meta.id).catch(() => {});
+      }
+    }
+
     async function deleteWarrantyFile(id) {
       const meta = getState().warrantyFiles.find((file) => file.id === id);
       if (!meta) return;
       const ok = window.confirm(meta.cloudId ? 'Smazat přílohu záruky z cloudu?' : 'Smazat přílohu záruky z tohoto zařízení?');
       if (!ok) return;
+      const fileIndex = getState().warrantyFiles.findIndex((file) => file.id === id);
       getState().warrantyFiles = getState().warrantyFiles.filter((file) => file.id !== id);
       touchState();
       saveState();
       render();
-      showToast('Příloha záruky smazána');
-      if (meta.cloudId) {
-        (async () => {
-          const client = getSupabaseClient();
-          if (!client || !getState().cloud?.householdId) return;
-          const { error: dbError } = await client.from('household_warranty_files').delete().eq('id', meta.cloudId).eq('household_id', getState().cloud.householdId);
-          if (dbError) { console.warn('Cloud sync (smazání přílohy záruky) na pozadí selhal', dbError.message); return; }
-          if (meta.storagePath) await client.storage.from('warranty-files').remove([meta.storagePath]).catch?.(() => {});
-          getState().cloud.lastSyncAt = new Date().toISOString();
-          saveState();
-        })().catch((error) => console.warn('Cloud sync (smazání přílohy záruky) na pozadí selhal', error));
-      } else {
-        deleteStoredWarrantyFile(id).catch(() => {});
-      }
+      offerUndo('Příloha záruky smazána', async () => {
+        getState().warrantyFiles = restoreAt(getState().warrantyFiles, meta, fileIndex);
+        touchState();
+        saveState();
+        render();
+        showToast('Příloha vrácena');
+      }, () => permanentlyDeleteWarrantyFile(meta));
     }
 
     async function addWarrantyFromForm(data, form) {
@@ -877,20 +902,27 @@
     async function deleteWarranty(id) {
       const before = (getState().warranties || []).length;
       const warranty = getState().warranties.find((item) => item.id === id);
+      const warrantyIndex = getState().warranties.findIndex((item) => item.id === id);
+      const fileSnapshots = (getState().warrantyFiles || []).map((file, index) => ({ file, index })).filter(({ file }) => file.warrantyId === id);
       getState().warranties = normalizeWarranties(getState().warranties).filter((item) => item.id !== id);
       if (getState().warranties.length === before) return;
       if (activeWarrantyDetailId === id) activeWarrantyDetailId = '';
-      const files = (getState().warrantyFiles || []).filter((file) => file.warrantyId === id);
-      for (const file of files) {
-        if (!file.cloudId) deleteStoredWarrantyFile(file.id).catch(() => {});
-      }
       getState().warrantyFiles = (getState().warrantyFiles || []).filter((file) => file.warrantyId !== id);
       touchState();
       saveState();
       render();
-      showToast('Záruka smazána');
-      if (warranty?.cloudId) cloudDeleteExtraItem('warranties', warranty).catch((error) => console.warn('Cloud sync (smazání záruky) na pozadí selhal', error));
-      if (cloudReady()) cloudSaveHouseholdUiSettings(false).catch((error) => console.warn('Cloud sync (smazání záruky) na pozadí selhal', error));
+      offerUndo('Záruka smazána', async () => {
+        getState().warranties = normalizeWarranties(restoreAt(getState().warranties, warranty, warrantyIndex));
+        fileSnapshots.forEach(({ file, index }) => { getState().warrantyFiles = restoreAt(getState().warrantyFiles, file, index); });
+        touchState();
+        saveState();
+        render();
+        showToast('Záruka vrácena');
+      }, async () => {
+        for (const { file } of fileSnapshots) await permanentlyDeleteWarrantyFile(file);
+        if (warranty?.cloudId) await cloudDeleteExtraItem('warranties', warranty);
+        if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
+      });
     }
 
     return {

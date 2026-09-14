@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_503';
-  const APP_BUILD = 503;
+  const APP_VERSION = 'Domácnost+ v.0.1_504';
+  const APP_BUILD = 504;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1289,6 +1289,7 @@
   let toastTimer = null;
   let undoToastTimer = null;
   let undoToastAction = null;
+  let undoToastExpireAction = null;
   let now = new Date();
   let supabaseClientInstance = null;
   // PWA stav se od v0.1_323 drží v pwa.js modulu (deferredInstallPrompt,
@@ -7562,6 +7563,7 @@
       render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
       showToast,
+      showUndoToast,
       cloudReady,
       cloudAddShoppingList,
       cloudAddShoppingItem,
@@ -7903,6 +7905,7 @@
       getSupabaseClient,
       refreshCloudSession,
       showToast,
+      showUndoToast,
       sanitizeStorageFileName,
       currentHouseholdId,
       currentProfileId,
@@ -8411,6 +8414,7 @@
       currentHouseholdId,
       currentProfileId,
       showToast,
+      showUndoToast,
       saveState,
       touchState,
       render: renderActiveModuleOnly,
@@ -10764,6 +10768,13 @@
     }
   }
 
+  function restoreReadingItemAt(items, item, index) {
+    const next = Array.isArray(items) ? [...items] : [];
+    if (next.some((entry) => entry.id === item.id)) return next;
+    next.splice(Math.max(0, Math.min(Number(index) || 0, next.length)), 0, item);
+    return next;
+  }
+
   function renderReadingBillingEnergyFields(prefix = '', billing = {}) {
     const normalized = normalizeReadingBilling(billing || {});
     const fieldName = (name) => `${prefix}${name}`;
@@ -10964,12 +10975,24 @@
     const metersInGroup = readingsMeters(true).filter((meter) => meter.groupId === cleanId).length;
     const ok = window.confirm(metersInGroup ? `Smazat místo „${group.name}“? ${metersInGroup} měřidel se přesune do výchozího místa.` : `Smazat místo „${group.name}“?`);
     if (!ok) return;
+    const groupIndex = groups.findIndex((item) => item.id === cleanId);
+    const movedMeters = readingsMeters(true).filter((meter) => meter.groupId === cleanId).map((meter) => ({ id: meter.id, groupId: meter.groupId, updatedAt: meter.updatedAt }));
     const updatedAt = new Date().toISOString();
     state.readingGroups = groups.filter((item) => item.id !== cleanId);
     state.readingMeters = readingsMeters(true).map((meter) => meter.groupId === cleanId ? { ...meter, groupId: DEFAULT_READING_GROUP_ID, updatedAt } : meter);
     readingsMeterToolPage = 'prices';
       localStorage.setItem('domacnostPlus.readingsMeterToolPage', readingsMeterToolPage);
-    await persistReadingsState('Místo smazané');
+    await persistReadingsState();
+    showUndoToast('Místo smazané', async () => {
+      state.readingGroups = restoreReadingItemAt(readingGroups(), group, groupIndex);
+      const byId = new Map(movedMeters.map((item) => [item.id, item]));
+      state.readingMeters = readingsMeters(true).map((meter) => {
+        const original = byId.get(meter.id);
+        return original ? { ...meter, groupId: original.groupId, updatedAt: original.updatedAt } : meter;
+      });
+      await persistReadingsState();
+      showToast('Místo vráceno');
+    });
   }
 
   async function addReadingMeterFromForm(data, form) {
@@ -11116,10 +11139,16 @@
   }
 
   async function deleteReadingEntry(id) {
-    const before = (state.readings || []).length;
+    const entry = readingsEntries().find((item) => item.id === id);
+    if (!entry) return;
+    const entryIndex = readingsEntries().findIndex((item) => item.id === id);
     state.readings = readingsEntries().filter((item) => item.id !== id);
-    if (state.readings.length === before) return;
-    await persistReadingsState('Odečet smazaný');
+    await persistReadingsState();
+    showUndoToast('Odečet smazaný', async () => {
+      state.readings = restoreReadingItemAt(readingsEntries(), entry, entryIndex);
+      await persistReadingsState();
+      showToast('Odečet vrácen');
+    });
   }
 
   async function toggleReadingMeterArchived(id) {
@@ -11133,11 +11162,25 @@
     const entries = readingsEntries(id);
     const ok = window.confirm(entries.length ? `Smazat měřidlo „${meter.name}“ včetně ${entries.length} odečtů?` : `Smazat měřidlo „${meter.name}“?`);
     if (!ok) return;
+    const meterIndex = readingsMeters(true).findIndex((item) => item.id === id);
+    const entrySnapshots = readingsEntries().map((entry, index) => ({ entry, index })).filter(({ entry }) => entry.meterId === id);
+    const childSnapshots = readingsMeters(true).filter((item) => item.parentMeterId === id).map((item) => ({ id: item.id, parentMeterId: item.parentMeterId, updatedAt: item.updatedAt }));
     state.readingMeters = readingsMeters(true)
       .filter((item) => item.id !== id)
       .map((item) => item.parentMeterId === id ? { ...item, parentMeterId: '', updatedAt: new Date().toISOString() } : item);
     state.readings = readingsEntries().filter((item) => item.meterId !== id);
-    await persistReadingsState('Měřidlo smazané');
+    await persistReadingsState();
+    showUndoToast('Měřidlo smazané', async () => {
+      state.readingMeters = restoreReadingItemAt(readingsMeters(true), meter, meterIndex);
+      const childrenById = new Map(childSnapshots.map((item) => [item.id, item]));
+      state.readingMeters = readingsMeters(true).map((item) => {
+        const original = childrenById.get(item.id);
+        return original ? { ...item, parentMeterId: original.parentMeterId, updatedAt: original.updatedAt } : item;
+      });
+      entrySnapshots.forEach(({ entry, index }) => { state.readings = restoreReadingItemAt(readingsEntries(), entry, index); });
+      await persistReadingsState();
+      showToast('Měřidlo vráceno');
+    });
   }
 
   async function updateReadingMeterPricing(id) {
@@ -20127,16 +20170,21 @@
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
   }
 
-  function hideUndoToast() {
+  function hideUndoToast({ runExpire = false } = {}) {
     clearTimeout(undoToastTimer);
     undoToastTimer = null;
     undoToastAction = null;
+    const expire = undoToastExpireAction;
+    undoToastExpireAction = null;
     document.getElementById('undo-toast')?.remove();
+    if (runExpire && typeof expire === 'function') {
+      Promise.resolve().then(expire).catch((error) => console.warn('Dokončení smazání selhalo', error));
+    }
   }
 
-  function showUndoToast(text, action, { duration = 8000 } = {}) {
+  function showUndoToast(text, action, { duration = 8000, onExpire = null } = {}) {
     if (typeof action !== 'function') return showToast(text);
-    hideUndoToast();
+    hideUndoToast({ runExpire: true });
     const toast = document.createElement('div');
     toast.id = 'undo-toast';
     toast.className = 'undo-toast';
@@ -20149,10 +20197,12 @@
     button.className = 'undo-toast-button';
     button.textContent = 'Vrátit zpět';
     undoToastAction = action;
+    undoToastExpireAction = typeof onExpire === 'function' ? onExpire : null;
     button.addEventListener('click', async () => {
       if (!undoToastAction || button.disabled) return;
       const restore = undoToastAction;
       undoToastAction = null;
+      undoToastExpireAction = null;
       clearTimeout(undoToastTimer);
       undoToastTimer = null;
       button.disabled = true;
@@ -20173,8 +20223,10 @@
     toast.append(message, button);
     document.body.appendChild(toast);
     window.requestAnimationFrame(() => toast.classList.add('show'));
-    undoToastTimer = window.setTimeout(hideUndoToast, Math.max(3000, Number(duration) || 8000));
+    undoToastTimer = window.setTimeout(() => hideUndoToast({ runExpire: true }), Math.max(3000, Number(duration) || 8000));
   }
+
+  window.addEventListener('pagehide', () => hideUndoToast({ runExpire: true }));
 
 
   document.addEventListener('keydown', (event) => {

@@ -29,6 +29,7 @@
     const currentHouseholdId = deps.currentHouseholdId || (() => '');
     const currentProfileId = deps.currentProfileId || (() => '');
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const saveState = deps.saveState || (() => {});
     const touchState = deps.touchState || (() => {});
     const render = deps.render || (() => {});
@@ -64,6 +65,21 @@
     let calendarAutoSyncTimer = null;
     let calendarAutoSyncRunning = false;
     let calendarDetailEventId = '';
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
+
+    function restoreAt(items, item, index, matches = (entry) => entry.id === item.id) {
+      const next = Array.isArray(items) ? [...items] : [];
+      if (next.some(matches)) return next;
+      next.splice(Math.max(0, Math.min(Number(index) || 0, next.length)), 0, item);
+      return next;
+    }
 
     function getCalendarSources() {
       return Array.isArray(getState().calendarCloud?.sources) ? getState().calendarCloud.sources : [];
@@ -1021,6 +1037,8 @@
       if (!ok) return;
 
       const sourceKeys = [source.id, source.cloudId].filter(Boolean).map(String);
+      const sourceIndex = getCalendarSources().findIndex((item) => sourceKeys.includes(String(item.id || '')) || sourceKeys.includes(String(item.cloudId || '')));
+      const removedEvents = (getState().calendar || []).map((event, index) => ({ event, index })).filter(({ event }) => sourceKeys.includes(String(event.sourceId || '')));
       getState().calendarCloud = {
         ...(getState().calendarCloud || {}),
         sources: getCalendarSources().filter((item) => !sourceKeys.includes(String(item.id || '')) && !sourceKeys.includes(String(item.cloudId || ''))),
@@ -1030,11 +1048,20 @@
       touchState();
       saveState();
       render();
-      showToast('Kalendář odebraný');
-
-      const client = getSupabaseClient();
-      if (client && getState().cloud?.householdId && source.cloudId) {
-        (async () => {
+      offerUndo('Kalendář odebraný', async () => {
+        getState().calendarCloud = {
+          ...(getState().calendarCloud || {}),
+          sources: restoreAt(getCalendarSources(), source, sourceIndex, (item) => sourceKeys.includes(String(item.id || '')) || sourceKeys.includes(String(item.cloudId || ''))),
+          sourcesLoadedAt: new Date().toISOString()
+        };
+        removedEvents.forEach(({ event, index }) => { getState().calendar = restoreAt(getState().calendar, event, index); });
+        touchState();
+        saveState();
+        render();
+        showToast('Kalendář vrácen');
+      }, async () => {
+        const client = getSupabaseClient();
+        if (client && getState().cloud?.householdId && source.cloudId) {
           const { error: eventsError } = await client
             .from('calendar_events')
             .delete()
@@ -1048,8 +1075,8 @@
             .eq('household_id', getState().cloud.householdId);
           if (error) { console.warn('Cloud sync (smazání zdroje kalendáře) na pozadí selhal', error.message); return; }
           if (getState().cloud) { getState().cloud.lastSyncAt = new Date().toISOString(); saveState(); }
-        })().catch((error) => console.warn('Cloud sync (smazání zdroje kalendáře) na pozadí selhal', error));
-      }
+        }
+      });
     }
 
     async function cloudAddCalendarEvent(event) {
@@ -1203,13 +1230,19 @@
     async function deleteCalendarEvent(id) {
       const event = getState().calendar.find((entry) => entry.id === id);
       if (!event) return;
+      const eventIndex = getState().calendar.findIndex((entry) => entry.id === id);
       getState().calendar = getState().calendar.filter((entry) => entry.id !== id);
       if (calendarDetailEventId === id || calendarDetailEventId === event.cloudId) calendarDetailEventId = '';
       touchState();
       saveState();
       render();
-      showToast('Událost smazána');
-      cloudDeleteCalendarEvent(event).catch((error) => console.warn('Cloud sync (smazání události) na pozadí selhal', error));
+      offerUndo('Událost smazána', async () => {
+        getState().calendar = restoreAt(getState().calendar, event, eventIndex);
+        touchState();
+        saveState();
+        render();
+        showToast('Událost vrácena');
+      }, () => cloudDeleteCalendarEvent(event));
     }
 
     async function readFunctionErrorMessage(error, fallback = 'Backend zatím není připravený') {
