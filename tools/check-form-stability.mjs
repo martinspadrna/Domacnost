@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync('app.js', 'utf8');
+const css = readFileSync('styles.css', 'utf8');
 const readings = readFileSync('readings.js', 'utf8');
 const warranty = readFileSync('warranty.js', 'utf8');
 const readingsSurface = `${app}\n${readings}`;
@@ -20,6 +21,18 @@ const checks = [
       app.includes('restoreSessionFormDrafts();\n      restoreFormStabilitySnapshot(formSnapshot)') &&
       app.includes('clearSessionFormDraft(form);') &&
       app.includes('flushSessionFormDrafts();')
+  },
+  {
+    name: 'form submit guard blocks duplicate saves and exposes an accessible busy state',
+    ok: app.includes("if (!form || form.dataset.busy === 'true') return false;") &&
+      app.includes("form.setAttribute('aria-busy', 'true');") &&
+      app.includes("activeButton.dataset.busySubmit = 'true';") &&
+      app.includes("form.dispatchEvent(new CustomEvent('domacnost:submit-start'));") &&
+      app.includes("if (!form || form.dataset.busy === 'true') return;") &&
+      app.includes('guardedHandleForm(form, event.submitter)') &&
+      app.includes('button.disabled = disabled;') &&
+      css.includes('button[data-busy-submit="true"]::before') &&
+      css.includes('@keyframes form-submit-spin')
   },
   {
     name: 'scrollable app panels preserve their own scroll across renders',

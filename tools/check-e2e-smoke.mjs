@@ -82,6 +82,15 @@ function findBrowser() {
   return browserCandidates().find((candidate) => existsSync(candidate)) || '';
 }
 
+function stopBrowserProcessTree(browserProcess) {
+  if (!browserProcess || browserProcess.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(browserProcess.pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+  try { browserProcess.kill('SIGTERM'); } catch {}
+}
+
 function mimeType(filePath) {
   return {
     '.html': 'text/html; charset=utf-8',
@@ -646,12 +655,12 @@ async function run() {
     'about:blank'
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
-  let cdp = null;
+  let browserCdp = null;
   let page = null;
   try {
     browserProcess.stderr.setEncoding('utf8');
     const version = await waitForJson(`http://127.0.0.1:${debugPort}/json/version`);
-    const browserCdp = connectCdp(version.webSocketDebuggerUrl);
+    browserCdp = connectCdp(version.webSocketDebuggerUrl);
     await browserCdp.open;
     const target = await browserCdp.send('Target.createTarget', { url: 'about:blank' });
     const targets = await waitForJson(`http://127.0.0.1:${debugPort}/json/list`);
@@ -910,6 +919,35 @@ async function run() {
       fail(`Koncept formuláře se po přechodu mezi moduly neobnovil (${JSON.stringify(financeDraftValue)}).`);
     } else {
       ok('Formuláře: rozepsané údaje přežijí přechod do jiného modulu i session uložení.');
+    }
+
+    const submitGuardCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const host = document.querySelector('[data-module-content]') || document.querySelector('main');
+        const form = document.createElement('form');
+        form.dataset.form = 'e2e-submit-guard';
+        form.innerHTML = '<button class="primary-btn" type="submit">Uložit test</button>';
+        let starts = 0;
+        form.addEventListener('domacnost:submit-start', () => { starts += 1; });
+        host.appendChild(form);
+        const button = form.querySelector('button');
+        form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: button }));
+        form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: button }));
+        window.__DOMACNOST_E2E_SUBMIT_FORM__ = form;
+        return {
+          starts,
+          busy: form.getAttribute('aria-busy'),
+          disabled: button.disabled,
+          label: button.textContent.trim()
+        };
+      })()`
+    });
+    const submitGuardValue = submitGuardCheck.result?.value || {};
+    let submitGuardOk = true;
+    if (submitGuardValue.starts !== 1 || submitGuardValue.busy !== 'true' || !submitGuardValue.disabled || submitGuardValue.label !== 'Ukládám…') {
+      fail(`Ochrana proti dvojímu uložení se neaktivovala správně (${JSON.stringify(submitGuardValue)}).`);
+      submitGuardOk = false;
     }
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('home')`, awaitPromise: true });
@@ -2018,6 +2056,24 @@ async function run() {
     if (!desktopViewportValue.navHidden) { fail('Mobilni navigace zustala viditelna na desktopu.'); desktopViewportOk = false; }
     if (desktopViewportOk) ok('Desktop: aplikace vyuziva celou sirku i vysku dostupne plochy.');
 
+    const submitGuardReleased = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const form = window.__DOMACNOST_E2E_SUBMIT_FORM__;
+        const button = form?.querySelector('button');
+        const result = { busy: form?.hasAttribute('aria-busy'), disabled: button?.disabled, label: button?.textContent?.trim() || '' };
+        form?.remove();
+        delete window.__DOMACNOST_E2E_SUBMIT_FORM__;
+        return result;
+      })()`
+    });
+    const submitGuardReleasedValue = submitGuardReleased.result?.value || {};
+    if (submitGuardReleasedValue.busy || submitGuardReleasedValue.disabled || submitGuardReleasedValue.label !== 'Uložit test') {
+      fail(`Formulář se po uložení neodemkl správně (${JSON.stringify(submitGuardReleasedValue)}).`);
+      submitGuardOk = false;
+    }
+    if (submitGuardOk) ok('Formuláře: dvojklik spustí uložení jen jednou a tlačítko ukáže průběh.');
+
     const renderTimingCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
@@ -2044,19 +2100,27 @@ async function run() {
       ok(`Performance: render tasky zustaly pod 2,2 s (${slowest || 'bez pomalych renderu'}).`);
     }
 
-    browserCdp.close();
   } finally {
+    if (browserCdp) {
+      try {
+        await Promise.race([
+          browserCdp.send('Browser.close'),
+          new Promise((resolveWait) => setTimeout(resolveWait, 1200))
+        ]);
+      } catch {}
+    }
     if (page) page.close();
-    browserProcess.kill();
+    if (browserCdp) browserCdp.close();
     await new Promise((resolveClose) => server.close(resolveClose));
     await new Promise((resolveExit) => {
-      if (browserProcess.exitCode !== null || browserProcess.killed) {
-        setTimeout(resolveExit, 300);
-        return;
-      }
+      if (browserProcess.exitCode !== null) return resolveExit();
       browserProcess.once('exit', resolveExit);
       setTimeout(resolveExit, 1500);
     });
+    if (browserProcess.exitCode === null) {
+      stopBrowserProcessTree(browserProcess);
+      await new Promise((resolveWait) => setTimeout(resolveWait, 400));
+    }
     try {
       rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 250 });
     } catch (error) {

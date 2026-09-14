@@ -16334,3 +16334,35 @@ body.home-active {
     padding-bottom: 28px !important;
   }
 }
+/* v0.1_502: jednotný stav ukládání formulářů */
+form[aria-busy="true"] {
+  cursor: progress;
+}
+
+button[data-busy-submit="true"],
+input[type="submit"][data-busy-submit="true"] {
+  cursor: progress;
+  opacity: .86;
+  position: relative;
+}
+
+button[data-busy-submit="true"]::before {
+  width: .8em;
+  height: .8em;
+  margin-right: .5em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  display: inline-block;
+  vertical-align: -.08em;
+  animation: form-submit-spin .7s linear infinite;
+}
+
+@keyframes form-submit-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button[data-busy-submit="true"]::before { animation: none; }
+}

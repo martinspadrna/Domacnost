@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_501';
-  const APP_BUILD = 501;
+  const APP_VERSION = 'Domácnost+ v.0.1_502';
+  const APP_BUILD = 502;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -16098,21 +16098,55 @@
   }
 
 
-  async function guardedHandleForm(form) {
-    if (!form || form.dataset.busy === 'true') return;
+  function formSubmitBusyLabel(button) {
+    const explicit = String(button?.dataset?.busyLabel || '').trim();
+    if (explicit) return explicit;
+    const label = String(button?.textContent || '').trim().toLocaleLowerCase('cs');
+    if (/přihl|ověř/.test(label)) return 'Přihlašuji…';
+    if (/registr|vytvoř/.test(label)) return 'Vytvářím…';
+    if (/import|načti|obnov/.test(label)) return 'Načítám…';
+    if (/spočít|vypočít/.test(label)) return 'Počítám…';
+    return 'Ukládám…';
+  }
+
+  async function guardedHandleForm(form, submitter = null) {
+    if (!form || form.dataset.busy === 'true') return false;
+    const submitButtons = [...form.querySelectorAll('button[type="submit"], input[type="submit"]')];
+    const activeButton = submitButtons.includes(submitter) ? submitter : submitButtons[0] || null;
+    const buttonStates = submitButtons.map((button) => ({
+      button,
+      disabled: Boolean(button.disabled),
+      ariaDisabled: button.getAttribute('aria-disabled'),
+      html: button.tagName === 'BUTTON' ? button.innerHTML : '',
+      value: button.tagName === 'INPUT' ? button.value : ''
+    }));
     form.dataset.busy = 'true';
-    const submitButtons = [...form.querySelectorAll('button[type="submit"]')];
-    submitButtons.forEach((button) => { button.disabled = true; button.dataset.busySubmit = 'true'; });
+    form.setAttribute('aria-busy', 'true');
+    submitButtons.forEach((button) => {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    });
+    if (activeButton) {
+      activeButton.dataset.busySubmit = 'true';
+      const busyLabel = formSubmitBusyLabel(activeButton);
+      if (activeButton.tagName === 'BUTTON') activeButton.textContent = busyLabel;
+      else activeButton.value = busyLabel;
+    }
+    form.dispatchEvent(new CustomEvent('domacnost:submit-start'));
     try {
       await handleForm(form);
+      return true;
     } finally {
       window.setTimeout(() => {
-        form.dataset.busy = 'false';
-        submitButtons.forEach((button) => {
-          if (button.dataset.busySubmit === 'true') {
-            button.disabled = false;
-            delete button.dataset.busySubmit;
-          }
+        delete form.dataset.busy;
+        form.removeAttribute('aria-busy');
+        buttonStates.forEach(({ button, disabled, ariaDisabled, html, value }) => {
+          button.disabled = disabled;
+          if (ariaDisabled === null) button.removeAttribute('aria-disabled');
+          else button.setAttribute('aria-disabled', ariaDisabled);
+          if (button.tagName === 'BUTTON') button.innerHTML = html;
+          else button.value = value;
+          delete button.dataset.busySubmit;
         });
       }, 240);
     }
@@ -20305,8 +20339,10 @@
   app.addEventListener('submit', (event) => {
     event.preventDefault();
     const form = event.target;
+    if (!form || form.dataset.busy === 'true') return;
     clearSessionFormDraft(form);
-    Promise.resolve(guardedHandleForm(form)).then(() => {
+    Promise.resolve(guardedHandleForm(form, event.submitter)).then((accepted) => {
+      if (!accepted) return;
       // Neúspěšná validace nechá formulář na místě. V tom případě
       // rozepsané hodnoty znovu zachytíme; po úspěšném uložení bývá
       // formulář resetovaný nebo nahrazený renderem a koncept zůstane smazaný.
