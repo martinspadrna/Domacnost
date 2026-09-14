@@ -485,6 +485,23 @@ if (app && index && moduleLoader) {
   expect(styles, '.home-redesign-shell.home-app-shell .app-desktop-row {\n  height: 100%;', 'styles.css: Home předává skutečnou výšku vnitřnímu scrollovacímu kontejneru.');
 }
 
+if (app && finance && readings && garage && contracts && warranty && styles) {
+  expect(app, 'const TRASH_RETENTION_DAYS = 30', 'app.js: koš drží smazané záznamy 30 dní.');
+  expect(app, 'function captureDeletedRecordsForTrash()', 'app.js: mazání automaticky zachytí související záznamy do koše.');
+  expect(app, 'function restoreTrashEntry(id)', 'app.js: koš umí záznamy obnovit.');
+  expect(app, 'function replayCloudOutbox()', 'app.js: čekající cloudová smazání mají trvalou frontu.');
+  expect(app, '{ run: replayCloudOutbox }', 'app.js: fronta se zpracuje před ostatní synchronizací.');
+  expect(app, "data-action=\"restore-trash\"", 'app.js: koš má ovládání obnovy.');
+  expect(app, "state.cloud.outbox = normalizeCloudOutbox", 'app.js: fronta se deduplikuje a ukládá do stavu.');
+  expect(finance, 'data-history="finance"', 'finance.js: dlouhá historie používá postupné zobrazení.');
+  expect(readings, 'data-history="readings"', 'readings.js: dlouhá historie odečtů používá postupné zobrazení.');
+  expect(garage, 'data-history="garage"', 'garage.js: dlouhá historie auta používá postupné zobrazení.');
+  expect(garage, 'data-lazy-render', 'garage.js: náročné grafy se počítají až po otevření.');
+  expect(contracts, 'preserveStorage: true', 'contracts.js: příloha smlouvy zůstane během 30denního koše fyzicky uložená.');
+  expect(warranty, 'preserveStorage: true', 'warranty.js: příloha záruky zůstane během 30denního koše fyzicky uložená.');
+  expect(styles, '.list-load-more {', 'styles.css: postupné načítání seznamu má vlastní ovládání.');
+}
+
 console.log('App wiring smoke pro Domácnost+');
 notes.forEach((line) => console.log(`  ok: ${line}`));
 

@@ -653,7 +653,7 @@
       }
     }
 
-    async function deleteCloudContractFile(meta) {
+    async function deleteCloudContractFile(meta, options = {}) {
       const client = getSupabaseClient();
       if (!client || !meta?.cloudId || !meta?.storagePath || !state.cloud?.householdId) return false;
       const { error: dbError } = await client
@@ -665,8 +665,10 @@
         showToast(dbError.message || 'Metadata přílohy se nepovedlo smazat');
         return false;
       }
-      const { error: storageError } = await client.storage.from('contract-files').remove([meta.storagePath]);
-      if (storageError) showToast('Metadata smazaná, soubor ve Storage může zůstat k dočištění');
+      if (!options.preserveStorage) {
+        const { error: storageError } = await client.storage.from('contract-files').remove([meta.storagePath]);
+        if (storageError) showToast('Metadata smazaná, soubor ve Storage může zůstat k dočištění');
+      }
       state.cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
@@ -690,8 +692,7 @@
         saveState();
         render();
       }, async () => {
-        if (meta.cloudId) await deleteCloudContractFile(meta);
-        await deleteStoredContractFile(meta.id).catch(() => {});
+        if (meta.cloudId) await deleteCloudContractFile(meta, { preserveStorage: true });
       });
     }
 

@@ -1058,7 +1058,7 @@ async function run() {
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('shopping', 'list')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
     const shoppingUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')) })`
@@ -1096,9 +1096,9 @@ async function run() {
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('warranties', 'overview')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]'))`, 1600, 50);
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
     const warrantyUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')) })`
@@ -1194,6 +1194,24 @@ async function run() {
       selector: '[data-action="delete-vehicle"][data-id="vehicle-e2e-smoke"]',
       restoredExpression: `(() => { const saved = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || '{}'); return (saved.vehicles || []).filter((item) => item.id === 'vehicle-e2e-smoke').length === 1 && (saved.fuel || []).filter((item) => item.id === 'fuel-e2e-smoke').length === 1 && (saved.services || []).filter((item) => item.id === 'service-e2e-smoke').length === 1; })()`
     });
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('hdo')`, awaitPromise: true });
+    await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]'))`, 1800, 50);
+    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]')?.click()` });
+    await waitForExpression(page, `Boolean(document.querySelector('#undo-toast.show'))`, 1200, 40);
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_EXPIRE_UNDO__?.()` });
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('settings', 'data')`, awaitPromise: true });
+    const trashVisible = await waitForExpression(page, `Boolean(document.querySelector('[data-trash-card] [data-action="restore-trash"]'))`, 1800, 50);
+    const trashState = await page.send('Runtime.evaluate', { returnByValue: true, expression: `window.__DOMACNOST_E2E_TRASH_SNAPSHOT__?.()` });
+    if (!trashVisible || !(trashState.result?.value?.trash || []).some((entry) => /Smoke/i.test(entry.label || '') || /tarif/i.test(entry.label || ''))) {
+      fail(`Koš: smazaný HDO záznam nezůstal dostupný po vypršení rychlého návratu (${JSON.stringify(trashState.result?.value || {})}).`);
+    } else {
+      await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-trash-card] [data-action="restore-trash"]')?.click()` });
+      await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('hdo')`, awaitPromise: true });
+      const restoredFromTrash = await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]'))`, 2200, 50);
+      if (!restoredFromTrash) fail('Koš: obnovení nevrátilo HDO záznam do modulu.');
+      else ok('Koš: po vypršení rychlého návratu lze záznam obnovit z 30denního koše.');
+    }
 
     const submitGuardCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
@@ -2053,6 +2071,10 @@ async function run() {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('garage', 'detail') : document.querySelector('.section-tabs [data-area="garage"][data-tab="detail"]')?.click()`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    await page.send('Runtime.evaluate', {
+      expression: `(() => { const lazyCharts = document.querySelector('.garage-detail-chart-details[data-lazy-render]'); if (lazyCharts) lazyCharts.open = true; })()`
+    });
+    await waitForExpression(page, `Boolean(document.querySelector('.garage-detail-chart-section'))`, 1600, 50);
     const garageDetailCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {

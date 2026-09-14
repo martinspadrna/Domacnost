@@ -745,17 +745,17 @@
       }
     }
 
-    async function permanentlyDeleteWarrantyFile(meta) {
+    async function permanentlyDeleteWarrantyFile(meta, options = {}) {
       if (!meta) return;
       if (meta.cloudId) {
         const client = getSupabaseClient();
         if (!client || !getState().cloud?.householdId) return;
         const { error: dbError } = await client.from('household_warranty_files').delete().eq('id', meta.cloudId).eq('household_id', getState().cloud.householdId);
         if (dbError) { console.warn('Cloud sync (smazání přílohy záruky) na pozadí selhal', dbError.message); return; }
-        if (meta.storagePath) await client.storage.from('warranty-files').remove([meta.storagePath]).catch?.(() => {});
+        if (meta.storagePath && !options.preserveStorage) await client.storage.from('warranty-files').remove([meta.storagePath]).catch?.(() => {});
         getState().cloud.lastSyncAt = new Date().toISOString();
         saveState();
-      } else {
+      } else if (!options.preserveStorage) {
         await deleteStoredWarrantyFile(meta.id).catch(() => {});
       }
     }
@@ -776,7 +776,7 @@
         saveState();
         render();
         showToast('Příloha vrácena');
-      }, () => permanentlyDeleteWarrantyFile(meta));
+      }, () => permanentlyDeleteWarrantyFile(meta, { preserveStorage: true }));
     }
 
     async function addWarrantyFromForm(data, form) {

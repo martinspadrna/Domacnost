@@ -818,6 +818,26 @@ button.kpi.kpi-clickable {
   opacity: 0.7;
 }
 
+.list-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 4px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.trash-list {
+  max-height: 520px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.trash-item .item-actions {
+  justify-content: flex-end;
+}
+
 @media (max-width: 640px) {
   .undo-toast {
     left: 12px;

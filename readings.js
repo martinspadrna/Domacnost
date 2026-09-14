@@ -441,7 +441,7 @@
         content = `
           <section class="card desktop-span-2 readings-panel panel-history">
             <div class="card-header"><div><h2>Historie odečtů</h2><p>Poslední zapsané stavy a rozdíl proti předchozímu odečtu.</p></div><span class="badge">${entries.length}</span></div>
-            ${entries.length ? `<div class="list compact-list readings-history-list">${entries.slice(0, 80).map(renderReadingEntryItem).join('')}</div>` : renderEmpty('Historie je zatím prázdná.')}
+            ${entries.length ? `<div class="list compact-list readings-history-list">${entries.slice(0, ui.readingsHistoryVisibleCount || 40).map(renderReadingEntryItem).join('')}</div>${entries.length > (ui.readingsHistoryVisibleCount || 40) ? `<div class="list-load-more"><button class="ghost-btn" type="button" data-action="show-more-history" data-history="readings">Zobrazit dalších ${Math.min(40, entries.length - (ui.readingsHistoryVisibleCount || 40))}</button><span>${ui.readingsHistoryVisibleCount || 40} z ${entries.length}</span></div>` : ''}` : renderEmpty('Historie je zatím prázdná.')}
           </section>`;
       }
 

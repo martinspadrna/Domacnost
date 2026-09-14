@@ -18,6 +18,7 @@
     const setFinanceTemplateEditId = deps.setFinanceTemplateEditId || (() => {});
     const getFinanceCopyId = deps.getFinanceCopyId || (() => '');
     const setFinanceCopyId = deps.setFinanceCopyId || (() => {});
+    const getFinanceHistoryVisibleCount = deps.getFinanceHistoryVisibleCount || (() => 40);
     const getDetailsOpen = deps.getDetailsOpen || (() => false);
     const writeFinanceModuleTab = deps.writeFinanceModuleTab || (() => {});
     const getModuleTab = deps.getModuleTab || ((area, fallback) => fallback);
@@ -659,7 +660,7 @@
             ${renderFinanceMonthToolbar(selectedMonth, typeFilter)}
             ${renderFinanceSplitOverview(incomeItems, expenseItems)}
             <div class="card-header finance-list-head"><div><h2>Pohyby na účtu</h2><p>${escapeHtml(typeFilter === 'all' ? 'Všechny pohyby' : typeFilter === 'income' ? 'Jen příjmy' : typeFilter === 'expense' ? 'Jen výdaje' : 'Jen přesuny')} za ${escapeHtml(financeMonthLabel(selectedMonth))}</p></div><span class="badge">${visibleItems.length}</span></div>
-            ${visibleItems.length ? `<div class="list compact-list finance-movement-list">${visibleItems.slice(0, 80).map(renderFinanceItem).join('')}</div>` : renderEmptyCta({ icon: '💰', title: 'Měsíc je bez pohybů', text: 'Přidej příjem, výdaj nebo přesun mezi účty. Přehled se začne počítat automaticky.', nav: 'finance', tab: 'add', label: 'Přidat pohyb' })}
+            ${visibleItems.length ? `<div class="list compact-list finance-movement-list">${visibleItems.slice(0, getFinanceHistoryVisibleCount()).map(renderFinanceItem).join('')}</div>${visibleItems.length > getFinanceHistoryVisibleCount() ? `<div class="list-load-more"><button class="ghost-btn" type="button" data-action="show-more-history" data-history="finance">Zobrazit dalších ${Math.min(40, visibleItems.length - getFinanceHistoryVisibleCount())}</button><span>${getFinanceHistoryVisibleCount()} z ${visibleItems.length}</span></div>` : ''}` : renderEmptyCta({ icon: '💰', title: 'Měsíc je bez pohybů', text: 'Přidej příjem, výdaj nebo přesun mezi účty. Přehled se začne počítat automaticky.', nav: 'finance', tab: 'add', label: 'Přidat pohyb' })}
           </section>`;
       }
 

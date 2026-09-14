@@ -9,8 +9,16 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_505';
-  const APP_BUILD = 505;
+  const APP_VERSION = 'Domácnost+ v.0.1_506';
+  const APP_BUILD = 506;
+  const TRASH_RETENTION_DAYS = 30;
+  const TRASH_MAX_ENTRIES = 100;
+  const TRASH_COLLECTION_LABELS = {
+    calendar: 'Událost', coupons: 'Slevový kód', hdoWindows: 'HDO interval', shopping: 'Položka nákupu', shoppingLists: 'Nákupní seznam', shoppingCatalogCustom: 'Vlastní položka katalogu', homeTasks: 'Úkol', waste: 'Svoz odpadu', readingGroups: 'Místo odečtu', readingMeters: 'Měřidlo', readings: 'Odečet', notes: 'Poznámka', warranties: 'Záruka', warrantyFiles: 'Příloha záruky', vehicles: 'Auto', fuel: 'Tankování', services: 'Servisní záznam', vehicleServicePlans: 'Položka servisního plánu', contracts: 'Smlouva', contractFiles: 'Příloha smlouvy', finance: 'Finanční pohyb', financeAccounts: 'Finanční účet', financeLoans: 'Půjčka', subscriptions: 'Předplatné', subscriptionPeople: 'Člověk v předplatném', subscriptionPayments: 'Platba předplatného', subscriptionShares: 'Sdílení předplatného', poolMeasurements: 'Měření bazénu'
+  };
+  const CLOUD_DELETE_TABLES = {
+    calendar: 'calendar_events', coupons: 'household_coupons', hdoWindows: 'hdo_windows', shopping: 'shopping_list_items', shoppingLists: 'shopping_lists', homeTasks: 'household_tasks', waste: 'waste_schedules', notes: 'household_notes', warranties: 'household_warranties', warrantyFiles: 'household_warranty_files', vehicles: 'vehicles', fuel: 'fuel_logs', services: 'service_logs', contracts: 'contracts', contractFiles: 'contract_files', finance: 'finance_transactions', financeAccounts: 'finance_accounts'
+  };
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -870,6 +878,7 @@
     subscriptions: [],
     subscriptionPeople: [],
     subscriptionPayments: [],
+    trash: [],
     financeCloud: { categories: [], accountsLoadedAt: '', loadedAt: '', monthFilter: '', typeFilter: 'all' },
     subscriptionsCloud: { loadedAt: '' },
     householdExtrasCloud: { loadedAt: '' },
@@ -904,6 +913,7 @@
       autosyncRetryAt: '',
       householdUiPendingAt: '',
       localPendingCount: 0,
+      outbox: [],
       autoSyncEnabled: true,
       autosyncStatus: 'idle',
       realtimeStatus: 'offline',
@@ -1201,6 +1211,10 @@
   const lazyDataCore = createLazyDataCore();
   let state = loadState();
   runtimeStateRef = state;
+  let trashCollectionBaseline = new Map();
+  const pendingUndoTrashIds = new Set();
+  let trashTrackingSuppressed = false;
+  resetTrashTrackingBaseline();
   mergeVisualSettings({ ...readLocalVisualSettings(), ...(state.settings || {}) });
   applyVisualSettings();
 
@@ -1214,6 +1228,7 @@
   let garageVehicleId = null;
   let garageHistoryYearFilter = 'all';
   let garageHistoryTypeFilter = 'all';
+  let garageHistoryVisibleCount = 40;
   let garageStatsVehicleId = '';
   let garageCalcVehicleId = '';
   let garageTripCalcResult = null;
@@ -1254,6 +1269,7 @@
   let loyaltyCardScan = { loading: false, dataUrl: '', detectedCode: '', detectedFormat: '', detectedText: '', error: '', source: '' };
   let financeEditId = '';
   let financeAccountEditId = '';
+  let financeHistoryVisibleCount = 40;
   let readingsDetailMeterId = localStorage.getItem('domacnostPlus.readingsDetailMeterId') || '';
   let readingsDetailPeriod = localStorage.getItem('domacnostPlus.readingsDetailPeriod') || '12';
   let readingsCompareMeterIds = safeParse(localStorage.getItem('domacnostPlus.readingsCompareMeterIds'), []) || [];
@@ -1261,6 +1277,7 @@
   let readingsEntryDrawerOpen = false;
   let readingsMeterToolPage = localStorage.getItem('domacnostPlus.readingsMeterToolPage') || '';
   let readingsEditingMeterId = localStorage.getItem('domacnostPlus.readingsEditingMeterId') || '';
+  let readingsHistoryVisibleCount = 40;
   let readingsMetersCacheSource = null;
   let readingsMetersCache = [];
   let readingsEntriesCacheSource = null;
@@ -1993,6 +2010,8 @@
     migrated.cloud.householdUiPendingAt = migrated.cloud?.householdUiPendingAt || '';
     migrated.cloud.profilesLoadedAt = migrated.cloud?.profilesLoadedAt || '';
     migrated.cloud.localPendingCount = Number(migrated.cloud?.localPendingCount || 0);
+    migrated.cloud.outbox = normalizeCloudOutbox(migrated.cloud?.outbox || []);
+    migrated.trash = normalizeTrashEntries(migrated.trash || []);
     delete migrated.devices;
     delete migrated.deviceDiscovery;
     delete migrated.cameras;
@@ -2311,6 +2330,167 @@
 
   function getCollectionNames() {
     return ['calendar', 'coupons', 'hdoWindows', 'shopping', 'shoppingLists', 'shoppingCatalogCustom', 'homeTasks', 'waste', 'readingGroups', 'readingMeters', 'readings', 'notes', 'warranties', 'warrantyFiles', 'vehicles', 'fuel', 'services', 'contracts', 'contractFiles', 'finance', 'financeAccounts', 'financeLoans', 'subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
+  }
+
+  function trashTrackableCollectionNames() {
+    return [...getCollectionNames(), 'poolMeasurements', 'subscriptionShares', 'vehicleServicePlans'];
+  }
+
+  function trashCollectionRecords(collection) {
+    if (getCollectionNames().includes(collection)) return Array.isArray(state?.[collection]) ? state[collection] : [];
+    if (collection === 'poolMeasurements') {
+      return (state?.pools || []).flatMap((pool) => (pool.measurements || []).map((record) => ({ ...record, _trashParentId: pool.id, _trashKey: `${pool.id}:${record.id}` })));
+    }
+    if (collection === 'subscriptionShares') {
+      return (state?.subscriptions || []).flatMap((service) => (service.shares || []).map((record) => ({ ...record, _trashParentId: service.id, _trashKey: `${service.id}:${record.personId || record.id}`, _trashSyntheticId: !record.id, id: record.id || `${service.id}:${record.personId}` })));
+    }
+    if (collection === 'vehicleServicePlans') {
+      return Object.entries(state?.settings?.vehicleServicePlans || {}).flatMap(([vehicleId, list]) => (Array.isArray(list) ? list : []).map((record) => ({ ...record, _trashParentId: vehicleId, _trashKey: `${vehicleId}:${record.id}` })));
+    }
+    return [];
+  }
+
+  function trashRecordTitle(collection, record = {}) {
+    const raw = record.name || record.title || record.text || record.store || record.type || record.fileName || record.label || record.date || '';
+    return normalizeText(raw) || TRASH_COLLECTION_LABELS[collection] || 'Záznam';
+  }
+
+  function sanitizeTrashRecord(record = {}) {
+    const copy = structuredCloneSafe(record) || { ...record };
+    ['photoDataUrl', 'imageDataUrl', 'dataUrl', 'base64', 'blob'].forEach((key) => { if (key in copy) delete copy[key]; });
+    return copy;
+  }
+
+  function normalizeTrashEntries(value) {
+    return (Array.isArray(value) ? value : [])
+      .filter((entry) => entry && typeof entry === 'object' && Array.isArray(entry.records) && entry.records.length)
+      .map((entry) => {
+        const deletedAt = Number.isFinite(Date.parse(entry.deletedAt || '')) ? entry.deletedAt : new Date().toISOString();
+        const expiresAt = Number.isFinite(Date.parse(entry.expiresAt || '')) ? entry.expiresAt : new Date(Date.parse(deletedAt) + TRASH_RETENTION_DAYS * 86400000).toISOString();
+        const records = entry.records
+          .filter((item) => item && trashTrackableCollectionNames().includes(item.collection) && item.record && typeof item.record === 'object' && item.record.id)
+          .map((item) => ({ collection: item.collection, index: Math.max(0, Number(item.index || 0)), record: sanitizeTrashRecord(item.record) }));
+        return { id: normalizeText(entry.id) || `trash-${uid()}`, label: normalizeText(entry.label) || trashRecordTitle(records[0]?.collection, records[0]?.record), deletedAt, expiresAt, records };
+      })
+      .filter((entry) => entry.records.length)
+      .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)))
+      .slice(0, TRASH_MAX_ENTRIES);
+  }
+
+  function resetTrashTrackingBaseline() {
+    trashCollectionBaseline = new Map();
+    trashTrackableCollectionNames().forEach((collection) => {
+      const records = new Map();
+      trashCollectionRecords(collection).forEach((record, index) => {
+        if (record?.id) records.set(String(record._trashKey || record.id), { index, record: sanitizeTrashRecord(record) });
+      });
+      trashCollectionBaseline.set(collection, records);
+    });
+  }
+
+  function captureDeletedRecordsForTrash() {
+    if (trashTrackingSuppressed || !trashCollectionBaseline?.size) return [];
+    const removed = [];
+    trashTrackableCollectionNames().forEach((collection) => {
+      const previous = trashCollectionBaseline.get(collection) || new Map();
+      const currentIds = new Set(trashCollectionRecords(collection).map((record) => String(record?._trashKey || record?.id || '')).filter(Boolean));
+      previous.forEach((snapshot, id) => {
+        if (!currentIds.has(id)) removed.push({ collection, index: snapshot.index, record: snapshot.record });
+      });
+    });
+    if (!removed.length) return [];
+    const primary = removed.find((item) => !['contractFiles', 'warrantyFiles', 'fuel', 'services'].includes(item.collection)) || removed[0];
+    const deletedAt = new Date().toISOString();
+    const stableKey = removed.map((item) => `${item.collection}:${item.record.id}`).sort().join('|');
+    const existing = (state.trash || []).find((entry) => entry.records?.map((item) => `${item.collection}:${item.record.id}`).sort().join('|') === stableKey);
+    if (existing) return [];
+    const entry = {
+      id: `trash-${uid()}`,
+      label: trashRecordTitle(primary.collection, primary.record),
+      deletedAt,
+      expiresAt: new Date(Date.parse(deletedAt) + TRASH_RETENTION_DAYS * 86400000).toISOString(),
+      records: removed.map((item) => ({ ...item, record: sanitizeTrashRecord(item.record) }))
+    };
+    state.trash = normalizeTrashEntries([entry, ...(state.trash || [])]);
+    pendingUndoTrashIds.add(entry.id);
+    if (cloudReady()) state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || deletedAt;
+    return [entry.id];
+  }
+
+  function claimPendingUndoTrashIds() {
+    const ids = [...pendingUndoTrashIds];
+    pendingUndoTrashIds.clear();
+    return ids;
+  }
+
+  function removeTrashEntries(ids = []) {
+    const wanted = new Set(ids.map(String));
+    if (!wanted.size) return;
+    state.trash = (state.trash || []).filter((entry) => !wanted.has(String(entry.id)));
+  }
+
+  function normalizeCloudOutbox(value) {
+    const unique = new Map();
+    (Array.isArray(value) ? value : []).forEach((entry) => {
+      if (!entry || entry.operation !== 'delete' || !entry.table || !entry.cloudId) return;
+      const key = `${entry.table}:${entry.cloudId}`;
+      if (!unique.has(key)) unique.set(key, {
+        id: normalizeText(entry.id) || `outbox-${uid()}`,
+        operation: 'delete',
+        table: normalizeText(entry.table),
+        cloudId: normalizeText(entry.cloudId),
+        collection: normalizeText(entry.collection),
+        createdAt: Number.isFinite(Date.parse(entry.createdAt || '')) ? entry.createdAt : new Date().toISOString(),
+        attempts: Math.max(0, Number(entry.attempts || 0)),
+        lastError: normalizeText(entry.lastError),
+        nextRetryAt: normalizeText(entry.nextRetryAt)
+      });
+    });
+    return [...unique.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+
+  function enqueueTrashCloudDeletes(trashIds = []) {
+    const ids = new Set(trashIds.map(String));
+    const additions = [];
+    (state.trash || []).filter((entry) => ids.has(String(entry.id))).forEach((entry) => {
+      entry.records.forEach(({ collection, record }) => {
+        const table = CLOUD_DELETE_TABLES[collection];
+        if (!table || !record?.cloudId) return;
+        additions.push({ id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection, createdAt: entry.deletedAt || new Date().toISOString(), attempts: 0, lastError: '', nextRetryAt: '' });
+      });
+    });
+    if (!additions.length) return;
+    state.cloud.outbox = normalizeCloudOutbox([...(state.cloud?.outbox || []), ...additions]);
+    state.cloud.localPendingCount = cloudLocalPendingCount();
+    persistStateSnapshot({ immediate: true });
+    requestBackgroundRender();
+    scheduleCloudAutosync('delete-outbox', { force: true, delayMs: 500 });
+  }
+
+  async function replayCloudOutbox() {
+    let queue = normalizeCloudOutbox(state.cloud?.outbox || []);
+    state.cloud.outbox = queue;
+    if (!queue.length || !cloudReady() || !browserAppearsOnline()) return queue.length === 0;
+    const client = getSupabaseClient();
+    if (!client) return false;
+    while (queue.length) {
+      const entry = queue[0];
+      const { error } = await client.from(entry.table).delete().eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
+      if (error) {
+        entry.attempts += 1;
+        entry.lastError = error.message || error.code || 'Smazání čeká na další pokus';
+        entry.nextRetryAt = new Date(Date.now() + Math.min(300000, 3000 * (2 ** Math.min(entry.attempts, 6)))).toISOString();
+        state.cloud.lastAutosyncError = entry.lastError;
+        state.cloud.outbox = normalizeCloudOutbox(queue);
+        persistStateSnapshot({ immediate: true });
+        return false;
+      }
+      queue = queue.slice(1);
+      state.cloud.outbox = queue;
+      persistStateSnapshot({ immediate: true });
+      await yieldToMainThread();
+    }
+    return true;
   }
 
   function normalizeModuleList(value) {
@@ -2751,8 +2931,10 @@
   function saveState(options = {}) {
     // Demo je jen dočasný sandbox. Nikdy ho neukládáme do localStorage,
     // aby se všem při každém spuštění ukázala stejná plná demo domácnost.
+    if (options.skipTrashTracking !== true) captureDeletedRecordsForTrash();
     if (state?.meta) state.meta.updatedAt = new Date().toISOString();
     persistStateSnapshot({ immediate: options.immediate === true });
+    resetTrashTrackingBaseline();
     scheduleCloudAutosync('save');
   }
 
@@ -6785,6 +6967,7 @@
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0 },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0 },
       { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: state.financeCloud?.templatesPendingAt ? 1 : 0 },
+      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending }
     ];
     return counters.map((entry) => {
@@ -8019,6 +8202,7 @@
       setFinanceTemplateEditId: (value) => { financeTemplateEditId = value; },
       getFinanceCopyId: () => financeCopyId,
       setFinanceCopyId: (value) => { financeCopyId = value; },
+      getFinanceHistoryVisibleCount: () => financeHistoryVisibleCount,
       getDetailsOpen: isDetailsOpen,
       setDetailsOpen,
       writeFinanceModuleTab: (tab) => {
@@ -8113,7 +8297,8 @@
       get readingsMeterToolPage() { return readingsMeterToolPage; },
       set readingsMeterToolPage(value) { readingsMeterToolPage = value; },
       get readingsEditingMeterId() { return readingsEditingMeterId; },
-      set readingsEditingMeterId(value) { readingsEditingMeterId = value; }
+      set readingsEditingMeterId(value) { readingsEditingMeterId = value; },
+      get readingsHistoryVisibleCount() { return readingsHistoryVisibleCount; }
     };
     readingsInstance = factory({
       getState: () => state,
@@ -8190,6 +8375,7 @@
       set garageHistoryYearFilter(value) { garageHistoryYearFilter = value; },
       get garageHistoryTypeFilter() { return garageHistoryTypeFilter; },
       set garageHistoryTypeFilter(value) { garageHistoryTypeFilter = value; },
+      get garageHistoryVisibleCount() { return garageHistoryVisibleCount; },
       get garageStatsVehicleId() { return garageStatsVehicleId; },
       set garageStatsVehicleId(value) { garageStatsVehicleId = value; },
       get garageCalcVehicleId() { return garageCalcVehicleId; },
@@ -13358,12 +13544,159 @@
             </details>
           </section>
 
+          ${renderTrashCard()}
           ${renderDeleteAccountCard()}
         </div>
       </div>
     `;
   }
 
+
+  function activeTrashEntries() {
+    state.trash = normalizeTrashEntries(state.trash || []);
+    return state.trash.filter((entry) => Date.parse(entry.expiresAt || '') > Date.now());
+  }
+
+  function trashEntryRemainingDays(entry) {
+    return Math.max(1, Math.ceil((Date.parse(entry.expiresAt || '') - Date.now()) / 86400000));
+  }
+
+  function renderTrashCard() {
+    const entries = activeTrashEntries();
+    return `
+      <section class="card desktop-span-2 compact-settings-card trash-card" data-trash-card>
+        <div class="card-header"><div><h2>Koš</h2><p>Smazané záznamy tu zůstávají 30 dní. Přílohy se do té doby fyzicky nemažou.</p></div><span class="badge ${entries.length ? 'warn' : 'good'}">${entries.length}</span></div>
+        ${entries.length ? `<div class="list compact-list trash-list">${entries.map((entry) => `
+          <div class="item trash-item" data-trash-id="${escapeHtml(entry.id)}">
+            <div class="item-top"><div class="item-title">🗑️ ${escapeHtml(entry.label)}</div><span class="badge">${trashEntryRemainingDays(entry)} dní</span></div>
+            <div class="item-meta">Smazáno ${escapeHtml(formatDateTime(entry.deletedAt))}${entry.records.length > 1 ? ` · ${entry.records.length} souvisejících záznamů` : ''}</div>
+            <div class="item-actions"><button class="primary-btn" type="button" data-action="restore-trash" data-id="${escapeHtml(entry.id)}">Obnovit</button><button class="danger-btn" type="button" data-action="purge-trash" data-id="${escapeHtml(entry.id)}">Smazat natrvalo</button></div>
+          </div>`).join('')}</div>` : '<div class="inline-note">Koš je prázdný.</div>'}
+      </section>`;
+  }
+
+  function markRestoredCollectionsPending(collections) {
+    const changed = new Set(collections);
+    const timestamp = new Date().toISOString();
+    if ([...changed].some((key) => ['readingGroups', 'readingMeters', 'readings'].includes(key))) state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt: timestamp };
+    if ([...changed].some((key) => ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'].includes(key))) state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: timestamp };
+    if (changed.has('loyaltyCards')) state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: timestamp };
+    if (changed.has('pools')) state.poolCloud = { ...(state.poolCloud || {}), pendingAt: timestamp };
+    if ([...changed].some((key) => ['financeLoans', 'financeTemplates'].includes(key))) state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: timestamp };
+    state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || timestamp;
+  }
+
+  function restoreTrashEntry(id) {
+    const entry = activeTrashEntries().find((item) => String(item.id) === String(id));
+    if (!entry) return showToast('Záznam už v koši není');
+    const restoredCollections = [];
+    entry.records.forEach(({ collection, index, record }) => {
+      if (collection === 'poolMeasurements') {
+        const pool = (state.pools || []).find((item) => String(item.id) === String(record._trashParentId));
+        if (!pool) return;
+        pool.measurements = Array.isArray(pool.measurements) ? pool.measurements : [];
+        if (!pool.measurements.some((item) => String(item.id) === String(record.id))) {
+          const restored = sanitizeTrashRecord(record);
+          delete restored._trashParentId;
+          delete restored._trashKey;
+          if (restored._trashSyntheticId) delete restored.id;
+          delete restored._trashSyntheticId;
+          pool.measurements.splice(Math.min(Math.max(Number(index || 0), 0), pool.measurements.length), 0, restored);
+          restoredCollections.push('pools');
+        }
+        return;
+      }
+      if (collection === 'subscriptionShares') {
+        const service = (state.subscriptions || []).find((item) => String(item.id) === String(record._trashParentId));
+        if (!service) return;
+        service.shares = Array.isArray(service.shares) ? service.shares : [];
+        if (!service.shares.some((item) => String(item.personId || item.id) === String(record.personId || record.id))) {
+          const restored = sanitizeTrashRecord(record);
+          delete restored._trashParentId;
+          delete restored._trashKey;
+          if (restored._trashSyntheticId) delete restored.id;
+          delete restored._trashSyntheticId;
+          service.shares.splice(Math.min(Math.max(Number(index || 0), 0), service.shares.length), 0, restored);
+          restoredCollections.push('subscriptions');
+        }
+        return;
+      }
+      if (collection === 'vehicleServicePlans') {
+        const vehicleId = String(record._trashParentId || '');
+        if (!vehicleId) return;
+        const plans = { ...(state.settings?.vehicleServicePlans || {}) };
+        const list = Array.isArray(plans[vehicleId]) ? [...plans[vehicleId]] : [];
+        if (!list.some((item) => String(item.id) === String(record.id))) {
+          const restored = sanitizeTrashRecord(record);
+          delete restored._trashParentId;
+          delete restored._trashKey;
+          list.splice(Math.min(Math.max(Number(index || 0), 0), list.length), 0, restored);
+          plans[vehicleId] = list;
+          state.settings.vehicleServicePlans = plans;
+          restoredCollections.push('vehicleServicePlans');
+        }
+        return;
+      }
+      if (!getCollectionNames().includes(collection)) return;
+      if (!Array.isArray(state[collection])) state[collection] = [];
+      if (state[collection].some((item) => String(item.id) === String(record.id))) return;
+      const restored = sanitizeTrashRecord(record);
+      if (restored.cloudId) {
+        restored.cloudId = '';
+        restored.syncStatus = 'pending';
+      }
+      state[collection].splice(Math.min(Math.max(Number(index || 0), 0), state[collection].length), 0, restored);
+      restoredCollections.push(collection);
+    });
+    removeTrashEntries([entry.id]);
+    markRestoredCollectionsPending(restoredCollections);
+    touchState();
+    saveState({ immediate: true });
+    render();
+    showToast('Záznam obnovený z koše');
+    scheduleCloudAutosync('trash-restore', { force: true, delayMs: 500 });
+  }
+
+  async function purgeTrashEntryStorage(entry) {
+    const client = cloudReady() ? getSupabaseClient() : null;
+    for (const { collection, record } of entry.records || []) {
+      if (collection === 'contractFiles') {
+        await deleteStoredContractFile(record.id).catch(() => {});
+        if (client && record.storagePath) await client.storage.from('contract-files').remove([record.storagePath]).catch(() => {});
+      } else if (collection === 'warrantyFiles') {
+        await deleteStoredWarrantyFile(record.id).catch(() => {});
+        if (client && record.storagePath) await client.storage.from('warranty-files').remove([record.storagePath]).catch(() => {});
+      }
+    }
+  }
+
+  async function purgeTrashEntry(id, confirmFirst = true) {
+    const entry = activeTrashEntries().find((item) => String(item.id) === String(id));
+    if (!entry) return;
+    if (confirmFirst && !window.confirm(`Opravdu trvale smazat „${entry.label}“? Tohle už nepůjde obnovit.`)) return;
+    enqueueTrashCloudDeletes([entry.id]);
+    await purgeTrashEntryStorage(entry);
+    removeTrashEntries([entry.id]);
+    touchState();
+    saveState({ immediate: true });
+    render();
+    if (confirmFirst) showToast('Záznam trvale smazán');
+  }
+
+  async function purgeExpiredTrash() {
+    const all = Array.isArray(state.trash) ? [...state.trash] : [];
+    const expired = all.filter((entry) => Number.isFinite(Date.parse(entry.expiresAt || '')) && Date.parse(entry.expiresAt) <= Date.now());
+    if (!expired.length) return;
+    for (const entry of expired) {
+      enqueueTrashCloudDeletes([entry.id]);
+      await purgeTrashEntryStorage(entry);
+    }
+    const expiredIds = new Set(expired.map((entry) => String(entry.id)));
+    state.trash = all.filter((entry) => !expiredIds.has(String(entry.id)));
+    touchState();
+    saveState({ immediate: true });
+    requestBackgroundRender();
+  }
 
   function renderDeleteAccountCard() {
     const signedIn = Boolean(state.cloud?.userId);
@@ -13588,6 +13921,7 @@
     sessionStorage.removeItem('domacnostPlus.onboardingMode');
     state = migrateState(mergeState(DEFAULT_STATE, {}));
     runtimeStateRef = state;
+    resetTrashTrackingBaseline();
     state.settings = { ...(state.settings || {}), ...visualSettings };
     state.household = { ...(state.household || {}), name: '', isConfigured: false };
     state.profiles = [];
@@ -13645,6 +13979,7 @@
     localStorage.removeItem(STORAGE_KEY);
     state = migrateState(mergeState(DEFAULT_STATE, {}));
     runtimeStateRef = state;
+    resetTrashTrackingBaseline();
     state.household.isConfigured = false;
     state.cloud = { ...(state.cloud || {}), status: 'offline', userId: '', email: '', householdId: '' };
     sessionStorage.setItem('domacnostPlus.onboardingMode', 'choice');
@@ -14392,6 +14727,7 @@
     if (!shouldHydrateStateFromIndexedDb(candidate, state)) return false;
     state = candidate;
     runtimeStateRef = state;
+    resetTrashTrackingBaseline();
     try { storePersistedState(state); } catch {}
     return true;
   }
@@ -16267,6 +16603,7 @@
     if (cloudResult === 'existing-account') {
       state = migrateState(mergeState(DEFAULT_STATE, {}));
       runtimeStateRef = state;
+      resetTrashTrackingBaseline();
       markExistingAccount(email);
       return;
     }
@@ -17400,6 +17737,7 @@
         return;
       }
       const syncers = [
+        { run: replayCloudOutbox },
         { run: cloudSyncLocalProfiles },
         { moduleId: 'shopping', run: cloudSyncLocalShoppingItems },
         { moduleId: 'contracts', run: cloudSyncLocalContracts },
@@ -18630,18 +18968,22 @@
       return;
     }
     if (action === 'finance-filter') {
+      financeHistoryVisibleCount = 40;
       setFinanceTypeFilter(button.dataset.filter || 'all');
       return;
     }
     if (action === 'finance-month-prev') {
+      financeHistoryVisibleCount = 40;
       shiftFinanceMonth(-1);
       return;
     }
     if (action === 'finance-month-current') {
+      financeHistoryVisibleCount = 40;
       setFinanceMonth(todayISO().slice(0, 7));
       return;
     }
     if (action === 'finance-month-next') {
+      financeHistoryVisibleCount = 40;
       shiftFinanceMonth(1);
       return;
     }
@@ -18765,6 +19107,22 @@
     }
     if (action === 'export-data') {
       exportData();
+      return;
+    }
+    if (action === 'restore-trash') {
+      restoreTrashEntry(button.dataset.id || '');
+      return;
+    }
+    if (action === 'purge-trash') {
+      purgeTrashEntry(button.dataset.id || '', true);
+      return;
+    }
+    if (action === 'show-more-history') {
+      const target = button.dataset.history || '';
+      if (target === 'finance') financeHistoryVisibleCount += 40;
+      if (target === 'garage') garageHistoryVisibleCount += 40;
+      if (target === 'readings') readingsHistoryVisibleCount += 40;
+      renderActiveModuleOnly();
       return;
     }
     if (action === 'reset-data') {
@@ -19318,6 +19676,10 @@
   function applyCloudHouseholdUiSettings(household) {
     if (!household) return;
     const layout = household.dashboardLayout || household.dashboard_layout || {};
+    if (Array.isArray(layout.trash)) {
+      const byId = new Map([...(state.trash || []), ...layout.trash].map((entry) => [String(entry.id || ''), entry]));
+      state.trash = normalizeTrashEntries([...byId.values()]);
+    }
     const weatherLocation = household.weatherLocation || household.weather_location || {};
     if (layout.profileUiSettings && typeof layout.profileUiSettings === 'object') {
       state.settings.profileUiSettings = mergeProfileUiSettings(state.settings?.profileUiSettings, layout.profileUiSettings);
@@ -19457,6 +19819,7 @@
         financeLoans: normalizeFinanceLoans(state.financeLoans || []),
         pools: normalizePools(state.pools || []),
         vape: normalizeVapeState(state.vape || {}),
+        trash: normalizeTrashEntries(state.trash || []),
         financeSettings: {
           month: financeSelectedMonth(),
           typeFilter: financeTypeFilter()
@@ -20096,8 +20459,7 @@
       } else if (collection === 'contracts') {
         const contracts = getContractsModule();
         for (const file of files) {
-          if (file.cloudId) await contracts.deleteCloudContractFile(file);
-          await deleteStoredContractFile(file.id).catch(() => {});
+          if (file.cloudId) await contracts.deleteCloudContractFile(file, { preserveStorage: true });
         }
         await cloudDeleteContract(record);
       } else if (extraCloudConfig(collection)) {
@@ -20202,6 +20564,7 @@
     }
     state = migrateState(mergeState(DEFAULT_STATE, parsed.state));
     runtimeStateRef = state;
+    resetTrashTrackingBaseline();
     markShoppingRuntimeDirty();
     saveState();
     render();
@@ -20213,6 +20576,7 @@
     if (!ok) return;
     state = migrateState(structuredCloneSafe(DEFAULT_STATE));
     runtimeStateRef = state;
+    resetTrashTrackingBaseline();
     markShoppingRuntimeDirty();
     garageVehicleId = null;
     activeModule = 'home';
@@ -20249,6 +20613,7 @@
   function showUndoToast(text, action, { duration = 8000, onExpire = null } = {}) {
     if (typeof action !== 'function') return showToast(text);
     hideUndoToast({ runExpire: true });
+    const trashIds = claimPendingUndoTrashIds();
     const toast = document.createElement('div');
     toast.id = 'undo-toast';
     toast.className = 'undo-toast';
@@ -20260,8 +20625,19 @@
     button.type = 'button';
     button.className = 'undo-toast-button';
     button.textContent = 'Vrátit zpět';
-    undoToastAction = action;
-    undoToastExpireAction = typeof onExpire === 'function' ? onExpire : null;
+    undoToastAction = async () => {
+      await action();
+      if (trashIds.length) {
+        removeTrashEntries(trashIds);
+        touchState();
+        saveState({ immediate: true });
+        requestBackgroundRender();
+      }
+    };
+    undoToastExpireAction = async () => {
+      if (trashIds.length) enqueueTrashCloudDeletes(trashIds);
+      if (typeof onExpire === 'function') await onExpire();
+    };
     button.addEventListener('click', async () => {
       if (!undoToastAction || button.disabled) return;
       const restore = undoToastAction;
@@ -20390,6 +20766,7 @@
     if (details.matches('.garage-service-plan-details')) garageServicePlanOpen = details.open;
     const detailsKey = details.dataset?.detailsKey;
     if (detailsKey) setDetailsOpen(detailsKey, details.open);
+    if (details.hasAttribute('data-lazy-render')) requestActiveModuleRender();
   }, true);
 
   app.addEventListener('click', async (event) => {
@@ -20542,6 +20919,7 @@
     }
     const financeMonthInput = event.target.closest('form[data-form="finance-month-filter"] input[name="month"]');
     if (financeMonthInput) {
+      financeHistoryVisibleCount = 40;
       setFinanceMonth(financeMonthInput.value);
       return;
     }
@@ -20666,6 +21044,7 @@
     if (garageHistoryFilter) {
       if (garageHistoryFilter.dataset.garageHistoryFilter === 'year') garageHistoryYearFilter = garageHistoryFilter.value || 'all';
       if (garageHistoryFilter.dataset.garageHistoryFilter === 'type') garageHistoryTypeFilter = garageHistoryFilter.value || 'all';
+      garageHistoryVisibleCount = 40;
       garageEditRecord = null;
       render();
       return;
@@ -20931,7 +21310,16 @@
         autosyncRetryAt: ''
       };
     };
+    window.__DOMACNOST_E2E_EXPIRE_UNDO__ = () => hideUndoToast({ runExpire: true });
+    window.__DOMACNOST_E2E_TRASH_SNAPSHOT__ = () => ({
+      trash: activeTrashEntries().map((entry) => ({ id: entry.id, label: entry.label, records: entry.records.length })),
+      outbox: normalizeCloudOutbox(state.cloud?.outbox || []).map((entry) => ({ table: entry.table, cloudId: entry.cloudId }))
+    });
   }
+
+  window.setTimeout(() => {
+    purgeExpiredTrash().catch((error) => console.warn('Automatické vyčištění koše selhalo', error));
+  }, 2500);
 
   prepareSupabaseAuthStorage();
   render();

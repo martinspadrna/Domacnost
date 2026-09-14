@@ -592,6 +592,7 @@
     function renderGarageHistory(vehicle, fuelRows, serviceRows) {
       const records = garageHistoryRecords(fuelRows, serviceRows);
       const visibleRecords = filterGarageHistoryRecords(records);
+      const visibleLimit = ui.garageHistoryVisibleCount || 40;
       const selectedYear = garageHistoryYears(records).includes(String(ui.garageHistoryYearFilter)) ? String(ui.garageHistoryYearFilter) : 'all';
       const selectedType = ['all', 'fuel', 'service'].includes(ui.garageHistoryTypeFilter) ? ui.garageHistoryTypeFilter : 'all';
       const filterText = `${selectedYear === 'all' ? 'všechny roky' : selectedYear} · ${garageHistoryTypeLabel(selectedType)}`;
@@ -599,7 +600,7 @@
         <details class="action-details compact-edit-details garage-history-panel" data-details-key="garage-history-${vehicle?.id || ''}" ${isDetailsOpen(`garage-history-${vehicle?.id || ''}`) ? 'open' : ''}>
           <summary><span>Historie auta</span><em>${records.length} záznamů celkem · ${escapeHtml(filterText)}</em></summary>
           ${renderGarageHistoryFilters(records, visibleRecords)}
-          ${visibleRecords.length ? `<div class="list compact-list garage-history-list">${visibleRecords.map(renderGarageHistoryItem).join('')}</div>` : renderEmpty(`Pro filtr ${filterText} tu není žádný záznam.`)}
+          ${visibleRecords.length ? `<div class="list compact-list garage-history-list">${visibleRecords.slice(0, visibleLimit).map(renderGarageHistoryItem).join('')}</div>${visibleRecords.length > visibleLimit ? `<div class="list-load-more"><button class="ghost-btn" type="button" data-action="show-more-history" data-history="garage">Zobrazit dalších ${Math.min(40, visibleRecords.length - visibleLimit)}</button><span>${visibleLimit} z ${visibleRecords.length}</span></div>` : ''}` : renderEmpty(`Pro filtr ${filterText} tu není žádný záznam.`)}
         </details>
       `;
     }
@@ -634,6 +635,9 @@
       `;
     }
     function renderGarageDetailCharts(vehicle, fuelRows = []) {
+      const detailsKey = `garage-charts-${vehicle?.id || 'vehicle'}`;
+      const open = isDetailsOpen(detailsKey, false);
+      if (!open) return `<details class="action-details compact-edit-details garage-detail-chart-details" data-details-key="${escapeHtml(detailsKey)}" data-lazy-render><summary><span>Graf spotřeby</span><em>načte se až po otevření</em></summary></details>`;
       const analytics = garageVehicleAnalytics(vehicle);
       const currentYear = new Date().getFullYear();
       const lastYearStart = new Date();
@@ -646,6 +650,8 @@
       const allTimeValues = allTimePoints.map((item) => item.value);
       const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
       return `
+        <details class="action-details compact-edit-details garage-detail-chart-details" data-details-key="${escapeHtml(detailsKey)}" data-lazy-render open>
+        <summary><span>Graf spotřeby</span><em>poslední rok a celá doba</em></summary>
         <div class="garage-detail-chart-section">
           <div class="garage-stat-block-head"><h3>Graf spotřeby</h3><p>Stejný styl jako přehled. První graf je poslední rok, druhý celá doba evidence.</p></div>
           <div class="garage-chart-carousel garage-detail-chart-carousel" data-no-swipe aria-label="Grafy spotřeby auta">
@@ -660,7 +666,7 @@
               { label: 'Nejhorší', value: formatLitreValue(analytics.worstConsumption) }
             ])}
           </div>
-        </div>`;
+        </div></details>`;
     }
     function renderGarageRecordEditForm(collection, item) {
       if (collection === 'fuel') {
