@@ -28,6 +28,7 @@
     const render = deps.render || (() => {});
     const renderOverlays = deps.renderOverlays || render;
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || ((text) => showToast(text));
     const persistStateSnapshot = deps.persistStateSnapshot || (() => {});
     const cloudReady = deps.cloudReady || (() => false);
     const cloudSaveHouseholdUiSettings = deps.cloudSaveHouseholdUiSettings || (() => Promise.resolve(false));
@@ -176,17 +177,29 @@
       saveState();
       if (renderView) render();
       if (toast) showToast(toast);
-      if (cloudReady()) {
-        cloudSaveHouseholdUiSettings(false)
+      if (!cloudReady()) return Promise.resolve(true);
+      return cloudSaveHouseholdUiSettings(false)
           .then((ok) => {
             if (ok && getActiveModule() === 'subscriptions') render();
+            return ok;
           })
           .catch((error) => {
             console.warn('Subscription autosync failed', error);
             getState().subscriptionsCloud = { ...(getState().subscriptionsCloud || {}), pendingAt: new Date().toISOString(), error: error?.message || 'Automatická synchronizace selhala' };
             persistStateSnapshot();
+            return false;
           });
-      }
+    }
+
+    async function restoreSubscriptionsAfterDelete(deleteSync, restore, message) {
+      restore();
+      touchState();
+      saveState();
+      render();
+      await Promise.resolve(deleteSync).catch(() => false);
+      await persistSubscriptionsState({ renderView: false });
+      render();
+      showToast(message);
     }
 
     function subscriptionPersonName(personId) {
@@ -1183,33 +1196,70 @@
     }
 
     function deleteSubscription(id) {
+      const service = (getState().subscriptions || []).find((item) => item.id === id);
+      if (!service) return;
+      const payments = (getState().subscriptionPayments || []).filter((payment) => payment.subscriptionId === id).map((payment) => ({ ...payment }));
+      const serviceSnapshot = { ...service, shares: (service.shares || []).map((share) => ({ ...share })) };
       getState().subscriptions = (getState().subscriptions || []).filter((item) => item.id !== id);
       getState().subscriptionPayments = (getState().subscriptionPayments || []).filter((payment) => payment.subscriptionId !== id);
-      persistSubscriptionsState();
-      showToast('Předplatné smazané');
+      const deleteSync = persistSubscriptionsState();
+      showUndoToast('Předplatné smazané', () => restoreSubscriptionsAfterDelete(deleteSync, () => {
+        if (!(getState().subscriptions || []).some((item) => item.id === id)) getState().subscriptions.push(serviceSnapshot);
+        const known = new Set((getState().subscriptionPayments || []).map((payment) => payment.id));
+        getState().subscriptionPayments.push(...payments.filter((payment) => !known.has(payment.id)));
+      }, 'Předplatné obnovené'));
     }
 
     function deleteSubscriptionPerson(id) {
+      const person = (getState().subscriptionPeople || []).find((item) => item.id === id);
+      if (!person) return;
+      const shares = (getState().subscriptions || []).map((service) => ({
+        subscriptionId: service.id,
+        shares: (service.shares || []).filter((share) => share.personId === id).map((share) => ({ ...share }))
+      })).filter((entry) => entry.shares.length);
+      const payments = (getState().subscriptionPayments || []).filter((payment) => payment.personId === id).map((payment) => ({ ...payment }));
       getState().subscriptionPeople = (getState().subscriptionPeople || []).filter((item) => item.id !== id);
       getState().subscriptions = (getState().subscriptions || []).map((service) => ({ ...service, shares: (service.shares || []).filter((share) => share.personId !== id) }));
       getState().subscriptionPayments = (getState().subscriptionPayments || []).filter((payment) => payment.personId !== id);
-      persistSubscriptionsState();
-      showToast('Člověk odebraný');
+      const deleteSync = persistSubscriptionsState();
+      showUndoToast('Člověk odebraný', () => restoreSubscriptionsAfterDelete(deleteSync, () => {
+        if (!(getState().subscriptionPeople || []).some((item) => item.id === id)) getState().subscriptionPeople.push({ ...person });
+        shares.forEach((entry) => {
+          const service = (getState().subscriptions || []).find((item) => item.id === entry.subscriptionId);
+          if (!service) return;
+          const known = new Set((service.shares || []).map((share) => share.personId));
+          service.shares = [...(service.shares || []), ...entry.shares.filter((share) => !known.has(share.personId))];
+        });
+        const knownPayments = new Set((getState().subscriptionPayments || []).map((payment) => payment.id));
+        getState().subscriptionPayments.push(...payments.filter((payment) => !knownPayments.has(payment.id)));
+      }, 'Člověk obnovený'));
     }
 
     function deleteSubscriptionShare(subscriptionId, personId) {
       const service = getState().subscriptions.find((item) => item.id === subscriptionId);
       if (!service) return;
+      const share = (service.shares || []).find((item) => item.personId === personId);
+      if (!share) return;
+      const payments = (getState().subscriptionPayments || []).filter((payment) => payment.subscriptionId === subscriptionId && payment.personId === personId).map((payment) => ({ ...payment }));
       service.shares = (service.shares || []).filter((share) => share.personId !== personId);
       getState().subscriptionPayments = (getState().subscriptionPayments || []).filter((payment) => !(payment.subscriptionId === subscriptionId && payment.personId === personId));
-      persistSubscriptionsState();
-      showToast('Sdílení odebrané');
+      const deleteSync = persistSubscriptionsState();
+      showUndoToast('Sdílení odebrané', () => restoreSubscriptionsAfterDelete(deleteSync, () => {
+        const current = (getState().subscriptions || []).find((item) => item.id === subscriptionId);
+        if (current && !(current.shares || []).some((item) => item.personId === personId)) current.shares = [...(current.shares || []), { ...share }];
+        const known = new Set((getState().subscriptionPayments || []).map((payment) => payment.id));
+        getState().subscriptionPayments.push(...payments.filter((payment) => !known.has(payment.id)));
+      }, 'Sdílení obnovené'));
     }
 
     function deleteSubscriptionPayment(id) {
+      const payment = (getState().subscriptionPayments || []).find((item) => item.id === id);
+      if (!payment) return;
       getState().subscriptionPayments = (getState().subscriptionPayments || []).filter((payment) => payment.id !== id);
-      persistSubscriptionsState();
-      showToast('Platba smazaná');
+      const deleteSync = persistSubscriptionsState();
+      showUndoToast('Platba smazaná', () => restoreSubscriptionsAfterDelete(deleteSync, () => {
+        if (!(getState().subscriptionPayments || []).some((item) => item.id === id)) getState().subscriptionPayments.push({ ...payment });
+      }, 'Platba obnovená'));
     }
 
     function toggleSubscriptionService(id) {

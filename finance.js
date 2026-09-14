@@ -44,6 +44,7 @@
     const saveState = deps.saveState || (() => {});
     const touchState = deps.touchState || (() => {});
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || ((text) => showToast(text));
     const currentHouseholdId = deps.currentHouseholdId || (() => '');
     const currentProfileId = deps.currentProfileId || (() => '');
     const cloudReady = deps.cloudReady || (() => false);
@@ -1307,19 +1308,20 @@
         getState().financeCloud = { ...(getState().financeCloud || {}), templatesPendingAt: new Date().toISOString() };
       }
       saveState();
-      if (cloudReady()) {
-        cloudSaveHouseholdUiSettings(false)
+      if (!cloudReady()) return Promise.resolve(true);
+      return cloudSaveHouseholdUiSettings(false)
           .then((ok) => {
             if (ok) {
               getState().financeCloud = { ...(getState().financeCloud || {}), templatesPendingAt: '', templatesLoadedAt: new Date().toISOString() };
               persistStateSnapshot();
             }
+            return ok;
           })
           .catch((error) => {
             persistStateSnapshot();
             console.warn('Finance template autosync failed', error);
+            return false;
           });
-      }
     }
 
     function upsertFinanceTemplate(template) {
@@ -1394,9 +1396,19 @@
       }
       getState().financeTemplates = normalizeFinanceTemplates(current);
       if (getFinanceTemplateEditId() === id) setFinanceTemplateEditId('');
-      persistFinanceTemplatesState();
+      const deleteSync = persistFinanceTemplatesState();
       render();
-      showToast('Šablona smazaná');
+      showUndoToast('Šablona smazaná', async () => {
+        const restored = normalizeFinanceTemplates(getState().financeTemplates || []).filter((item) => String(item.id) !== String(template.id));
+        if (!template.system && !isDefaultTemplate) restored.push(normalizeFinanceTemplate({ ...template, deleted: false }));
+        getState().financeTemplates = normalizeFinanceTemplates(restored);
+        touchState();
+        saveState();
+        render();
+        await Promise.resolve(deleteSync).catch(() => false);
+        await persistFinanceTemplatesState();
+        showToast('Šablona obnovená');
+      });
     }
 
     function setFinanceCopy(id) {
@@ -1673,14 +1685,15 @@
       saveState({ immediate: true });
       render();
       if (toast) showToast(toast);
-      if (cloudReady()) {
-        cloudSaveHouseholdUiSettings(false)
+      if (!cloudReady()) return Promise.resolve(true);
+      return cloudSaveHouseholdUiSettings(false)
+          .then((ok) => Boolean(ok))
           .catch((error) => {
             console.warn('Finance loans autosync failed', error);
             persistStateSnapshot();
             showToast('Půjčky jsou uložené lokálně, cloud se zkusí později');
+            return false;
           });
-      }
     }
 
     function addFinanceLoanFromForm(data, form) {
@@ -1731,7 +1744,18 @@
       getState().financeLoans = getFinanceLoans().filter((item) => item.id !== id);
       if (financeLoanEditId === id) financeLoanEditId = '';
       getState().financeRefinanceResult = null;
-      persistFinanceLoans('Půjčka smazaná');
+      const deleteSync = persistFinanceLoans();
+      showUndoToast('Půjčka smazaná', async () => {
+        if (!(getState().financeLoans || []).some((item) => item.id === loan.id)) {
+          getState().financeLoans = normalizeFinanceLoans([...(getState().financeLoans || []), loan]);
+        }
+        touchState();
+        saveState({ immediate: true });
+        render();
+        await Promise.resolve(deleteSync).catch(() => false);
+        await persistFinanceLoans();
+        showToast('Půjčka obnovená');
+      });
     }
 
     function calculateFinanceRefinance(data, form) {
@@ -1845,8 +1869,31 @@
       touchState();
       saveState();
       render();
-      showToast('Záznam smazán');
-      cloudDeleteFinance(item).catch((error) => console.warn('Cloud sync (smazání pohybu) na pozadí selhal', error));
+      const deleteSync = cloudDeleteFinance(item).catch((error) => {
+        console.warn('Cloud sync (smazání pohybu) na pozadí selhal', error);
+        return false;
+      });
+      showUndoToast('Záznam smazán', async () => {
+        if ((getState().finance || []).some((entry) => entry.id === item.id)) return;
+        const restored = { ...item };
+        getState().finance = [...(getState().finance || []), restored];
+        touchState();
+        saveState();
+        render();
+        const deletedInCloud = await deleteSync;
+        if (deletedInCloud && item.cloudId) {
+          restored.cloudId = '';
+          restored.syncStatus = 'pending';
+          markFinanceCloudPending('undo-delete');
+          const saved = await cloudAddFinance(restored);
+          if (!saved?.id) restored.syncStatus = 'pending';
+        }
+        clearFinanceCloudPendingIfClean();
+        touchState();
+        saveState();
+        render();
+        showToast('Záznam obnoven');
+      });
     }
 
     async function deleteFinanceAccount(id) {
@@ -1860,8 +1907,28 @@
       touchState();
       saveState();
       render();
-      showToast('Účet smazán');
-      cloudDeleteFinanceAccount(account).catch((error) => console.warn('Cloud sync (smazání účtu) na pozadí selhal', error));
+      const deleteSync = cloudDeleteFinanceAccount(account).catch((error) => {
+        console.warn('Cloud sync (smazání účtu) na pozadí selhal', error);
+        return false;
+      });
+      showUndoToast('Účet smazán', async () => {
+        if (!(getState().financeAccounts || []).some((entry) => entry.id === account.id)) {
+          getState().financeAccounts = [...(getState().financeAccounts || []), account];
+        }
+        touchState();
+        saveState();
+        render();
+        const archivedInCloud = await deleteSync;
+        if (archivedInCloud && account.cloudId) {
+          account.syncStatus = 'pending';
+          const restored = await cloudUpdateFinanceAccount(account);
+          if (restored === true) account.syncStatus = '';
+        }
+        touchState();
+        saveState();
+        render();
+        showToast('Účet obnoven');
+      });
     }
 
     return {

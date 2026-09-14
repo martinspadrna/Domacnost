@@ -521,6 +521,20 @@ function smokeSeedScript() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }],
+    finance: [{
+      id: 'finance-entry-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      type: 'expense',
+      title: 'Smoke výdaj k obnovení',
+      amount: 450,
+      date: new Date().toISOString().slice(0, 10),
+      paymentMethod: 'card',
+      category: 'groceries',
+      note: 'E2E undo',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
     financeLoans: [{
       id: 'loan-e2e-smoke',
       name: 'Smoke půjčka',
@@ -919,6 +933,54 @@ async function run() {
       fail(`Koncept formuláře se po přechodu mezi moduly neobnovil (${JSON.stringify(financeDraftValue)}).`);
     } else {
       ok('Formuláře: rozepsané údaje přežijí přechod do jiného modulu i session uložení.');
+    }
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance', 'summary')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]')?.click()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    const financeUndoDeleted = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `({ removed: !document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')), undoText: document.querySelector('#undo-toast')?.innerText || '' })`
+    });
+    const financeUndoDeletedValue = financeUndoDeleted.result?.value || {};
+    if (!financeUndoDeletedValue.removed || !financeUndoDeletedValue.undoVisible || !financeUndoDeletedValue.undoText.includes('Záznam smazán')) {
+      fail(`Finance: smazání nenabídlo funkční návrat (${JSON.stringify(financeUndoDeletedValue)}).`);
+    } else {
+      await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
+      await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+      const financeUndoRestored = await page.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `({ count: document.querySelectorAll('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]').length, undoGone: !document.querySelector('#undo-toast'), toast: document.querySelector('#copy-toast')?.textContent || '' })`
+      });
+      const financeUndoRestoredValue = financeUndoRestored.result?.value || {};
+      if (financeUndoRestoredValue.count !== 1 || !financeUndoRestoredValue.undoGone || !financeUndoRestoredValue.toast.includes('obnoven')) {
+        fail(`Finance: Vrátit zpět neobnovilo právě jeden záznam (${JSON.stringify(financeUndoRestoredValue)}).`);
+      } else ok('Finance: omylem smazaný pohyb lze vrátit zpět bez duplicity.');
+    }
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('subscriptions', 'services')`, awaitPromise: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]')?.click()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    const subscriptionUndoDeleted = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `({ removed: !document.querySelector('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')), undoText: document.querySelector('#undo-toast')?.innerText || '' })`
+    });
+    const subscriptionUndoDeletedValue = subscriptionUndoDeleted.result?.value || {};
+    if (!subscriptionUndoDeletedValue.removed || !subscriptionUndoDeletedValue.undoVisible || !subscriptionUndoDeletedValue.undoText.includes('Předplatné smazané')) {
+      fail(`Předplatné: smazání nenabídlo funkční návrat (${JSON.stringify(subscriptionUndoDeletedValue)}).`);
+    } else {
+      await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
+      await new Promise((resolveWait) => setTimeout(resolveWait, 220));
+      const subscriptionUndoRestored = await page.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `({ count: document.querySelectorAll('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]').length, undoGone: !document.querySelector('#undo-toast'), toast: document.querySelector('#copy-toast')?.textContent || '' })`
+      });
+      const subscriptionUndoRestoredValue = subscriptionUndoRestored.result?.value || {};
+      if (subscriptionUndoRestoredValue.count !== 1 || !subscriptionUndoRestoredValue.undoGone || !subscriptionUndoRestoredValue.toast.includes('obnoven')) {
+        fail(`Předplatné: Vrátit zpět neobnovilo právě jednu službu (${JSON.stringify(subscriptionUndoRestoredValue)}).`);
+      } else ok('Předplatné: smazanou službu lze vrátit včetně navázaných dat.');
     }
 
     const submitGuardCheck = await page.send('Runtime.evaluate', {

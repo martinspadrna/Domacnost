@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_502';
-  const APP_BUILD = 502;
+  const APP_VERSION = 'Domácnost+ v.0.1_503';
+  const APP_BUILD = 503;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -1287,6 +1287,8 @@
   let shoppingLastAutoRefreshAt = 0;
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
   let toastTimer = null;
+  let undoToastTimer = null;
+  let undoToastAction = null;
   let now = new Date();
   let supabaseClientInstance = null;
   // PWA stav se od v0.1_323 drží v pwa.js modulu (deferredInstallPrompt,
@@ -8041,6 +8043,7 @@
       saveState,
       touchState,
       showToast,
+      showUndoToast,
       currentHouseholdId,
       currentProfileId,
       cloudReady,
@@ -8366,6 +8369,7 @@
       render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
       showToast,
+      showUndoToast,
       persistStateSnapshot,
       cloudReady,
       cloudSaveHouseholdUiSettings,
@@ -20121,6 +20125,55 @@
     toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+
+  function hideUndoToast() {
+    clearTimeout(undoToastTimer);
+    undoToastTimer = null;
+    undoToastAction = null;
+    document.getElementById('undo-toast')?.remove();
+  }
+
+  function showUndoToast(text, action, { duration = 8000 } = {}) {
+    if (typeof action !== 'function') return showToast(text);
+    hideUndoToast();
+    const toast = document.createElement('div');
+    toast.id = 'undo-toast';
+    toast.className = 'undo-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    const message = document.createElement('span');
+    message.textContent = String(text || 'Smazáno');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'undo-toast-button';
+    button.textContent = 'Vrátit zpět';
+    undoToastAction = action;
+    button.addEventListener('click', async () => {
+      if (!undoToastAction || button.disabled) return;
+      const restore = undoToastAction;
+      undoToastAction = null;
+      clearTimeout(undoToastTimer);
+      undoToastTimer = null;
+      button.disabled = true;
+      button.textContent = 'Obnovuji…';
+      toast.setAttribute('aria-busy', 'true');
+      try {
+        await restore();
+        hideUndoToast();
+      } catch (error) {
+        console.warn('Obnovení smazaného záznamu selhalo', error);
+        button.disabled = false;
+        button.textContent = 'Zkusit znovu';
+        toast.removeAttribute('aria-busy');
+        undoToastAction = restore;
+        showToast('Obnovení se nepovedlo, zkus to znovu');
+      }
+    });
+    toast.append(message, button);
+    document.body.appendChild(toast);
+    window.requestAnimationFrame(() => toast.classList.add('show'));
+    undoToastTimer = window.setTimeout(hideUndoToast, Math.max(3000, Number(duration) || 8000));
   }
 
 
