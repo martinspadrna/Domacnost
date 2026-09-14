@@ -18,6 +18,7 @@
     const render = deps.render || (() => {});
     const requestRender = deps.requestRender || render;
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
     const putStoredContractFile = deps.putStoredContractFile || (async () => {});
@@ -38,6 +39,14 @@
     const formatCurrency = deps.formatCurrency || ((v) => String(v || ''));
     const formatBytes = deps.formatBytes || ((v) => String(v || ''));
     const cloudReady = deps.cloudReady || (() => false);
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
     const CONTRACT_FILE_MAX_BYTES = 15 * 1024 * 1024;
     const CONTRACT_FILE_ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
     const state = new Proxy({}, {
@@ -664,19 +673,26 @@
 
     async function deleteContractFile(id) {
       const meta = (state.contractFiles || []).find((file) => file.id === id);
+      const index = (state.contractFiles || []).findIndex((file) => file.id === id);
+      if (!meta) return;
       const ok = window.confirm(meta?.cloudId ? 'Smazat přílohu smlouvy z cloudu?' : 'Smazat přílohu smlouvy z tohoto zařízení?');
       if (!ok) return;
-      if (meta?.cloudId) {
-        const deleted = await deleteCloudContractFile(meta);
-        if (!deleted) return;
-      } else {
-        deleteStoredContractFile(id).catch(() => {});
-      }
       state.contractFiles = (state.contractFiles || []).filter((file) => file.id !== id);
       touchState();
       saveState();
       render();
-      showToast('Příloha smazána');
+      offerUndo('Příloha smazána', () => {
+        if ((state.contractFiles || []).some((file) => file.id === meta.id)) return;
+        const next = [...(state.contractFiles || [])];
+        next.splice(Math.min(Math.max(index, 0), next.length), 0, meta);
+        state.contractFiles = next;
+        touchState();
+        saveState();
+        render();
+      }, async () => {
+        if (meta.cloudId) await deleteCloudContractFile(meta);
+        await deleteStoredContractFile(meta.id).catch(() => {});
+      });
     }
 
     function contractFileCount(contractId) {
@@ -865,6 +881,7 @@
       cloudSyncLocalContracts,
       cloudSyncLocalContractFiles,
       cloudDeleteContract,
+      deleteCloudContractFile,
       contractFileCount,
       deleteContractFile,
       openOrDownloadContractFile,

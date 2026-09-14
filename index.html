@@ -12,14 +12,14 @@
     <meta name="application-name" content="Domácnost+" />
     <meta name="msapplication-TileColor" content="#0a0e15" />
     <meta name="msapplication-TileImage" content="./icons/domacnost-plus-icon-180.png" />
-    <title>Domácnost+ v.0.1_504</title>
-    <link rel="manifest" href="./manifest.webmanifest?v=0-1-504" />
-    <link rel="shortcut icon" href="./icons/favicon.ico?v=0-1-504" />
-    <link rel="icon" href="./icons/favicon.ico?v=0-1-504" sizes="any" />
+    <title>Domácnost+ v.0.1_505</title>
+    <link rel="manifest" href="./manifest.webmanifest?v=0-1-505" />
+    <link rel="shortcut icon" href="./icons/favicon.ico?v=0-1-505" />
+    <link rel="icon" href="./icons/favicon.ico?v=0-1-505" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="./icons/domacnost-plus-icon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="./icons/domacnost-plus-icon-16.png" />
-    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=0-1-504" />
-    <link rel="apple-touch-icon-precomposed" href="./icons/apple-touch-icon-precomposed.png?v=0-1-504" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=0-1-505" />
+    <link rel="apple-touch-icon-precomposed" href="./icons/apple-touch-icon-precomposed.png?v=0-1-505" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icons/domacnost-plus-icon-180.png" />
     <link rel="apple-touch-icon" sizes="167x167" href="./icons/domacnost-plus-icon-167.png" />
     <link rel="apple-touch-icon" sizes="152x152" href="./icons/domacnost-plus-icon-152.png" />
@@ -27,8 +27,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=0-1-504" />
-  <link rel="stylesheet" href="./icon-assets.css?v=0-1-504" />
+    <link rel="stylesheet" href="./styles.css?v=0-1-505" />
+  <link rel="stylesheet" href="./icon-assets.css?v=0-1-505" />
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -103,7 +103,7 @@
       window.__DOMACNOST_BOOT_TIMEOUT__ = window.setTimeout(function () {
         var root = document.getElementById('app');
         if (window.__DOMACNOST_APP_STARTED__ || !root || !root.querySelector('.boot-loading-card')) return;
-        root.innerHTML = '<div class="boot-fallback-screen"><section class="boot-fallback-card"><div class="brand-mark big logo-mark"><img src="./icons/domacnost-plus-icon-180.png" alt="Domácnost+" loading="eager"></div><span class="badge">Domácnost+ v.0.1_504</span><h1>Aplikace se nenačetla</h1><p>Vypadá to, že se po aktualizaci nespustil hlavní soubor aplikace. Nejčastěji za to může stará PWA cache v prohlížeči.</p><div class="form-actions"><button class="primary-btn" type="button" data-boot-reload>Obnovit aplikaci</button><button class="ghost-btn" type="button" data-boot-clear>Vyčistit cache a obnovit</button></div><p class="small-muted">Tahle obnova nemaže data domácnosti, čistí jen cache aplikace v prohlížeči.</p></section></div>';
+        root.innerHTML = '<div class="boot-fallback-screen"><section class="boot-fallback-card"><div class="brand-mark big logo-mark"><img src="./icons/domacnost-plus-icon-180.png" alt="Domácnost+" loading="eager"></div><span class="badge">Domácnost+ v.0.1_505</span><h1>Aplikace se nenačetla</h1><p>Vypadá to, že se po aktualizaci nespustil hlavní soubor aplikace. Nejčastěji za to může stará PWA cache v prohlížeči.</p><div class="form-actions"><button class="primary-btn" type="button" data-boot-reload>Obnovit aplikaci</button><button class="ghost-btn" type="button" data-boot-clear>Vyčistit cache a obnovit</button></div><p class="small-muted">Tahle obnova nemaže data domácnosti, čistí jen cache aplikace v prohlížeči.</p></section></div>';
         root.querySelector('[data-boot-reload]')?.addEventListener('click', function () { window.location.reload(); });
         root.querySelector('[data-boot-clear]')?.addEventListener('click', async function () {
           try {
@@ -116,10 +116,10 @@
         });
       }, 9000);
     </script>
-    <script src="./supabase.js?v=0-1-504" defer></script>
-    <script src="./utils.js?v=0-1-504" defer></script>
-    <script src="./weather.js?v=0-1-504" defer></script>
-    <script src="./pwa.js?v=0-1-504" defer></script>
-    <script src="./module-loader.js?v=0-1-504" defer></script>
+    <script src="./supabase.js?v=0-1-505" defer></script>
+    <script src="./utils.js?v=0-1-505" defer></script>
+    <script src="./weather.js?v=0-1-505" defer></script>
+    <script src="./pwa.js?v=0-1-505" defer></script>
+    <script src="./module-loader.js?v=0-1-505" defer></script>
   </body>
 </html>

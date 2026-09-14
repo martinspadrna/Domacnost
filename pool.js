@@ -26,9 +26,15 @@
     const render = deps.render || (() => {});
     const renderOverlays = deps.renderOverlays || render;
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const cloudReady = deps.cloudReady || (() => false);
     const cloudSaveHouseholdUiSettings = deps.cloudSaveHouseholdUiSettings || (() => Promise.resolve(false));
     const confirm = deps.confirm || ((message) => window.confirm(message));
+
+    function offerUndo(message, restore) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore);
+      else showToast(message);
+    }
 
     let activePoolId = '';
     let activePoolMeasurementEditId = '';
@@ -535,6 +541,8 @@
       const deletedIds = { ...(state.poolCloud?.deletedIds || {}) };
       const deletedId = normalizeText(options.deletedId);
       if (deletedId) deletedIds[deletedId] = now;
+      const restoredId = normalizeText(options.restoredId);
+      if (restoredId) delete deletedIds[restoredId];
       state.poolCloud = {
         ...(state.poolCloud || {}),
         pendingAt: now,
@@ -594,6 +602,7 @@
     function deletePool(id) {
       const pools = getPools();
       const target = pools.find((pool) => pool.id === id);
+      const index = pools.findIndex((pool) => pool.id === id);
       if (!target) return;
       if (!confirm(`Smazat bazén „${target.name}“${target.measurements.length ? ` včetně ${target.measurements.length} měření` : ''}?`)) return;
       const next = pools.filter((pool) => pool.id !== id);
@@ -601,7 +610,15 @@
       persistPools(next, { deletedId: id, immediate: true });
       setModuleTab('pool', 'overview');
       render();
-      showToast('Bazén smazán');
+      offerUndo('Bazén smazán', () => {
+        const currentPools = getPools();
+        if (currentPools.some((pool) => pool.id === target.id)) return;
+        const restored = [...currentPools];
+        restored.splice(Math.min(Math.max(index, 0), restored.length), 0, target);
+        activePoolId = target.id;
+        persistPools(restored, { restoredId: target.id, immediate: true });
+        render();
+      });
     }
 
     function poolWithLatestMeasurementState(pool) {
@@ -667,6 +684,7 @@
       if (!current) return;
       const measurements = normalizePoolMeasurements(current.measurements || []);
       const target = measurements.find((item) => item.id === cleanId);
+      const index = measurements.findIndex((item) => item.id === cleanId);
       if (!target) return;
       if (!confirm(`Smazat měření z ${formatDate(target.date)}${target.time ? ` ${target.time}` : ''}?`)) return;
       const nextMeasurements = measurements.filter((item) => item.id !== cleanId);
@@ -675,7 +693,17 @@
       if (activePoolMeasurementEditId === cleanId) activePoolMeasurementEditId = '';
       persistPools(nextPools, { immediate: true });
       render();
-      showToast('Měření smazáno');
+      offerUndo('Měření smazáno', () => {
+        const currentPools = getPools();
+        const active = currentPools.find((pool) => pool.id === current.id);
+        if (!active || (active.measurements || []).some((item) => item.id === target.id)) return;
+        const restoredMeasurements = normalizePoolMeasurements(active.measurements || []);
+        restoredMeasurements.splice(Math.min(Math.max(index, 0), restoredMeasurements.length), 0, target);
+        const restoredPool = poolWithLatestMeasurementState({ ...active, measurements: restoredMeasurements });
+        activePoolId = active.id;
+        persistPools(currentPools.map((pool) => (pool.id === active.id ? restoredPool : pool)), { immediate: true });
+        render();
+      });
     }
 
     // Nastavení bazénu (název/tvar/rozměry/cílové pH/dávkování/poznámka) -

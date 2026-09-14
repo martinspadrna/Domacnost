@@ -15,6 +15,7 @@
     const formatDate = deps.formatDate || ((value) => String(value || ''));
     const daysUntil = deps.daysUntil || (() => null);
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
     const requestRender = deps.requestRender || render;
@@ -33,6 +34,14 @@
     const TASK_CATEGORY_OPTIONS = deps.TASK_CATEGORY_OPTIONS || [];
     const TASK_PRIORITY_OPTIONS = deps.TASK_PRIORITY_OPTIONS || [];
     const NOTEBOOK_NOTE_PREFIX = deps.NOTEBOOK_NOTE_PREFIX || 'DPLUS_NOTEBOOK_V1:';
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
 
     function normalizeNotebookPageKind(value) {
       // Zůstává jen kvůli zpětné kompatibilitě se stránkami vytvořenými ve v236.
@@ -284,8 +293,17 @@
     async function deleteNotebookItem(pageId, itemId) {
       const page = notebookPages().find((entry) => entry.id === pageId);
       if (!page) return;
+      const index = page.items.findIndex((entry) => entry.id === itemId);
+      const item = page.items[index];
+      if (!item) return;
       page.items = page.items.filter((entry) => entry.id !== itemId);
-      await saveNotebookPage(page, true);
+      await saveNotebookPage(page);
+      offerUndo('Bod seznamu smazán', async () => {
+        const current = notebookPages().find((entry) => entry.id === pageId);
+        if (!current || current.items.some((entry) => entry.id === item.id)) return;
+        current.items.splice(Math.min(Math.max(index, 0), current.items.length), 0, item);
+        await saveNotebookPage(current);
+      });
     }
 
     async function notebookItemToTask(pageId, itemId) {
@@ -631,12 +649,20 @@
     async function deleteTask(id) {
       const task = getState().homeTasks.find((entry) => entry.id === id);
       if (!task) return;
+      const index = getState().homeTasks.findIndex((entry) => entry.id === id);
       getState().homeTasks = getState().homeTasks.filter((entry) => entry.id !== id);
       touchState();
       saveState();
       render();
-      showToast('Úkol smazán');
-      cloudDeleteTask(task).catch((error) => console.warn('Cloud sync (úkol) na pozadí selhal', error));
+      offerUndo('Úkol smazán', () => {
+        if (getState().homeTasks.some((entry) => entry.id === task.id)) return;
+        const next = [...getState().homeTasks];
+        next.splice(Math.min(Math.max(index, 0), next.length), 0, task);
+        getState().homeTasks = next;
+        touchState();
+        saveState();
+        render();
+      }, () => cloudDeleteTask(task).catch((error) => console.warn('Cloud sync (úkol) na pozadí selhal', error)));
     }
 
     function renderTaskOverviewItem(task) {

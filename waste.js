@@ -21,6 +21,7 @@
     const renderOverviewItem = deps.renderOverviewItem || (() => '');
     const dueBadge = deps.dueBadge || ((d) => String(d ?? ''));
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
     const requestRender = deps.requestRender || render;
@@ -31,6 +32,14 @@
     const addMonthsIso = deps.addMonthsIso || (() => '');
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
 
     function normalizeWasteRepeatRule(value) {
       return ['none', 'weekly', 'biweekly', 'monthly', 'custom'].includes(value) ? value : 'none';
@@ -257,12 +266,20 @@
     async function deleteWaste(id) {
       const item = getState().waste.find((entry) => entry.id === id);
       if (!item) return;
+      const index = getState().waste.findIndex((entry) => entry.id === id);
       getState().waste = getState().waste.filter((entry) => entry.id !== id);
       touchState();
       saveState();
       render();
-      showToast('Svoz smazán');
-      cloudDeleteWaste(item).catch((error) => console.warn('Cloud sync (smazání svozu) na pozadí selhal', error));
+      offerUndo('Svoz smazán', () => {
+        if (getState().waste.some((entry) => entry.id === item.id)) return;
+        const next = [...getState().waste];
+        next.splice(Math.min(Math.max(index, 0), next.length), 0, item);
+        getState().waste = next;
+        touchState();
+        saveState();
+        render();
+      }, () => cloudDeleteWaste(item).catch((error) => console.warn('Cloud sync (smazání svozu) na pozadí selhal', error)));
     }
 
     function renderWasteOverviewItem(item) {

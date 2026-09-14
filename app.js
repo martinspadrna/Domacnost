@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_504';
-  const APP_BUILD = 504;
+  const APP_VERSION = 'Domácnost+ v.0.1_505';
+  const APP_BUILD = 505;
   const APP_TIME_ZONE = 'Europe/Prague';
   const DEFAULT_READING_GROUP_ID = 'default-readings-group';
   const STORAGE_KEY = 'domacnostPlus.v0.1_86';
@@ -7655,6 +7655,7 @@
       formatDate,
       daysUntil,
       showToast,
+      showUndoToast,
       saveState,
       render: renderActiveModuleOnly,
       requestRender: requestActiveModuleRender,
@@ -7948,6 +7949,7 @@
       selectField,
       renderEmptyCta,
       showToast,
+      showUndoToast,
       saveState,
       render: renderActiveModuleOnly,
       requestRender: requestActiveModuleRender,
@@ -7988,6 +7990,7 @@
       renderOverviewItem,
       dueBadge,
       showToast,
+      showUndoToast,
       saveState,
       render: renderActiveModuleOnly,
       requestRender: requestActiveModuleRender,
@@ -8084,6 +8087,7 @@
       render: renderActiveModuleOnly,
       renderOverlays: renderOverlaysOnly,
       showToast,
+      showUndoToast,
       cloudReady,
       cloudSaveHouseholdUiSettings,
       confirm: (message) => window.confirm(message)
@@ -8323,6 +8327,7 @@
       render: renderActiveModuleOnly,
       requestRender: requestActiveModuleRender,
       showToast,
+      showUndoToast,
       getSupabaseClient,
       refreshCloudSession,
       putStoredContractFile,
@@ -12487,6 +12492,9 @@
     const vid = String(vehicleId || garageVehicleId || '');
     const map = { ...(state.settings.vehicleServicePlans && typeof state.settings.vehicleServicePlans === 'object' ? state.settings.vehicleServicePlans : {}) };
     if (!Array.isArray(map[vid])) return;
+    const index = map[vid].findIndex((entry) => entry.id === itemId);
+    const removed = map[vid][index];
+    if (!removed) return;
     map[vid] = map[vid].map(normalizeServicePlanItem).filter((entry) => entry.id !== itemId);
     state.settings.vehicleServicePlans = normalizeVehicleServicePlanMap(map);
     if (garageServicePlanEditId === itemId) garageServicePlanEditId = '';
@@ -12495,7 +12503,19 @@
     saveState();
     if (cloudReady()) cloudSaveHouseholdUiSettings(false);
     render();
-    showToast('Servisní položka smazaná');
+    showUndoToast('Servisní položka smazaná', () => {
+      const restoredMap = { ...(state.settings.vehicleServicePlans && typeof state.settings.vehicleServicePlans === 'object' ? state.settings.vehicleServicePlans : {}) };
+      const restoredList = Array.isArray(restoredMap[vid]) ? [...restoredMap[vid]] : [];
+      if (restoredList.some((entry) => entry.id === removed.id)) return;
+      restoredList.splice(Math.min(Math.max(index, 0), restoredList.length), 0, removed);
+      restoredMap[vid] = restoredList;
+      state.settings.vehicleServicePlans = normalizeVehicleServicePlanMap(restoredMap);
+      garageServicePlanOpen = true;
+      touchState();
+      saveState();
+      if (cloudReady()) cloudSaveHouseholdUiSettings(false);
+      render();
+    });
   }
 
 
@@ -20043,24 +20063,47 @@
   async function deleteItem(collection, id) {
     if (!collection || !Array.isArray(state[collection])) return;
     const record = state[collection].find((item) => item.id === id);
+    if (!record) return;
+    const index = state[collection].findIndex((item) => item.id === id);
+    const previousActiveContractId = activeContractId;
+    let files = [];
     if (collection === 'contracts') {
-      const files = state.contractFiles.filter((file) => file.contractId === id);
-      files.forEach((file) => deleteStoredContractFile(file.id).catch(() => {}));
-      state.contractFiles = state.contractFiles.filter((file) => file.contractId !== id);
+      files = (state.contractFiles || []).filter((file) => file.contractId === id);
+      state.contractFiles = (state.contractFiles || []).filter((file) => file.contractId !== id);
       if (activeContractId === id) activeContractId = state.contracts.find((contract) => contract.id !== id)?.id || null;
     }
     state[collection] = state[collection].filter((item) => item.id !== id);
     touchState();
     saveState();
     render();
-    showToast('Smazáno');
-    if (collection === 'fuel' || collection === 'services') {
-      syncUpdateToCloud(cloudDeleteGarageRecord(collection, record));
-    } else if (collection === 'contracts') {
-      syncUpdateToCloud(cloudDeleteContract(record));
-    } else if (extraCloudConfig(collection)) {
-      syncUpdateToCloud(cloudDeleteExtraItem(collection, record));
-    }
+    showUndoToast('Smazáno', () => {
+      if (!state[collection].some((item) => item.id === record.id)) {
+        const restored = [...state[collection]];
+        restored.splice(Math.min(Math.max(index, 0), restored.length), 0, record);
+        state[collection] = restored;
+      }
+      if (collection === 'contracts') {
+        const existingIds = new Set((state.contractFiles || []).map((file) => file.id));
+        state.contractFiles = [...(state.contractFiles || []), ...files.filter((file) => !existingIds.has(file.id))];
+        activeContractId = previousActiveContractId || record.id;
+      }
+      touchState();
+      saveState();
+      render();
+    }, { onExpire: async () => {
+      if (collection === 'fuel' || collection === 'services') {
+        await cloudDeleteGarageRecord(collection, record);
+      } else if (collection === 'contracts') {
+        const contracts = getContractsModule();
+        for (const file of files) {
+          if (file.cloudId) await contracts.deleteCloudContractFile(file);
+          await deleteStoredContractFile(file.id).catch(() => {});
+        }
+        await cloudDeleteContract(record);
+      } else if (extraCloudConfig(collection)) {
+        await cloudDeleteExtraItem(collection, record);
+      }
+    } });
   }
 
   async function toggleBoolean(collection, id, key) {
@@ -20084,6 +20127,10 @@
   async function deleteVehicle(id) {
     const vehicle = state.vehicles.find((item) => item.id === id);
     if (!vehicle) return showToast('Auto nenalezeno');
+    const vehicleIndex = state.vehicles.findIndex((item) => item.id === id);
+    const removedFuel = state.fuel.map((item, index) => ({ item, index })).filter((entry) => entry.item.vehicleId === id);
+    const removedServices = state.services.map((item, index) => ({ item, index })).filter((entry) => entry.item.vehicleId === id);
+    const previousGarageVehicleId = garageVehicleId;
     const fuelCount = state.fuel.filter((item) => item.vehicleId === id).length;
     const serviceCount = state.services.filter((item) => item.vehicleId === id).length;
     const message = `Opravdu smazat auto "${vehicle.name || 'Auto'}"?\n\nSmaže se i ${fuelCount} tankování a ${serviceCount} servisních/nákladových záznamů.`;
@@ -20095,8 +20142,25 @@
     touchState();
     saveState();
     render();
-    showToast('Auto smazáno');
-    syncUpdateToCloud(cloudDeleteVehicle(vehicle));
+    showUndoToast('Auto smazáno', () => {
+      if (!state.vehicles.some((entry) => entry.id === vehicle.id)) {
+        const vehicles = [...state.vehicles];
+        vehicles.splice(Math.min(Math.max(vehicleIndex, 0), vehicles.length), 0, vehicle);
+        state.vehicles = vehicles;
+      }
+      for (const removed of removedFuel) {
+        if (state.fuel.some((entry) => entry.id === removed.item.id)) continue;
+        state.fuel.splice(Math.min(Math.max(removed.index, 0), state.fuel.length), 0, removed.item);
+      }
+      for (const removed of removedServices) {
+        if (state.services.some((entry) => entry.id === removed.item.id)) continue;
+        state.services.splice(Math.min(Math.max(removed.index, 0), state.services.length), 0, removed.item);
+      }
+      garageVehicleId = previousGarageVehicleId || vehicle.id;
+      touchState();
+      saveState();
+      render();
+    }, { onExpire: () => cloudDeleteVehicle(vehicle) });
   }
 
   async function copyText(text) {

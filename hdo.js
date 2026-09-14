@@ -18,6 +18,7 @@
     const selectField = deps.selectField || (() => '');
     const renderEmptyCta = deps.renderEmptyCta || (() => '');
     const showToast = deps.showToast || (() => {});
+    const showUndoToast = deps.showUndoToast || null;
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
     const requestRender = deps.requestRender || render;
@@ -33,6 +34,14 @@
     const daysModeToArray = deps.daysModeToArray || (() => []);
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
+
+    function offerUndo(message, restore, onExpire = null) {
+      if (typeof showUndoToast === 'function') showUndoToast(message, restore, { onExpire });
+      else {
+        showToast(message);
+        if (typeof onExpire === 'function') Promise.resolve().then(onExpire).catch(() => {});
+      }
+    }
 
     function hdoTimeField(label, name, placeholder = '06:00', required = false, value = '') {
       const inputId = `field-${name}-${Math.random().toString(36).slice(2, 7)}`;
@@ -546,12 +555,20 @@
     async function deleteHdoWindow(id) {
       const item = getState().hdoWindows.find((entry) => entry.id === id);
       if (!item) return;
+      const index = getState().hdoWindows.findIndex((entry) => entry.id === id);
       getState().hdoWindows = getState().hdoWindows.filter((entry) => entry.id !== id);
       touchState();
       saveState();
       render();
-      showToast('HDO okno smazáno');
-      cloudDeleteHdoWindow(item).catch((error) => console.warn('Cloud sync (smazání HDO) na pozadí selhal', error));
+      offerUndo('HDO okno smazáno', () => {
+        if (getState().hdoWindows.some((entry) => entry.id === item.id)) return;
+        const next = [...getState().hdoWindows];
+        next.splice(Math.min(Math.max(index, 0), next.length), 0, item);
+        getState().hdoWindows = next;
+        touchState();
+        saveState();
+        render();
+      }, () => cloudDeleteHdoWindow(item).catch((error) => console.warn('Cloud sync (smazání HDO) na pozadí selhal', error)));
     }
 
     // Panel HDO pro renderHomecare (fast i main path měly identický obsah).

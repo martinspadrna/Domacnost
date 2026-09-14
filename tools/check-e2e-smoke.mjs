@@ -375,6 +375,41 @@ function smokeSeedScript() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }],
+    hdoWindows: [{
+      id: 'hdo-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      label: 'Smoke nízký tarif',
+      start: '02:00',
+      end: '03:00',
+      days: [0, 1, 2, 3, 4, 5, 6],
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    waste: [{
+      id: 'waste-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      type: 'Směsný',
+      date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+      note: 'E2E smoke',
+      repeat: 'none',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }],
+    homeTasks: [{
+      id: 'task-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      title: 'Smoke úkol',
+      due: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+      note: 'E2E undo',
+      category: 'domacnost',
+      priority: 'normal',
+      done: false,
+      createdAt: new Date().toISOString()
+    }],
     vehicles: [{
       id: 'vehicle-e2e-smoke',
       householdId: 'household-e2e-smoke',
@@ -546,6 +581,17 @@ function smokeSeedScript() {
       note: 'E2E smoke',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
+    }],
+    contractFiles: [{
+      id: 'contract-file-e2e-smoke',
+      householdId: 'household-e2e-smoke',
+      profileId: 'profile-e2e-smoke',
+      contractId: 'contract-e2e-smoke',
+      fileName: 'smlouva-smoke.pdf',
+      fileType: 'application/pdf',
+      size: 456,
+      source: 'upload',
+      createdAt: new Date().toISOString()
     }],
     finance: [{
       id: 'finance-entry-e2e-smoke',
@@ -1090,6 +1136,64 @@ async function run() {
       if (restored.result?.value !== 1) fail('Odečty: odečet se po Vrátit zpět neobnovil právě jednou.');
       else ok('Odečty: smazaný odečet lze vrátit zpět.');
     }
+
+    const verifyHouseholdUndo = async ({ label, nav, selector, beforeExpression = '', restoredExpression = '' }) => {
+      await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__(${JSON.stringify(nav.module)}, ${JSON.stringify(nav.tab || '')})`, awaitPromise: true });
+      if (beforeExpression) {
+        await page.send('Runtime.evaluate', { expression: beforeExpression, awaitPromise: true });
+      }
+      const selectorJson = JSON.stringify(selector);
+      const found = await waitForExpression(page, `Boolean(document.querySelector(${selectorJson}))`, 2400, 50);
+      if (!found) {
+        fail(`${label}: mazací akce nebyla v modulu nalezena.`);
+        return;
+      }
+      await page.send('Runtime.evaluate', { expression: `window.confirm = () => true; document.querySelector(${selectorJson})?.click()` });
+      const removed = await waitForExpression(page, `!document.querySelector(${selectorJson}) && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
+      if (!removed) {
+        fail(`${label}: smazání nenabídlo Vrátit zpět.`);
+        return;
+      }
+      await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
+      const restored = await waitForExpression(page, restoredExpression || `Boolean(document.querySelector(${selectorJson}))`, 3000, 50);
+      if (!restored) fail(`${label}: data se po Vrátit zpět neobnovila.`);
+      else ok(`${label}: smazání lze vrátit zpět bez ztráty dat.`);
+    };
+
+    await verifyHouseholdUndo({
+      label: 'HDO',
+      nav: { module: 'hdo' },
+      selector: '[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]',
+      restoredExpression: `(() => { const saved = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || '{}'); return (saved.hdoWindows || []).filter((item) => item.id === 'hdo-e2e-smoke').length === 1; })()`
+    });
+    await verifyHouseholdUndo({
+      label: 'Odpad',
+      nav: { module: 'waste' },
+      selector: '[data-action="delete-waste"][data-id="waste-e2e-smoke"]'
+    });
+    await verifyHouseholdUndo({
+      label: 'Zápisník / úkoly',
+      nav: { module: 'tasks' },
+      beforeExpression: `document.querySelector('[data-action="set-section-tab"][data-area="notebook"][data-tab="tasks"]')?.click()`,
+      selector: '[data-action="task-delete"][data-id="task-e2e-smoke"]'
+    });
+    await verifyHouseholdUndo({
+      label: 'Bazén / měření',
+      nav: { module: 'pool', tab: 'overview' },
+      selector: '[data-action="pool-measurement-delete"][data-id="pool-measure-3"]'
+    });
+    await verifyHouseholdUndo({
+      label: 'Smlouvy / přílohy',
+      nav: { module: 'contracts' },
+      selector: '[data-action="delete"][data-collection="contracts"][data-id="contract-e2e-smoke"]',
+      restoredExpression: `(() => { const saved = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || '{}'); return (saved.contracts || []).filter((item) => item.id === 'contract-e2e-smoke').length === 1 && (saved.contractFiles || []).filter((item) => item.id === 'contract-file-e2e-smoke').length === 1; })()`
+    });
+    await verifyHouseholdUndo({
+      label: 'Garáž / auto',
+      nav: { module: 'garage', tab: 'detail' },
+      selector: '[data-action="delete-vehicle"][data-id="vehicle-e2e-smoke"]',
+      restoredExpression: `(() => { const saved = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || '{}'); return (saved.vehicles || []).filter((item) => item.id === 'vehicle-e2e-smoke').length === 1 && (saved.fuel || []).filter((item) => item.id === 'fuel-e2e-smoke').length === 1 && (saved.services || []).filter((item) => item.id === 'service-e2e-smoke').length === 1; })()`
+    });
 
     const submitGuardCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
@@ -1815,7 +1919,7 @@ async function run() {
     if (!moduleOnlyRenderValue.filterActive) { fail('Předplatné: filtr Dlužníci se po modulovém renderu neaktivoval.'); moduleOnlyRenderOk = false; }
     if (moduleOnlyRenderOk) ok('Modulový render: filtr překreslí jen otevřený modul a zachová celý aplikační shell.');
     await page.send('Runtime.evaluate', {
-      expression: `document.querySelector('[data-action="subscription-debtor-info"]')?.click()`
+      expression: `document.querySelector('[data-action="subscription-debtor-info"]')?.click(); window.__DOMACNOST_E2E_SUBSCRIPTION_OVERLAY_RENDER__ = { scope: document.querySelector('#app')?.dataset?.lastRenderScope || '', surface: document.querySelector('#app')?.dataset?.lastRenderSurface || '' }`
     });
     const subscriptionInputReady = await waitForExpression(
       page,
@@ -1857,7 +1961,7 @@ async function run() {
         const rect = modal?.getBoundingClientRect();
         return {
           modal: Boolean(modal),
-          partialRender: document.querySelector('#app')?.dataset?.lastRenderSurface === 'overlay',
+          partialRender: window.__DOMACNOST_E2E_SUBSCRIPTION_OVERLAY_RENDER__?.scope === 'overlay-only' && window.__DOMACNOST_E2E_SUBSCRIPTION_OVERLAY_RENDER__?.surface !== 'module',
           bodyOpen: document.body.classList.contains('overview-open'),
           amount: input?.value || '',
           focused: document.activeElement === input,
@@ -1868,7 +1972,7 @@ async function run() {
     const subscriptionPaymentModalValue = subscriptionPaymentModalCheck.result?.value || {};
     let subscriptionPaymentModalOk = true;
     if (!subscriptionPaymentModalValue.modal) { fail('Předplatné: dialog platby po fokusu částky zmizel.'); subscriptionPaymentModalOk = false; }
-    if (!subscriptionPaymentModalValue.partialRender) { fail('Předplatné: otevření dialogu nepoužilo samostatný overlay render.'); subscriptionPaymentModalOk = false; }
+    if (!subscriptionPaymentModalValue.partialRender) { fail(`Předplatné: otevření dialogu nepoužilo samostatný overlay render (${JSON.stringify(subscriptionPaymentModalValue)}).`); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.bodyOpen) { fail('Předplatné: dialog platby nezamkl podkladovou stránku pro mobilní klávesnici.'); subscriptionPaymentModalOk = false; }
     if (subscriptionPaymentModalValue.amount !== '175') { fail('Předplatné: dialog platby neudržel rozepsanou částku.'); subscriptionPaymentModalOk = false; }
     if (!subscriptionPaymentModalValue.focused) { fail('Předplatné: pole částky po změně mobilního viewportu ztratilo fokus.'); subscriptionPaymentModalOk = false; }

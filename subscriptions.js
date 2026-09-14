@@ -180,7 +180,7 @@
       if (!cloudReady()) return Promise.resolve(true);
       return cloudSaveHouseholdUiSettings(false)
           .then((ok) => {
-            if (ok && getActiveModule() === 'subscriptions') render();
+            if (ok && getActiveModule() === 'subscriptions' && !debtorModalPersonId) render();
             return ok;
           })
           .catch((error) => {
@@ -198,7 +198,7 @@
       render();
       await Promise.resolve(deleteSync).catch(() => false);
       await persistSubscriptionsState({ renderView: false });
-      render();
+      if (!debtorModalPersonId) render();
       showToast(message);
     }
 
