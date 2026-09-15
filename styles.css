@@ -16439,3 +16439,32 @@ button[data-busy-submit="true"]::before {
 @media (prefers-reduced-motion: reduce) {
   button[data-busy-submit="true"]::before { animation: none; }
 }
+
+/* v0.1_507: bezpečné řešení souběžných změn ze dvou zařízení */
+.household-sync-conflict {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--warn) 11%, var(--card, transparent));
+}
+
+.household-sync-conflict > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.household-sync-conflict strong { font-size: .9rem; }
+.household-sync-conflict span { color: var(--muted); font-size: .76rem; line-height: 1.45; }
+.household-sync-conflict .compact-actions { margin: 0; }
+
+@media (max-width: 720px) {
+  .household-sync-conflict { grid-template-columns: 1fr; align-items: stretch; }
+  .household-sync-conflict .compact-actions { justify-content: stretch; }
+  .household-sync-conflict .compact-actions button { flex: 1 1 180px; }
+}

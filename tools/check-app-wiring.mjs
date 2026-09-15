@@ -188,13 +188,28 @@ if (app && pool && subscriptions && calendar && warranty) {
 if (app && shoppingRender && finance && contracts && hdoModule && wasteModule && notesModule && calendar) {
   const moduleSurfaces = [shoppingRender, finance, contracts, hdoModule, wasteModule, notesModule, calendar].join('\n');
   expect(app, 'function renderUnifiedCloudControl(totalLocal = null, options = {})', 'app.js: cloud má jeden společný stavový prvek.');
-  expect(app, '${failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ?', 'app.js: ruční cloudová akce se nabídne jen při chybě nebo vypnuté automatice.');
+  expect(app, ': failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ?', 'app.js: ruční cloudová akce se nabídne jen při chybě nebo vypnuté automatice.');
   expect(app, "autoSyncEnabled: true, autosyncStatus: 'syncing'", 'app.js: jednotná opravná akce znovu zapne automatickou synchronizaci.');
   expectAbsent(app, '>Synchronizovat profily</button>', 'app.js: profily nemají vlastní ruční synchronizaci.');
   expectAbsent(moduleSurfaces, /data-action=["']cloud-(?:load|sync)/, 'Moduly: uživatelská rozhraní nemají duplicitní ruční cloudová ovládání.');
   expect(shoppingRender, 'Čeká na automatickou synchronizaci:', 'Nákupy: čekající změny vysvětlují automatické odeslání.');
   expect(e2e, "retry: document.querySelectorAll('.panel-cloud [data-action=\"cloud-sync-unified\"]').length", 'tools/check-e2e-smoke.mjs: prohlížeč hlídá, že běžný cloud stav nenabízí ruční tlačítko.');
   expect(app, 'window.__DOMACNOST_E2E_SET_CLOUD_STATUS__', 'app.js: E2E cloudová kontrola používá deterministický lokální stav bez cizí databáze.');
+  expect(app, "query = query.eq('updated_at', expectedRevision)", 'app.js: nastavení domácnosti se uloží jen proti načtené cloudové revizi.');
+  expect(app, 'householdUiConflict: {', 'app.js: souběžná změna z jiného zařízení se zachytí jako konflikt bez tichého přepsání.');
+  expect(app, 'if (shouldApplyRemoteHouseholdUi(preferredHousehold)) applyCloudHouseholdUiSettings(preferredHousehold);', 'app.js: počáteční výběr domácnosti respektuje rozpracovaný konflikt.');
+  expect(app, 'const applyRemote = shouldApplyRemoteHouseholdUi(activeHousehold);', 'app.js: seznam domácností před převzetím cloudu kontroluje lokální změny.');
+  expect(app, 'data-action="resolve-household-conflict-cloud"', 'app.js: konflikt nabízí zachování cloudové verze.');
+  expect(app, 'data-action="resolve-household-conflict-local"', 'app.js: konflikt nabízí vědomé zachování tohoto zařízení.');
+}
+
+if (app && styles) {
+  expect(app, "const PRE_IMPORT_STATE_IDB_KEY = 'pre-import'", 'app.js: import má oddělený trvalý bod návratu v IndexedDB.');
+  expect(app, "algorithm: 'fnv1a-32'", 'app.js: export obsahuje kontrolní součet.');
+  expect(app, 'expectedChecksum !== actualChecksum', 'app.js: poškozený export se před importem odmítne.');
+  expect(app, 'await putStoredAppStateRecord(PRE_IMPORT_STATE_IDB_KEY, currentSnapshot)', 'app.js: před importem se uloží aktuální stav zařízení.');
+  expect(app, 'function restorePreImportBackup()', 'app.js: bod návratu lze obnovit z Nastavení > Data.');
+  expect(styles, '.household-sync-conflict {', 'styles.css: konflikt synchronizace má zřetelný responzivní povrch.');
 }
 
 if (app && index && styles && pwa) {

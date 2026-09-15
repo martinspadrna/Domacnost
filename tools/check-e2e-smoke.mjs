@@ -1138,6 +1138,7 @@ async function run() {
     }
 
     const verifyHouseholdUndo = async ({ label, nav, selector, beforeExpression = '', restoredExpression = '' }) => {
+      await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_EXPIRE_UNDO__?.()` });
       await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__(${JSON.stringify(nav.module)}, ${JSON.stringify(nav.tab || '')})`, awaitPromise: true });
       if (beforeExpression) {
         await page.send('Runtime.evaluate', { expression: beforeExpression, awaitPromise: true });
@@ -1148,6 +1149,7 @@ async function run() {
         fail(`${label}: mazací akce nebyla v modulu nalezena.`);
         return;
       }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
       await page.send('Runtime.evaluate', { expression: `window.confirm = () => true; document.querySelector(${selectorJson})?.click()` });
       const removed = await waitForExpression(page, `!document.querySelector(${selectorJson}) && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
       if (!removed) {
@@ -1647,7 +1649,9 @@ async function run() {
           visualChoiceRadius: visualChoiceStyle?.borderTopLeftRadius || '',
           dataPanel: Boolean(document.querySelector('.settings-tab-data .panel-data, .panel-data')),
           importDrawer: Boolean(importDrawer),
-          importTextarea: Boolean(importTextareaStyle && parseFloat(importTextareaStyle.minHeight) >= 120)
+          importTextarea: Boolean(importTextareaStyle && parseFloat(importTextareaStyle.minHeight) >= 120),
+          verifiedBackupLabel: /ověřená záloha/i.test(document.querySelector('.panel-data')?.innerText || ''),
+          integrity: window.__DOMACNOST_E2E_EXPORT_INTEGRITY__?.() || null
         };
       })()`
     });
@@ -1662,6 +1666,18 @@ async function run() {
     if (!settingsValue.dataPanel) { fail('Nastavení Data panel není dostupný.'); settingsOk = false; }
     if (!settingsValue.importDrawer) { fail('Nastavení Data nemá import drawer.'); settingsOk = false; }
     if (!settingsValue.importTextarea) { fail('Import JSON textarea nemá stabilní výšku.'); settingsOk = false; }
+    if (!settingsValue.verifiedBackupLabel) { fail('Nastavení Data nevysvětluje ověřenou zálohu.'); settingsOk = false; }
+    if (!settingsValue.integrity?.valid || !/^[0-9a-f]{8}$/.test(settingsValue.integrity?.checksum || '')) { fail('Kontrolní součet exportu není stabilní.'); settingsOk = false; }
+    const damagedImportCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      awaitPromise: true,
+      expression: `(async () => {
+        const accepted = await window.__DOMACNOST_E2E_IMPORT_DATA__?.(JSON.stringify({ integrity: { algorithm: 'fnv1a-32', checksum: '00000000', recordCount: 0 }, state: {} }));
+        return { accepted, toast: document.querySelector('#copy-toast')?.textContent || '' };
+      })()`
+    });
+    const damagedImportValue = damagedImportCheck.result?.value || {};
+    if (damagedImportValue.accepted !== false || !/poškozen/i.test(damagedImportValue.toast || '')) { fail('Poškozená záloha nebyla bezpečně odmítnuta.'); settingsOk = false; }
     if (settingsOk) ok('Nastavení: karty, volby vzhledu a import dat renderují v novém povrchu.');
 
     await page.send('Runtime.evaluate', {
@@ -1701,6 +1717,22 @@ async function run() {
     const unifiedCloudValue = unifiedCloudCheck.result?.value || {};
     if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0 || unifiedCloudValue.retry !== 0 || !/změn[a-y ]*ček/i.test(unifiedCloudValue.text)) fail('Cloud nastavení nemá jediný automatický stav bez nadbytečné ruční akce.');
     else ok('Cloud: běžný stav i čekající změny jsou sjednocené bez ručních synchronizačních tlačítek.');
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_HOUSEHOLD_CONFLICT__?.()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const conflictCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        banner: document.querySelectorAll('[data-household-sync-conflict]').length,
+        cloudChoice: document.querySelectorAll('[data-action="resolve-household-conflict-cloud"]').length,
+        localChoice: document.querySelectorAll('[data-action="resolve-household-conflict-local"]').length,
+        blocked: /nic se automaticky nepřepíše/i.test(document.querySelector('.panel-cloud')?.innerText || '')
+      }))()`
+    });
+    const conflictValue = conflictCheck.result?.value || {};
+    if (conflictValue.banner !== 1 || conflictValue.cloudChoice !== 1 || conflictValue.localChoice !== 1 || !conflictValue.blocked) fail('Konflikt změn ze dvou zařízení nemá bezpečné rozhodnutí bez automatického přepsání.');
+    else ok('Cloud: souběžná změna se zastaví a nabídne obě bezpečné volby.');
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__?.()` });
 
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('pool') : document.querySelector('[data-nav="pool"]')?.click()`

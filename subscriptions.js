@@ -191,15 +191,17 @@
           });
     }
 
-    async function restoreSubscriptionsAfterDelete(deleteSync, restore, message) {
+    function restoreSubscriptionsAfterDelete(deleteSync, restore, message) {
       restore();
       touchState();
       saveState();
       render();
-      await Promise.resolve(deleteSync).catch(() => false);
-      await persistSubscriptionsState({ renderView: false });
-      if (!debtorModalPersonId) render();
       showToast(message);
+      Promise.resolve(deleteSync)
+        .catch(() => false)
+        .then(() => persistSubscriptionsState({ renderView: false }))
+        .then(() => { if (!debtorModalPersonId) render(); })
+        .catch((error) => console.warn('Subscription restore cloud sync failed', error));
     }
 
     function subscriptionPersonName(personId) {
