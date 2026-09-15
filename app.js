@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_507';
-  const APP_BUILD = 507;
+  const APP_VERSION = 'Domácnost+ v.0.1_508';
+  const APP_BUILD = 508;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -911,7 +911,10 @@
       profilesLoadedAt: '',
       lastRealtimeAt: '',
       lastAutosyncAt: '',
+      lastAutosyncAttemptAt: '',
       autosyncRetryAt: '',
+      autosyncFailureCount: 0,
+      lastAutosyncError: '',
       householdUiPendingAt: '',
       householdUiRevision: '',
       householdUiConflict: null,
@@ -1306,6 +1309,7 @@
   let shoppingCloudRefreshInFlight = false;
   let shoppingLastAutoRefreshAt = 0;
   let preImportBackupAvailable = false;
+  let dataIntegrityAuditCache = { revision: -1, result: null };
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
   let toastTimer = null;
   let undoToastTimer = null;
@@ -1331,7 +1335,10 @@
   const cloudRealtimePendingSources = new Set();
   let cloudAutosyncTimer = null;
   let cloudAutosyncRunning = false;
-  let cloudAutosyncFailureCount = 0;
+  // Počet selhání je zároveň uložený ve state. Po restartu aplikace tak
+  // nezačne problémová operace znovu od nejkratšího intervalu a nezahlcuje
+  // cloud opakovanými pokusy.
+  let cloudAutosyncFailureCount = Math.max(0, Number(state.cloud?.autosyncFailureCount || 0));
   let homeHeroEditMode = false;
   let homeEditSheetOpen = false;
   let homeHeroLongPressTimer = null;
@@ -2010,7 +2017,10 @@
     migrated.cloud.autoSyncEnabled = migrated.cloud?.autoSyncEnabled !== false;
     migrated.cloud.autosyncStatus = migrated.cloud?.autosyncStatus || 'idle';
     migrated.cloud.lastAutosyncAt = migrated.cloud?.lastAutosyncAt || '';
+    migrated.cloud.lastAutosyncAttemptAt = migrated.cloud?.lastAutosyncAttemptAt || '';
     migrated.cloud.autosyncRetryAt = migrated.cloud?.autosyncRetryAt || '';
+    migrated.cloud.autosyncFailureCount = Math.max(0, Number(migrated.cloud?.autosyncFailureCount || 0));
+    migrated.cloud.lastAutosyncError = normalizeText(migrated.cloud?.lastAutosyncError);
     migrated.cloud.householdUiPendingAt = migrated.cloud?.householdUiPendingAt || '';
     migrated.cloud.householdUiRevision = String(migrated.cloud?.householdUiRevision || '');
     migrated.cloud.householdUiConflict = migrated.cloud?.householdUiConflict && typeof migrated.cloud.householdUiConflict === 'object' && !Array.isArray(migrated.cloud.householdUiConflict)
@@ -13459,6 +13469,94 @@
       </section>`;
   }
 
+  function dataIntegrityTarget(collection) {
+    const targets = {
+      shopping: ['shopping', 'list'], shoppingLists: ['shopping', 'list'], contracts: ['contracts', 'overview'], contractFiles: ['contracts', 'overview'],
+      warranties: ['warranties', ''], warrantyFiles: ['warranties', ''], vehicles: ['garage', 'overview'], fuel: ['garage', 'history'], services: ['garage', 'history'],
+      readingMeters: ['readings', 'overview'], readings: ['readings', 'history'], finance: ['finance', 'history'], financeAccounts: ['finance', 'accounts'],
+      subscriptions: ['subscriptions', 'overview'], subscriptionPeople: ['subscriptions', 'people'], subscriptionPayments: ['subscriptions', 'payments']
+    };
+    const [nav = 'settings', tab = 'data'] = targets[collection] || [];
+    return { nav, tab };
+  }
+
+  function buildDataIntegrityAudit() {
+    if (dataIntegrityAuditCache.revision === globalSearchIndexRevision && dataIntegrityAuditCache.result) return dataIntegrityAuditCache.result;
+    const issues = [];
+    let records = 0;
+    const addIssue = (collection, title, detail) => issues.push({ collection, title, detail, ...dataIntegrityTarget(collection) });
+    const collections = getCollectionNames().map((collection) => [collection, Array.isArray(state[collection]) ? state[collection] : []]);
+    collections.push(['pools', Array.isArray(state.pools) ? state.pools : []]);
+    collections.forEach(([collection, rows]) => {
+      records += rows.length;
+      ['id', 'cloudId'].forEach((field) => {
+        const seen = new Map();
+        rows.forEach((row) => {
+          const value = normalizeText(row?.[field]);
+          if (!value) return;
+          if (seen.has(value)) {
+            addIssue(collection, `Duplicitní ${field === 'cloudId' ? 'cloudový' : 'lokální'} záznam`, `${TRASH_COLLECTION_LABELS[collection] || collection}: ${value.slice(0, 12)}…`);
+          } else {
+            seen.set(value, row);
+          }
+        });
+      });
+    });
+
+    const ids = (collection) => new Set((state[collection] || []).map((item) => String(item?.id || '')).filter(Boolean));
+    const checkReference = (collection, field, validIds, label) => {
+      (state[collection] || []).forEach((row) => {
+        const value = String(row?.[field] || '');
+        if (value && !validIds.has(value)) addIssue(collection, 'Chybějící návaznost', `${label}: ${value.slice(0, 12)}…`);
+      });
+    };
+    const vehicleIds = ids('vehicles');
+    checkReference('fuel', 'vehicleId', vehicleIds, 'Tankování bez existujícího auta');
+    checkReference('services', 'vehicleId', vehicleIds, 'Servis bez existujícího auta');
+    const meterIds = ids('readingMeters');
+    checkReference('readings', 'meterId', meterIds, 'Odečet bez existujícího měřidla');
+    const contractIds = ids('contracts');
+    checkReference('contractFiles', 'contractId', contractIds, 'Příloha bez existující smlouvy');
+    const warrantyIds = ids('warranties');
+    checkReference('warrantyFiles', 'warrantyId', warrantyIds, 'Příloha bez existující záruky');
+    const listIds = ids('shoppingLists');
+    checkReference('shopping', 'listId', listIds, 'Položka bez existujícího seznamu');
+    const subscriptionIds = ids('subscriptions');
+    const personIds = ids('subscriptionPeople');
+    checkReference('subscriptionPayments', 'subscriptionId', subscriptionIds, 'Platba bez existující služby');
+    checkReference('subscriptionPayments', 'personId', personIds, 'Platba bez existující osoby');
+    (state.subscriptions || []).forEach((service) => {
+      (service.shares || []).forEach((share) => {
+        records += 1;
+        if (share.personId && !personIds.has(String(share.personId))) addIssue('subscriptions', 'Chybějící návaznost', 'Sdílení předplatného odkazuje na neexistující osobu');
+      });
+    });
+    (state.pools || []).forEach((pool) => { records += Array.isArray(pool.measurements) ? pool.measurements.length : 0; });
+
+    const snapshot = createPersistedStateSnapshot(state);
+    const result = {
+      checkedAt: new Date().toISOString(),
+      records,
+      issues: issues.slice(0, 50),
+      issueCount: issues.length,
+      checksum: stateIntegrityChecksum(snapshot)
+    };
+    dataIntegrityAuditCache = { revision: globalSearchIndexRevision, result };
+    return result;
+  }
+
+  function renderDataIntegrityCard() {
+    const audit = buildDataIntegrityAudit();
+    const ok = audit.issueCount === 0;
+    return `
+      <section class="card desktop-span-2 compact-settings-card data-integrity-card" data-data-integrity-card>
+        <div class="card-header"><div><h2>Kontrola dat</h2><p>Hlídá duplicitní identifikátory a záznamy, kterým chybí navázaná položka. Kontrola nic nemaže ani neupravuje.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
+        <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Zkontrolováno</span><strong>${audit.records}</strong></div><div class="mini-stat"><span>Otisk dat</span><strong>${escapeHtml(audit.checksum)}</strong></div><div class="mini-stat"><span>Čas kontroly</span><strong>${escapeHtml(formatDateTime(audit.checkedAt))}</strong></div></div>
+        ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-integrity-issues">${audit.issues.map((issue) => `<button type="button" class="data-integrity-issue" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em></div></button>`).join('')}</div>`}
+        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button></div>
+      </section>`;
+  }
+
   function renderSettings() {
     const enabled = new Set(normalizeModuleList(state.enabledModules));
     const activeTab = getModuleTab('settings', 'household');
@@ -13561,6 +13659,7 @@
           </section>
 
           ${renderTrashCard()}
+          ${renderDataIntegrityCard()}
           ${renderDeleteAccountCard()}
         </div>
       </div>
@@ -14014,6 +14113,7 @@
           <div class="card-subheader"><h3>Cloud domácnosti</h3><p>Cloud je hlavní zdroj dat pro všechny členy domácnosti. Lokální úložiště zůstává jen jako cache a nouzový fallback.</p></div>
           ${renderUnifiedCloudControl()}
           ${renderHouseholdUiConflict()}
+          ${renderCloudRecoveryPanel()}
         ${households.length ? `
           ${households.length > 1 ? '<div class="inline-note warn-note">Pod účtem je víc aktivních domácností. Appka teď novou nevytváří automaticky; duplicitní můžeš jen skrýt z tohoto účtu.</div>' : ''}
           <div class="cloud-household-list">
@@ -17152,6 +17252,63 @@
     }
   }
 
+  function cloudSyncPendingItems() {
+    return getCloudSyncOverviewItems().filter((item) => Number(item.local || 0) > 0);
+  }
+
+  function cloudRetryRelativeLabel(value = state.cloud?.autosyncRetryAt) {
+    const timestamp = Date.parse(value || '');
+    if (!Number.isFinite(timestamp)) return '';
+    const seconds = Math.max(0, Math.ceil((timestamp - Date.now()) / 1000));
+    if (seconds < 2) return 'pokus je připravený';
+    if (seconds < 60) return `další pokus za ${seconds} s`;
+    const minutes = Math.ceil(seconds / 60);
+    return `další pokus za ${minutes} min`;
+  }
+
+  function cloudOutboxCollectionLabel(entry = {}) {
+    const labels = {
+      shoppingLists: 'Nákupní seznamy', shopping: 'Nákupy', contracts: 'Smlouvy', contractFiles: 'Přílohy smluv',
+      warranties: 'Záruky', warrantyFiles: 'Přílohy záruk', vehicles: 'Auta', fuel: 'Tankování', services: 'Servis',
+      hdoWindows: 'HDO', waste: 'Odpad', homeTasks: 'Úkoly', notes: 'Poznámky', calendar: 'Kalendář',
+      finance: 'Finance', financeAccounts: 'Účty', subscriptions: 'Předplatné', subscriptionPeople: 'Lidé',
+      subscriptionPayments: 'Platby předplatného', readings: 'Odečty', readingMeters: 'Měřidla', coupons: 'Slevové kódy',
+      loyaltyCards: 'Věrnostní karty', pools: 'Bazén'
+    };
+    return labels[entry.collection] || 'Smazaný cloudový záznam';
+  }
+
+  function renderCloudRecoveryPanel() {
+    const pendingItems = cloudSyncPendingItems();
+    const outbox = normalizeCloudOutbox(state.cloud?.outbox || []);
+    const failedOutbox = outbox.filter((entry) => entry.attempts > 0 || entry.lastError);
+    const status = String(state.cloud?.autosyncStatus || 'idle');
+    const conflict = Boolean(state.cloud?.householdUiConflict);
+    const error = normalizeText(state.cloud?.lastAutosyncError);
+    const needsAttention = conflict || ['error', 'blocked'].includes(status) || failedOutbox.length > 0;
+    const retryLabel = cloudRetryRelativeLabel();
+    const pendingTotal = pendingItems.reduce((sum, item) => sum + Number(item.local || 0), 0);
+    const headline = needsAttention ? 'Synchronizace potřebuje pozornost' : pendingTotal ? 'Změny čekají na uložení' : 'Synchronizace je v pořádku';
+    return `
+      <section class="cloud-recovery-panel ${needsAttention ? 'has-error' : pendingTotal ? 'has-pending' : 'is-ok'}" data-cloud-recovery-panel>
+        <div class="card-subheader cloud-recovery-header">
+          <div><h3>${escapeHtml(headline)}</h3><p>${pendingTotal ? `${pendingTotal} ${pendingTotal === 1 ? 'změna čeká' : pendingTotal < 5 ? 'změny čekají' : 'změn čeká'}${retryLabel ? ` · ${escapeHtml(retryLabel)}` : ''}` : 'Na tomto zařízení nezůstala žádná neodeslaná změna.'}</p></div>
+          <span class="badge ${needsAttention ? 'bad' : pendingTotal ? 'warn' : 'good'}">${needsAttention ? 'zkontrolovat' : pendingTotal ? 'čeká' : 'v pořádku'}</span>
+        </div>
+        ${error ? `<div class="inline-note ${needsAttention ? 'warn-note' : ''}"><strong>Poslední zpráva:</strong> ${escapeHtml(error)}</div>` : ''}
+        ${pendingItems.length ? `<div class="cloud-recovery-list">${pendingItems.map((item) => `
+          <button class="cloud-recovery-row" type="button" data-nav="${escapeHtml(item.nav)}" data-target-tab="${escapeHtml(item.tab || '')}">
+            <span aria-hidden="true">${escapeHtml(item.icon)}</span><strong>${escapeHtml(item.label)}</strong><em>${item.local} ${item.local === 1 ? 'změna' : item.local < 5 ? 'změny' : 'změn'}</em>
+          </button>`).join('')}</div>` : ''}
+        ${failedOutbox.length ? `<details class="cloud-recovery-errors" ${needsAttention ? 'open' : ''}>
+          <summary>Neodeslaná smazání (${failedOutbox.length})</summary>
+          <div class="cloud-recovery-error-list">${failedOutbox.map((entry) => `
+            <div class="cloud-recovery-error-row"><div><strong>${escapeHtml(cloudOutboxCollectionLabel(entry))}</strong><span>${entry.attempts} ${entry.attempts === 1 ? 'pokus' : entry.attempts < 5 ? 'pokusy' : 'pokusů'}${entry.nextRetryAt ? ` · ${escapeHtml(cloudRetryRelativeLabel(entry.nextRetryAt))}` : ''}</span></div>${entry.lastError ? `<em>${escapeHtml(entry.lastError)}</em>` : ''}</div>`).join('')}</div>
+        </details>` : ''}
+        ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
+      </section>`;
+  }
+
   function browserAppearsOnline() {
     return navigator.onLine !== false;
   }
@@ -17165,6 +17322,17 @@
   function cloudAutosyncRetryDelayMs() {
     const index = Math.min(Math.max(0, cloudAutosyncFailureCount - 1), CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length - 1);
     return CLOUD_AUTOSYNC_RETRY_DELAYS_MS[index];
+  }
+
+  function maybeResumeDueCloudAutosync(source = 'watchdog') {
+    if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) return false;
+    if (!cloudReady() || state.cloud?.autoSyncEnabled === false || cloudAutosyncRunning || cloudAutosyncTimer || !browserAppearsOnline()) return false;
+    const pending = cloudLocalPendingCount();
+    if (!pending) return false;
+    const retryAt = Date.parse(state.cloud?.autosyncRetryAt || '');
+    if (Number.isFinite(retryAt) && retryAt > Date.now() + 500) return false;
+    scheduleCloudAutosync(source, { force: true, delayMs: 350 });
+    return true;
   }
 
   function pendingCloudModuleIds(items = null) {
@@ -17236,7 +17404,10 @@
       return false;
     }
     clearCloudAutosyncTimer();
-    if (showMessage) cloudAutosyncFailureCount = 0;
+    if (showMessage) {
+      cloudAutosyncFailureCount = 0;
+      state.cloud.autosyncFailureCount = 0;
+    }
     if (!browserAppearsOnline()) {
       state.cloud = {
         ...(state.cloud || {}),
@@ -17255,6 +17426,8 @@
       state.cloud.autosyncStatus = 'done';
       state.cloud.lastAutosyncAt = new Date().toISOString();
       state.cloud.autosyncRetryAt = '';
+      state.cloud.autosyncFailureCount = 0;
+      state.cloud.lastAutosyncError = '';
       cloudAutosyncFailureCount = 0;
       persistStateSnapshot();
       if (showMessage) showToast('Cloud je aktuální');
@@ -17265,6 +17438,7 @@
     cloudAutosyncLastAttempt = Date.now();
     state.cloud.autosyncStatus = 'syncing';
     state.cloud.autosyncRetryAt = '';
+    state.cloud.lastAutosyncAttemptAt = new Date(cloudAutosyncLastAttempt).toISOString();
     persistStateSnapshot();
     requestBackgroundRender();
     let retryDelay = 0;
@@ -17282,6 +17456,7 @@
         autosyncStatus: after ? retryDelay ? 'pending' : 'blocked' : 'done',
         lastAutosyncAt: new Date().toISOString(),
         localPendingCount: after,
+        autosyncFailureCount: cloudAutosyncFailureCount,
         lastAutosyncError: after ? state.cloud?.lastAutosyncError || 'Některé změny zatím zůstaly lokálně' : '',
         autosyncRetryAt: retryDelay ? new Date(Date.now() + retryDelay).toISOString() : ''
       };
@@ -17299,6 +17474,7 @@
         autosyncStatus: retryDelay ? 'pending' : 'error',
         lastAutosyncError: error?.message || 'Autosync selhal',
         localPendingCount: cloudLocalPendingCount(),
+        autosyncFailureCount: cloudAutosyncFailureCount,
         autosyncRetryAt: retryDelay ? new Date(Date.now() + retryDelay).toISOString() : ''
       };
       persistStateSnapshot();
@@ -17318,13 +17494,35 @@
       ...(state.cloud || {}),
       autoSyncEnabled: Boolean(enabled),
       autosyncStatus: enabled ? 'idle' : 'disabled',
-      autosyncRetryAt: ''
+      autosyncRetryAt: '',
+      autosyncFailureCount: 0,
+      lastAutosyncError: ''
     };
     touchState();
     saveState();
     render();
     showToast(enabled ? 'Autosync zapnutý' : 'Autosync vypnutý');
     if (enabled) scheduleCloudAutosync('manual-toggle');
+  }
+
+  function dismissCloudSyncError() {
+    if (state.cloud?.householdUiConflict || cloudLocalPendingCount()) {
+      showToast('Nejdřív je potřeba dokončit čekající synchronizaci');
+      return false;
+    }
+    cloudAutosyncFailureCount = 0;
+    state.cloud = {
+      ...(state.cloud || {}),
+      autosyncStatus: 'idle',
+      autosyncFailureCount: 0,
+      autosyncRetryAt: '',
+      lastAutosyncError: ''
+    };
+    touchState();
+    saveState();
+    render();
+    showToast('Stará zpráva byla skryta');
+    return true;
   }
 
   function resumeCloudActivity(source = 'online') {
@@ -17336,7 +17534,10 @@
       scheduleCloudAutosync('offline-wait', { force: true });
       return;
     }
-    if (source === 'online') cloudAutosyncFailureCount = 0;
+    if (source === 'online') {
+      cloudAutosyncFailureCount = 0;
+      state.cloud.autosyncFailureCount = 0;
+    }
     const realtimeStatus = String(state.cloud?.realtimeStatus || 'offline').toLowerCase();
     if (!['online', 'subscribed', 'refreshing'].includes(realtimeStatus)) setupCloudRealtimeSubscriptions(true);
     scheduleCloudAutosync(source, { force: true, delayMs: source === 'online' ? 900 : 1800 });
@@ -18108,7 +18309,16 @@
       render();
       return false;
     }
-    state.cloud = { ...(state.cloud || {}), autoSyncEnabled: true, autosyncStatus: 'syncing' };
+    clearCloudAutosyncTimer();
+    cloudAutosyncFailureCount = 0;
+    state.cloud = {
+      ...(state.cloud || {}),
+      autoSyncEnabled: true,
+      autosyncStatus: 'syncing',
+      autosyncRetryAt: '',
+      autosyncFailureCount: 0,
+      lastAutosyncAttemptAt: new Date().toISOString()
+    };
     render();
     try {
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
@@ -18119,6 +18329,9 @@
       state.cloud = {
         ...(state.cloud || {}),
         autosyncStatus: 'done',
+        autosyncFailureCount: 0,
+        autosyncRetryAt: '',
+        lastAutosyncError: '',
         lastAutosyncAt: new Date().toISOString(),
         lastSyncAt: new Date().toISOString()
       };
@@ -18129,7 +18342,13 @@
       return true;
     } catch (error) {
       console.warn('Unified cloud sync failed', error);
-      state.cloud = { ...(state.cloud || {}), autosyncStatus: 'error' };
+      cloudAutosyncFailureCount = Math.max(1, cloudAutosyncFailureCount + 1);
+      state.cloud = {
+        ...(state.cloud || {}),
+        autosyncStatus: 'error',
+        autosyncFailureCount: cloudAutosyncFailureCount,
+        lastAutosyncError: error?.message || 'Synchronizace se nepovedla'
+      };
       saveState();
       render();
       if (showMessage) showToast('Synchronizace se nepovedla. Zkus to znovu.');
@@ -18363,6 +18582,14 @@
     }
     if (action === 'cloud-sync-unified') {
       runUnifiedCloudSync(true);
+      return;
+    }
+    if (action === 'cloud-retry-now') {
+      runUnifiedCloudSync(true);
+      return;
+    }
+    if (action === 'cloud-dismiss-error') {
+      dismissCloudSyncError();
       return;
     }
     if (action === 'resolve-household-conflict-cloud') {
@@ -19161,6 +19388,12 @@
       restorePreImportBackup();
       return;
     }
+    if (action === 'run-data-integrity-audit') {
+      dataIntegrityAuditCache = { revision: -1, result: null };
+      render();
+      showToast(buildDataIntegrityAudit().issueCount ? 'Kontrola dat našla položky k prověření' : 'Kontrola dat je v pořádku');
+      return;
+    }
     if (action === 'restore-trash') {
       restoreTrashEntry(button.dataset.id || '');
       return;
@@ -19591,7 +19824,11 @@
       lastSyncAt: '',
       lastRealtimeAt: '',
       lastAutosyncAt: '',
+      lastAutosyncAttemptAt: '',
       localPendingCount: 0,
+      autosyncFailureCount: 0,
+      lastAutosyncError: '',
+      autosyncRetryAt: '',
       autosyncStatus: 'idle',
       realtimeStatus: 'offline'
     };
@@ -21554,6 +21791,14 @@
     if (!document.hidden && statePersistDirty) flushStatePersist();
   }, 5000);
 
+  // Pojistka pro návrat z uspání telefonu nebo ukončený časovač prohlížečem.
+  // Síť se použije jen tehdy, když opravdu existují neodeslané změny a už
+  // vypršel uložený čas dalšího pokusu.
+  window.setTimeout(() => maybeResumeDueCloudAutosync('boot-recovery'), 4500);
+  window.setInterval(() => {
+    if (!document.hidden) maybeResumeDueCloudAutosync('sync-watchdog');
+  }, 30000);
+
   window.addEventListener('focus', () => {
     scheduleShoppingCloudRefresh('app-focus', { delay: 700, minAgeMs: 15000 });
     resumeCloudActivity('app-focus');
@@ -21706,6 +21951,20 @@
       return { checksum, valid: checksum === stateIntegrityChecksum(JSON.parse(JSON.stringify(snapshot))), recordCount: backupRecordCount(snapshot) };
     };
     window.__DOMACNOST_E2E_IMPORT_DATA__ = (json) => importData(json);
+    window.__DOMACNOST_E2E_DATA_INTEGRITY__ = () => buildDataIntegrityAudit();
+    window.__DOMACNOST_E2E_SET_SYNC_FAILURE__ = () => {
+      state.cloud = {
+        ...(state.cloud || {}),
+        autosyncStatus: 'error',
+        autosyncFailureCount: 3,
+        lastAutosyncError: 'E2E kontrolní chyba',
+        autosyncRetryAt: new Date(Date.now() + 60000).toISOString(),
+        outbox: [{ id: 'outbox-e2e', operation: 'delete', table: 'finance_transactions', cloudId: 'e2e-cloud-row', collection: 'finance', createdAt: new Date().toISOString(), attempts: 3, lastError: 'E2E kontrolní chyba', nextRetryAt: new Date(Date.now() + 60000).toISOString() }]
+      };
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
+      render();
+    };
     window.__DOMACNOST_E2E_EXPIRE_UNDO__ = () => hideUndoToast({ runExpire: true });
     window.__DOMACNOST_E2E_TRASH_SNAPSHOT__ = () => ({
       trash: activeTrashEntries().map((entry) => ({ id: entry.id, label: entry.label, records: entry.records.length })),

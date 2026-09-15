@@ -189,7 +189,7 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   const moduleSurfaces = [shoppingRender, finance, contracts, hdoModule, wasteModule, notesModule, calendar].join('\n');
   expect(app, 'function renderUnifiedCloudControl(totalLocal = null, options = {})', 'app.js: cloud má jeden společný stavový prvek.');
   expect(app, ': failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ?', 'app.js: ruční cloudová akce se nabídne jen při chybě nebo vypnuté automatice.');
-  expect(app, "autoSyncEnabled: true, autosyncStatus: 'syncing'", 'app.js: jednotná opravná akce znovu zapne automatickou synchronizaci.');
+  expect(app, "autoSyncEnabled: true,\n      autosyncStatus: 'syncing'", 'app.js: jednotná opravná akce znovu zapne automatickou synchronizaci.');
   expectAbsent(app, '>Synchronizovat profily</button>', 'app.js: profily nemají vlastní ruční synchronizaci.');
   expectAbsent(moduleSurfaces, /data-action=["']cloud-(?:load|sync)/, 'Moduly: uživatelská rozhraní nemají duplicitní ruční cloudová ovládání.');
   expect(shoppingRender, 'Čeká na automatickou synchronizaci:', 'Nákupy: čekající změny vysvětlují automatické odeslání.');
@@ -201,6 +201,10 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   expect(app, 'const applyRemote = shouldApplyRemoteHouseholdUi(activeHousehold);', 'app.js: seznam domácností před převzetím cloudu kontroluje lokální změny.');
   expect(app, 'data-action="resolve-household-conflict-cloud"', 'app.js: konflikt nabízí zachování cloudové verze.');
   expect(app, 'data-action="resolve-household-conflict-local"', 'app.js: konflikt nabízí vědomé zachování tohoto zařízení.');
+  expect(app, 'function renderCloudRecoveryPanel()', 'app.js: cloud má přehled čekajících a chybných operací.');
+  expect(app, 'function maybeResumeDueCloudAutosync(source = \'watchdog\')', 'app.js: prošlý pokus synchronizace se po uspání automaticky obnoví.');
+  expect(app, 'autosyncFailureCount: cloudAutosyncFailureCount', 'app.js: počet neúspěšných pokusů přežívá restart aplikace.');
+  expect(app, 'data-action="cloud-retry-now"', 'app.js: problémovou synchronizaci lze zopakovat jedním tlačítkem.');
 }
 
 if (app && styles) {
@@ -210,6 +214,10 @@ if (app && styles) {
   expect(app, 'await putStoredAppStateRecord(PRE_IMPORT_STATE_IDB_KEY, currentSnapshot)', 'app.js: před importem se uloží aktuální stav zařízení.');
   expect(app, 'function restorePreImportBackup()', 'app.js: bod návratu lze obnovit z Nastavení > Data.');
   expect(styles, '.household-sync-conflict {', 'styles.css: konflikt synchronizace má zřetelný responzivní povrch.');
+  expect(app, 'function buildDataIntegrityAudit()', 'app.js: Data obsahují kontrolu duplicit a chybějících vazeb.');
+  expect(app, 'data-data-integrity-card', 'app.js: výsledek kontroly dat je viditelný v Nastavení > Data.');
+  expect(styles, '.cloud-recovery-panel {', 'styles.css: obnova synchronizace má vlastní responzivní povrch.');
+  expect(styles, '.data-integrity-issue {', 'styles.css: nalezené datové problémy mají čitelné řádky.');
 }
 
 if (app && index && styles && pwa) {

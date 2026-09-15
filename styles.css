@@ -16468,3 +16468,60 @@ button[data-busy-submit="true"]::before {
   .household-sync-conflict .compact-actions { justify-content: stretch; }
   .household-sync-conflict .compact-actions button { flex: 1 1 180px; }
 }
+
+/* v0.1_508: samoobslužná obnova synchronizace a kontrola integrity dat */
+.cloud-recovery-panel {
+  display: grid;
+  gap: 11px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--good) 28%, var(--line));
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--good) 5%, var(--card, transparent));
+}
+.cloud-recovery-panel.has-pending {
+  border-color: color-mix(in srgb, var(--warn) 34%, var(--line));
+  background: color-mix(in srgb, var(--warn) 6%, var(--card, transparent));
+}
+.cloud-recovery-panel.has-error {
+  border-color: color-mix(in srgb, var(--bad) 38%, var(--line));
+  background: color-mix(in srgb, var(--bad) 6%, var(--card, transparent));
+}
+.cloud-recovery-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.cloud-recovery-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.cloud-recovery-row,
+.data-integrity-issue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--card, transparent) 88%, transparent);
+  color: var(--text);
+  text-align: left;
+}
+.cloud-recovery-row strong { min-width: 0; font-size: .82rem; }
+.cloud-recovery-row em { color: var(--muted); font-size: .72rem; font-style: normal; white-space: nowrap; }
+.cloud-recovery-errors { border-top: 1px solid var(--line); padding-top: 9px; }
+.cloud-recovery-errors summary { cursor: pointer; color: var(--muted); font-size: .78rem; font-weight: 750; }
+.cloud-recovery-error-list,
+.data-integrity-issues { display: grid; gap: 8px; margin-top: 9px; }
+.cloud-recovery-error-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .8fr); gap: 10px; padding: 10px; border-radius: 12px; background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.cloud-recovery-error-row > div { display: grid; gap: 2px; }
+.cloud-recovery-error-row span,
+.cloud-recovery-error-row em { color: var(--muted); font-size: .72rem; font-style: normal; overflow-wrap: anywhere; }
+.data-integrity-issue { grid-template-columns: 26px minmax(0, 1fr); }
+.data-integrity-issue > span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); font-weight: 900; }
+.data-integrity-issue > div { display: grid; gap: 2px; min-width: 0; }
+.data-integrity-issue strong { font-size: .82rem; }
+.data-integrity-issue em { color: var(--muted); font-size: .72rem; font-style: normal; overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .cloud-recovery-header { align-items: stretch; flex-direction: column; }
+  .cloud-recovery-header .badge { align-self: flex-start; }
+  .cloud-recovery-list { grid-template-columns: 1fr; }
+  .cloud-recovery-error-row { grid-template-columns: 1fr; }
+}

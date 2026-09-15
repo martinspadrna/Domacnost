@@ -1651,7 +1651,9 @@ async function run() {
           importDrawer: Boolean(importDrawer),
           importTextarea: Boolean(importTextareaStyle && parseFloat(importTextareaStyle.minHeight) >= 120),
           verifiedBackupLabel: /ověřená záloha/i.test(document.querySelector('.panel-data')?.innerText || ''),
-          integrity: window.__DOMACNOST_E2E_EXPORT_INTEGRITY__?.() || null
+          integrity: window.__DOMACNOST_E2E_EXPORT_INTEGRITY__?.() || null,
+          dataAuditCard: Boolean(document.querySelector('[data-data-integrity-card]')),
+          dataAudit: window.__DOMACNOST_E2E_DATA_INTEGRITY__?.() || null
         };
       })()`
     });
@@ -1668,6 +1670,7 @@ async function run() {
     if (!settingsValue.importTextarea) { fail('Import JSON textarea nemá stabilní výšku.'); settingsOk = false; }
     if (!settingsValue.verifiedBackupLabel) { fail('Nastavení Data nevysvětluje ověřenou zálohu.'); settingsOk = false; }
     if (!settingsValue.integrity?.valid || !/^[0-9a-f]{8}$/.test(settingsValue.integrity?.checksum || '')) { fail('Kontrolní součet exportu není stabilní.'); settingsOk = false; }
+    if (!settingsValue.dataAuditCard || !Number.isFinite(settingsValue.dataAudit?.records) || !/^[0-9a-f]{8}$/.test(settingsValue.dataAudit?.checksum || '')) { fail('Nastavení Data nemá funkční kontrolu integrity záznamů.'); settingsOk = false; }
     const damagedImportCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       awaitPromise: true,
@@ -1717,6 +1720,21 @@ async function run() {
     const unifiedCloudValue = unifiedCloudCheck.result?.value || {};
     if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0 || unifiedCloudValue.retry !== 0 || !/změn[a-y ]*ček/i.test(unifiedCloudValue.text)) fail('Cloud nastavení nemá jediný automatický stav bez nadbytečné ruční akce.');
     else ok('Cloud: běžný stav i čekající změny jsou sjednocené bez ručních synchronizačních tlačítek.');
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const syncRecoveryCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        panel: document.querySelectorAll('[data-cloud-recovery-panel].has-error').length,
+        retry: document.querySelectorAll('[data-action="cloud-retry-now"]').length,
+        attempts: /3 pokusy/i.test(document.querySelector('[data-cloud-recovery-panel]')?.innerText || ''),
+        error: /E2E kontrolní chyba/i.test(document.querySelector('[data-cloud-recovery-panel]')?.innerText || '')
+      }))()`
+    });
+    const syncRecoveryValue = syncRecoveryCheck.result?.value || {};
+    if (syncRecoveryValue.panel !== 1 || syncRecoveryValue.retry !== 1 || !syncRecoveryValue.attempts || !syncRecoveryValue.error) fail('Cloud obnova neukazuje chybnou operaci ani možnost okamžitého opakování.');
+    else ok('Cloud: chybná operace je dohledatelná a lze ji okamžitě zopakovat.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_HOUSEHOLD_CONFLICT__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
