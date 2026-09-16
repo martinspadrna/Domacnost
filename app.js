@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_510';
-  const APP_BUILD = 510;
+  const APP_VERSION = 'Domácnost+ v.0.1_511';
+  const APP_BUILD = 511;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -519,6 +519,7 @@
   const FILE_STORE_LOYALTY_PHOTOS = 'loyaltyPhotos';
   const APP_STATE_IDB_KEY = 'primary';
   const PRE_IMPORT_STATE_IDB_KEY = 'pre-import';
+  const PRE_REPAIR_STATE_IDB_KEY = 'pre-repair';
   const WARRANTY_FILE_MAX_BYTES = 15 * 1024 * 1024;
   const WARRANTY_IMAGE_MAX_DIMENSION = 1800;
   const WARRANTY_IMAGE_JPEG_QUALITY = 0.82;
@@ -1310,7 +1311,9 @@
   let shoppingCloudRefreshInFlight = false;
   let shoppingLastAutoRefreshAt = 0;
   let preImportBackupAvailable = false;
+  let preRepairBackupAvailable = false;
   let dataIntegrityAuditCache = { revision: -1, result: null };
+  let dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
   let toastTimer = null;
   let undoToastTimer = null;
@@ -13612,80 +13615,302 @@
     return { nav, tab };
   }
 
+  function stableDataRepairValue(value, omittedKeys = new Set()) {
+    if (Array.isArray(value)) return value.map((item) => stableDataRepairValue(item, omittedKeys));
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value).sort().reduce((result, key) => {
+      if (!omittedKeys.has(key)) result[key] = stableDataRepairValue(value[key], omittedKeys);
+      return result;
+    }, {});
+  }
+
+  function dataRepairSignature(record, omittedKeys = []) {
+    return JSON.stringify(stableDataRepairValue(record, new Set(omittedKeys)));
+  }
+
+  function dataRepairIssueId(collection, kind, action, detail) {
+    return `repair-${stateIntegrityChecksum({ collection, kind, action: action || null, detail })}`;
+  }
+
+  function dataRepairReferenceTargets() {
+    return {
+      vehicles: [{ collection: 'fuel', field: 'vehicleId' }, { collection: 'services', field: 'vehicleId' }],
+      readingMeters: [{ collection: 'readings', field: 'meterId' }],
+      contracts: [{ collection: 'contractFiles', field: 'contractId' }],
+      warranties: [{ collection: 'warrantyFiles', field: 'warrantyId' }],
+      shoppingLists: [{ collection: 'shopping', field: 'listId' }],
+      subscriptions: [{ collection: 'subscriptionPayments', field: 'subscriptionId' }],
+      subscriptionPeople: [{ collection: 'subscriptionPayments', field: 'personId' }]
+    };
+  }
+
   function buildDataIntegrityAudit() {
     if (dataIntegrityAuditCache.revision === globalSearchIndexRevision && dataIntegrityAuditCache.result) return dataIntegrityAuditCache.result;
     const issues = [];
     let records = 0;
-    const addIssue = (collection, title, detail) => issues.push({ collection, title, detail, ...dataIntegrityTarget(collection) });
+    const addIssue = (collection, title, detail, options = {}) => {
+      const action = options.action || null;
+      const kind = options.kind || 'manual';
+      issues.push({
+        id: dataRepairIssueId(collection, kind, action, detail), collection, title, detail, kind,
+        repairable: Boolean(action), repairLabel: normalizeText(options.repairLabel), action, ...dataIntegrityTarget(collection)
+      });
+    };
     const collections = getCollectionNames().map((collection) => [collection, Array.isArray(state[collection]) ? state[collection] : []]);
     collections.push(['pools', Array.isArray(state.pools) ? state.pools : []]);
     collections.forEach(([collection, rows]) => {
       records += rows.length;
       ['id', 'cloudId'].forEach((field) => {
-        const seen = new Map();
-        rows.forEach((row) => {
+        const groups = new Map();
+        rows.forEach((row, index) => {
           const value = normalizeText(row?.[field]);
           if (!value) return;
-          if (seen.has(value)) {
-            addIssue(collection, `Duplicitní ${field === 'cloudId' ? 'cloudový' : 'lokální'} záznam`, `${TRASH_COLLECTION_LABELS[collection] || collection}: ${value.slice(0, 12)}…`);
-          } else {
-            seen.set(value, row);
-          }
+          if (!groups.has(value)) groups.set(value, []);
+          groups.get(value).push({ row, index });
+        });
+        groups.forEach((group, value) => {
+          if (group.length < 2) return;
+          if (field === 'cloudId' && new Set(group.map(({ row }) => normalizeText(row?.id))).size < 2) return;
+          const omitted = field === 'cloudId' ? ['id'] : [];
+          const signatures = group.map(({ row }) => dataRepairSignature(row, omitted));
+          const exact = signatures.every((signature) => signature === signatures[0]);
+          const label = TRASH_COLLECTION_LABELS[collection] || collection;
+          const detail = `${label}: ${value.slice(0, 12)}… · ${group.length}×`;
+          const action = exact ? {
+            type: 'deduplicate', collection, field, value, keepLocalId: normalizeText(group[0].row?.id), removeCount: group.length - 1
+          } : null;
+          addIssue(collection, `Duplicitní ${field === 'cloudId' ? 'cloudový' : 'lokální'} záznam`, detail, {
+            kind: field === 'cloudId' ? 'duplicate-cloud-id' : 'duplicate-local-id', action,
+            repairLabel: action ? `Ponechat jednu shodnou kopii a odstranit ${group.length - 1} navíc` : 'Kopie se liší a musí se porovnat ručně'
+          });
         });
       });
     });
 
     const ids = (collection) => new Set((state[collection] || []).map((item) => String(item?.id || '')).filter(Boolean));
-    const checkReference = (collection, field, validIds, label) => {
-      (state[collection] || []).forEach((row) => {
+    const checkReference = (collection, field, parentCollection, label) => {
+      const parents = (state[parentCollection] || []).filter((item) => item?.id);
+      const validIds = new Set(parents.map((item) => String(item.id)));
+      (state[collection] || []).forEach((row, index) => {
         const value = String(row?.[field] || '');
-        if (value && !validIds.has(value)) addIssue(collection, 'Chybějící návaznost', `${label}: ${value.slice(0, 12)}…`);
+        if (!value || validIds.has(value)) return;
+        const target = parents.length === 1 ? parents[0] : null;
+        addIssue(collection, 'Chybějící návaznost', `${label}: ${value.slice(0, 12)}…`, {
+          kind: 'orphan-reference',
+          action: target ? { type: 'reattach-reference', collection, index, recordId: normalizeText(row.id), field, expectedValue: value, targetId: String(target.id) } : null,
+          repairLabel: target ? `Přiřadit k „${trashRecordTitle(parentCollection, target)}“` : parents.length ? 'Je potřeba vybrat správnou cílovou položku' : 'Nejdřív je potřeba vytvořit cílovou položku'
+        });
       });
     };
-    const vehicleIds = ids('vehicles');
-    checkReference('fuel', 'vehicleId', vehicleIds, 'Tankování bez existujícího auta');
-    checkReference('services', 'vehicleId', vehicleIds, 'Servis bez existujícího auta');
-    const meterIds = ids('readingMeters');
-    checkReference('readings', 'meterId', meterIds, 'Odečet bez existujícího měřidla');
-    const contractIds = ids('contracts');
-    checkReference('contractFiles', 'contractId', contractIds, 'Příloha bez existující smlouvy');
-    const warrantyIds = ids('warranties');
-    checkReference('warrantyFiles', 'warrantyId', warrantyIds, 'Příloha bez existující záruky');
-    const listIds = ids('shoppingLists');
-    checkReference('shopping', 'listId', listIds, 'Položka bez existujícího seznamu');
-    const subscriptionIds = ids('subscriptions');
+    checkReference('fuel', 'vehicleId', 'vehicles', 'Tankování bez existujícího auta');
+    checkReference('services', 'vehicleId', 'vehicles', 'Servis bez existujícího auta');
+    checkReference('readings', 'meterId', 'readingMeters', 'Odečet bez existujícího měřidla');
+    checkReference('contractFiles', 'contractId', 'contracts', 'Příloha bez existující smlouvy');
+    checkReference('warrantyFiles', 'warrantyId', 'warranties', 'Příloha bez existující záruky');
+    checkReference('shopping', 'listId', 'shoppingLists', 'Položka bez existujícího seznamu');
+    checkReference('subscriptionPayments', 'subscriptionId', 'subscriptions', 'Platba bez existující služby');
+    checkReference('subscriptionPayments', 'personId', 'subscriptionPeople', 'Platba bez existující osoby');
     const personIds = ids('subscriptionPeople');
-    checkReference('subscriptionPayments', 'subscriptionId', subscriptionIds, 'Platba bez existující služby');
-    checkReference('subscriptionPayments', 'personId', personIds, 'Platba bez existující osoby');
-    (state.subscriptions || []).forEach((service) => {
-      (service.shares || []).forEach((share) => {
+    const people = (state.subscriptionPeople || []).filter((item) => item?.id);
+    (state.subscriptions || []).forEach((service, serviceIndex) => {
+      (service.shares || []).forEach((share, shareIndex) => {
         records += 1;
-        if (share.personId && !personIds.has(String(share.personId))) addIssue('subscriptions', 'Chybějící návaznost', 'Sdílení předplatného odkazuje na neexistující osobu');
+        if (share.personId && !personIds.has(String(share.personId))) {
+          const target = people.length === 1 ? people[0] : null;
+          addIssue('subscriptions', 'Chybějící návaznost', 'Sdílení předplatného odkazuje na neexistující osobu', {
+            kind: 'orphan-subscription-share',
+            action: target ? { type: 'reattach-subscription-share', serviceIndex, shareIndex, expectedValue: String(share.personId), targetId: String(target.id) } : null,
+            repairLabel: target ? `Přiřadit k „${trashRecordTitle('subscriptionPeople', target)}“` : people.length ? 'Je potřeba vybrat správnou osobu' : 'Nejdřív je potřeba přidat osobu'
+          });
+        }
       });
     });
     (state.pools || []).forEach((pool) => { records += Array.isArray(pool.measurements) ? pool.measurements.length : 0; });
+
+    if ((state.shoppingLists || []).length && !ids('shoppingLists').has(String(state.activeShoppingListId || ''))) {
+      const target = state.shoppingLists[0];
+      addIssue('shoppingLists', 'Neplatný aktivní seznam', 'Otevřený nákupní seznam už neexistuje', {
+        kind: 'invalid-active-list', action: { type: 'set-active-pointer', field: 'activeShoppingListId', targetId: String(target.id) },
+        repairLabel: `Nastavit „${trashRecordTitle('shoppingLists', target)}“ jako aktivní`
+      });
+    }
+    const profileIds = new Set((state.profiles || []).map((item) => String(item?.id || '')).filter(Boolean));
+    if ((state.profiles || []).length && !profileIds.has(String(state.activeProfileId || ''))) {
+      const target = state.profiles[0];
+      addIssue('profiles', 'Neplatný aktivní profil', 'Vybraný profil už neexistuje', {
+        kind: 'invalid-active-profile', action: { type: 'set-active-pointer', field: 'activeProfileId', targetId: String(target.id) },
+        repairLabel: `Nastavit „${normalizeText(target.name) || 'první profil'}“ jako aktivní`
+      });
+    }
 
     const snapshot = createPersistedStateSnapshot(state);
     const result = {
       checkedAt: new Date().toISOString(),
       records,
-      issues: issues.slice(0, 50),
+      issues,
       issueCount: issues.length,
+      repairableCount: issues.filter((issue) => issue.repairable).length,
+      manualCount: issues.filter((issue) => !issue.repairable).length,
       checksum: stateIntegrityChecksum(snapshot)
     };
     dataIntegrityAuditCache = { revision: globalSearchIndexRevision, result };
     return result;
   }
 
+  function syncDataRepairSelection(audit) {
+    const validIds = new Set(audit.issues.filter((issue) => issue.repairable).map((issue) => issue.id));
+    if (dataRepairUi.checksum !== audit.checksum) {
+      dataRepairUi = { checksum: audit.checksum, selectedIssueIds: new Set(validIds), preview: null, lastResult: dataRepairUi.lastResult || null };
+      return;
+    }
+    dataRepairUi.selectedIssueIds = new Set([...dataRepairUi.selectedIssueIds].filter((id) => validIds.has(id)));
+    if (dataRepairUi.preview?.checksum !== audit.checksum) dataRepairUi.preview = null;
+  }
+
+  function buildDataRepairPlan(selectedIssueIds = dataRepairUi.selectedIssueIds) {
+    const audit = buildDataIntegrityAudit();
+    const selected = selectedIssueIds instanceof Set ? selectedIssueIds : new Set(selectedIssueIds || []);
+    const issues = audit.issues.filter((issue) => issue.repairable && selected.has(issue.id));
+    return {
+      checksum: audit.checksum,
+      createdAt: new Date().toISOString(),
+      issueIds: issues.map((issue) => issue.id),
+      actions: issues.map((issue) => structuredCloneSafe(issue.action)),
+      steps: issues.map((issue) => issue.repairLabel || issue.title),
+      changedRecords: issues.reduce((sum, issue) => sum + Math.max(1, Number(issue.action?.removeCount || 1)), 0),
+      manualCount: audit.manualCount
+    };
+  }
+
+  function markDataRepairRecordPending(record) {
+    if (!record || typeof record !== 'object') return;
+    record.updatedAt = new Date().toISOString();
+    if (record.cloudId || 'syncStatus' in record) record.syncStatus = 'pending';
+  }
+
+  function redirectDataRepairReferences(parentCollection, oldId, newId, changedCollections) {
+    if (!oldId || !newId || oldId === newId) return;
+    (dataRepairReferenceTargets()[parentCollection] || []).forEach(({ collection, field }) => {
+      (state[collection] || []).forEach((row) => {
+        if (String(row?.[field] || '') !== String(oldId)) return;
+        row[field] = newId;
+        markDataRepairRecordPending(row);
+        changedCollections.add(collection);
+      });
+    });
+    if (parentCollection === 'subscriptionPeople') {
+      (state.subscriptions || []).forEach((service) => {
+        let changed = false;
+        (service.shares || []).forEach((share) => {
+          if (String(share?.personId || '') !== String(oldId)) return;
+          share.personId = newId;
+          changed = true;
+        });
+        if (changed) {
+          markDataRepairRecordPending(service);
+          changedCollections.add('subscriptions');
+        }
+      });
+    }
+  }
+
+  function applyDataRepairAction(action, changedCollections) {
+    if (!action || typeof action !== 'object') return 0;
+    if (action.type === 'deduplicate') {
+      const rows = Array.isArray(state[action.collection]) ? state[action.collection] : [];
+      const matches = rows.map((row, index) => ({ row, index })).filter(({ row }) => normalizeText(row?.[action.field]) === action.value);
+      if (matches.length < 2) return 0;
+      const keeper = action.field === 'cloudId'
+        ? matches.find(({ row }) => normalizeText(row?.id) === action.keepLocalId) || matches[0]
+        : matches[0];
+      const removedIndexes = new Set(matches.filter((entry) => entry.index !== keeper.index).map((entry) => entry.index));
+      matches.filter((entry) => removedIndexes.has(entry.index)).forEach(({ row }) => {
+        redirectDataRepairReferences(action.collection, normalizeText(row?.id), normalizeText(keeper.row?.id), changedCollections);
+      });
+      state[action.collection] = rows.filter((row, index) => !removedIndexes.has(index));
+      changedCollections.add(action.collection);
+      return removedIndexes.size;
+    }
+    if (action.type === 'reattach-reference') {
+      const row = state[action.collection]?.[action.index];
+      if (!row || String(row[action.field] || '') !== String(action.expectedValue || '')) return 0;
+      row[action.field] = action.targetId;
+      markDataRepairRecordPending(row);
+      changedCollections.add(action.collection);
+      return 1;
+    }
+    if (action.type === 'reattach-subscription-share') {
+      const service = state.subscriptions?.[action.serviceIndex];
+      const share = service?.shares?.[action.shareIndex];
+      if (!share || String(share.personId || '') !== String(action.expectedValue || '')) return 0;
+      share.personId = action.targetId;
+      markDataRepairRecordPending(service);
+      changedCollections.add('subscriptions');
+      return 1;
+    }
+    if (action.type === 'set-active-pointer' && ['activeShoppingListId', 'activeProfileId'].includes(action.field)) {
+      state[action.field] = action.targetId;
+      changedCollections.add(action.field === 'activeShoppingListId' ? 'shoppingLists' : 'profiles');
+      return 1;
+    }
+    return 0;
+  }
+
+  async function applyDataRepairPlan(options = {}) {
+    const plan = dataRepairUi.preview || buildDataRepairPlan();
+    if (!plan.actions.length) {
+      showToast('Nejdřív vyber bezpečnou opravu');
+      return false;
+    }
+    const currentAudit = buildDataIntegrityAudit();
+    if (plan.checksum !== currentAudit.checksum) {
+      dataRepairUi.preview = null;
+      showToast('Data se mezitím změnila. Zkontroluj nový návrh.', { force: true });
+      render();
+      return false;
+    }
+    if (!options.skipConfirm && !window.confirm(`Provést ${plan.actions.length} vybraných oprav?\n\nPřed změnou se automaticky uloží bod návratu. Cloudová data jiné domácnosti se nemění.`)) return false;
+    try {
+      await putStoredAppStateRecord(PRE_REPAIR_STATE_IDB_KEY, JSON.stringify(createPersistedStateSnapshot(state)));
+      preRepairBackupAvailable = true;
+    } catch (error) {
+      console.warn('Pre-repair backup failed', error);
+      showToast('Oprava zastavena: nepodařilo se vytvořit bod návratu', { force: true });
+      return false;
+    }
+    const changedCollections = new Set();
+    let changedRecords = 0;
+    plan.actions.forEach((action) => { changedRecords += applyDataRepairAction(action, changedCollections); });
+    if (!changedRecords) {
+      showToast('Nebyla potřeba žádná změna');
+      return false;
+    }
+    markRestoredCollectionsPending([...changedCollections]);
+    touchState();
+    saveState({ immediate: true, skipTrashTracking: true });
+    dataIntegrityAuditCache = { revision: -1, result: null };
+    dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: { changedRecords, finishedAt: new Date().toISOString() } };
+    render();
+    showToast(`Bezpečně opraveno ${changedRecords} záznamů`, { force: true });
+    scheduleCloudAutosync('data-repair', { force: true, delayMs: 500 });
+    return true;
+  }
+
   function renderDataIntegrityCard() {
     const audit = buildDataIntegrityAudit();
+    syncDataRepairSelection(audit);
     const ok = audit.issueCount === 0;
+    const selectedCount = dataRepairUi.selectedIssueIds.size;
+    const preview = dataRepairUi.preview?.checksum === audit.checksum ? dataRepairUi.preview : null;
+    const visibleIssues = audit.issues.slice(0, 50);
     return `
       <section class="card desktop-span-2 compact-settings-card data-integrity-card" data-data-integrity-card>
-        <div class="card-header"><div><h2>Kontrola dat</h2><p>Hlídá duplicitní identifikátory a záznamy, kterým chybí navázaná položka. Kontrola nic nemaže ani neupravuje.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
+        <div class="card-header"><div><h2>Kontrola a oprava dat</h2><p>Najde duplicity a chybějící vazby. Bezpečné opravy vždy nejdřív ukáže v náhledu a před změnou vytvoří bod návratu.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
         <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Zkontrolováno</span><strong>${audit.records}</strong></div><div class="mini-stat"><span>Otisk dat</span><strong>${escapeHtml(audit.checksum)}</strong></div><div class="mini-stat"><span>Čas kontroly</span><strong>${escapeHtml(formatDateTime(audit.checkedAt))}</strong></div></div>
-        ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-integrity-issues">${audit.issues.map((issue) => `<button type="button" class="data-integrity-issue" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em></div></button>`).join('')}</div>`}
-        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button></div>
+        ${dataRepairUi.lastResult ? `<div class="inline-note success-note">Poslední oprava změnila ${dataRepairUi.lastResult.changedRecords} záznamů. Bod návratu zůstal uložený.</div>` : ''}
+        ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-repair-summary"><span class="badge good">${audit.repairableCount} bezpečně opravitelných</span>${audit.manualCount ? `<span class="badge warn">${audit.manualCount} k ruční kontrole</span>` : ''}</div><div class="data-integrity-issues">${visibleIssues.map((issue) => issue.repairable ? `<div class="data-integrity-issue repairable ${dataRepairUi.selectedIssueIds.has(issue.id) ? 'selected' : ''}"><button type="button" class="data-repair-select" data-action="toggle-data-repair-issue" data-id="${escapeHtml(issue.id)}" aria-pressed="${dataRepairUi.selectedIssueIds.has(issue.id) ? 'true' : 'false'}"><span aria-hidden="true">${dataRepairUi.selectedIssueIds.has(issue.id) ? '✓' : '+'}</span><span><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></span></button><button class="mini-ghost" type="button" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}">Otevřít</button></div>` : `<button type="button" class="data-integrity-issue manual" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></div><span class="badge warn">ručně</span></button>`).join('')}</div>${audit.issueCount > visibleIssues.length ? `<div class="inline-note">Zobrazeno prvních ${visibleIssues.length} problémů. Po jejich opravě spusť kontrolu znovu.</div>` : ''}`}
+        ${preview ? `<div class="data-repair-preview" data-data-repair-preview><div><strong>Náhled vybraných změn</strong><span>${preview.actions.length} oprav · přibližně ${preview.changedRecords} záznamů</span></div><ol>${preview.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>${preview.manualCount ? `<div class="inline-note">${preview.manualCount} nejasných problémů zůstane beze změny k ruční kontrole.</div>` : ''}<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="apply-data-repair">Potvrdit a opravit</button><button class="ghost-btn" type="button" data-action="cancel-data-repair-preview">Zpět k výběru</button></div></div>` : ''}
+        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button>${audit.repairableCount ? `<button class="ghost-btn" type="button" data-action="select-safe-data-repairs">Vybrat bezpečné</button><button class="primary-btn" type="button" data-action="preview-data-repair" ${selectedCount ? '' : 'disabled'}>Náhled oprav (${selectedCount})</button>` : ''}${preRepairBackupAvailable ? '<button class="ghost-btn" type="button" data-action="restore-pre-repair">Vrátit poslední opravu</button>' : ''}</div>
       </section>`;
   }
 
@@ -19664,10 +19889,47 @@
       restorePreImportBackup();
       return;
     }
+    if (action === 'restore-pre-repair') {
+      restorePreRepairBackup();
+      return;
+    }
     if (action === 'run-data-integrity-audit') {
       dataIntegrityAuditCache = { revision: -1, result: null };
+      dataRepairUi.preview = null;
       render();
       showToast(buildDataIntegrityAudit().issueCount ? 'Kontrola dat našla položky k prověření' : 'Kontrola dat je v pořádku');
+      return;
+    }
+    if (action === 'toggle-data-repair-issue') {
+      const id = normalizeText(button.dataset.id);
+      const audit = buildDataIntegrityAudit();
+      if (!audit.issues.some((issue) => issue.id === id && issue.repairable)) return;
+      if (dataRepairUi.selectedIssueIds.has(id)) dataRepairUi.selectedIssueIds.delete(id);
+      else dataRepairUi.selectedIssueIds.add(id);
+      dataRepairUi.preview = null;
+      render();
+      return;
+    }
+    if (action === 'select-safe-data-repairs') {
+      const audit = buildDataIntegrityAudit();
+      dataRepairUi.selectedIssueIds = new Set(audit.issues.filter((issue) => issue.repairable).map((issue) => issue.id));
+      dataRepairUi.preview = null;
+      render();
+      return;
+    }
+    if (action === 'preview-data-repair') {
+      dataRepairUi.preview = buildDataRepairPlan();
+      if (!dataRepairUi.preview.actions.length) return showToast('Vyber aspoň jednu bezpečnou opravu');
+      render();
+      return;
+    }
+    if (action === 'cancel-data-repair-preview') {
+      dataRepairUi.preview = null;
+      render();
+      return;
+    }
+    if (action === 'apply-data-repair') {
+      applyDataRepairPlan();
       return;
     }
     if (action === 'restore-trash') {
@@ -21457,6 +21719,20 @@
     return available;
   }
 
+  async function refreshPreRepairBackupAvailability(renderIfChanged = false) {
+    let available = false;
+    try {
+      const record = await getStoredAppStateRecord(PRE_REPAIR_STATE_IDB_KEY);
+      available = Boolean(record?.json);
+    } catch (error) {
+      console.warn('Pre-repair backup check failed', error);
+    }
+    const changed = preRepairBackupAvailable !== available;
+    preRepairBackupAvailable = available;
+    if (changed && renderIfChanged && activeModule === 'settings' && getModuleTab('settings', 'household') === 'data') requestBackgroundRender();
+    return available;
+  }
+
   async function importData(json) {
     const parsed = safeParse(json, null);
     if (!parsed || !parsed.state || typeof parsed.state !== 'object' || Array.isArray(parsed.state)) {
@@ -21507,6 +21783,26 @@
       preImportBackupAvailable = false;
       render();
       showToast('Bod návratu se nepodařilo obnovit', { force: true });
+      return false;
+    }
+  }
+
+  async function restorePreRepairBackup(options = {}) {
+    if (!options.skipConfirm && !window.confirm('Vrátit stav, který byl v tomto zařízení těsně před poslední automatickou opravou dat?')) return false;
+    try {
+      const record = await getStoredAppStateRecord(PRE_REPAIR_STATE_IDB_KEY);
+      const snapshot = safeParse(record?.json || '', null);
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Bod návratu není dostupný');
+      applyImportedStateSnapshot(snapshot);
+      dataIntegrityAuditCache = { revision: -1, result: null };
+      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
+      showToast('Stav před poslední opravou byl obnoven', { force: true });
+      return true;
+    } catch (error) {
+      console.warn('Pre-repair restore failed', error);
+      preRepairBackupAvailable = false;
+      render();
+      showToast('Bod návratu opravy se nepodařilo obnovit', { force: true });
       return false;
     }
   }
@@ -22306,6 +22602,39 @@
     };
     window.__DOMACNOST_E2E_IMPORT_DATA__ = (json) => importData(json);
     window.__DOMACNOST_E2E_DATA_INTEGRITY__ = () => buildDataIntegrityAudit();
+    window.__DOMACNOST_E2E_PREPARE_DATA_REPAIR__ = () => {
+      const list = (state.shoppingLists || [])[0];
+      const duplicate = {
+        id: 'shopping-repair-duplicate-e2e', householdId: currentHouseholdId(), profileId: currentProfileId(),
+        listId: list?.id || '', cloudId: '', name: 'E2E duplicitní položka', quantity: 1, unit: 'ks', note: '', done: false,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
+      };
+      state.shopping = [...(state.shopping || []).filter((item) => item.id !== duplicate.id), duplicate, structuredCloneSafe(duplicate)];
+      touchState();
+      dataIntegrityAuditCache = { revision: -1, result: null };
+      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'data' };
+      render();
+      return buildDataIntegrityAudit();
+    };
+    window.__DOMACNOST_E2E_DATA_REPAIR_PLAN__ = () => {
+      const audit = buildDataIntegrityAudit();
+      const issue = audit.issues.find((item) => item.repairable && item.action?.value === 'shopping-repair-duplicate-e2e');
+      dataRepairUi.selectedIssueIds = new Set(issue ? [issue.id] : []);
+      dataRepairUi.preview = buildDataRepairPlan(dataRepairUi.selectedIssueIds);
+      render();
+      return dataRepairUi.preview;
+    };
+    window.__DOMACNOST_E2E_APPLY_DATA_REPAIR__ = async () => {
+      const applied = await applyDataRepairPlan({ skipConfirm: true });
+      const audit = buildDataIntegrityAudit();
+      return {
+        applied, remainingDuplicates: audit.issues.filter((item) => item.action?.value === 'shopping-repair-duplicate-e2e').length,
+        matchingRows: (state.shopping || []).filter((item) => item.id === 'shopping-repair-duplicate-e2e').length,
+        backupAvailable: preRepairBackupAvailable, result: dataRepairUi.lastResult
+      };
+    };
     window.__DOMACNOST_E2E_PWA_UPDATE__ = {
       markReady: () => {
         const worker = {
@@ -22356,6 +22685,7 @@
     .catch((error) => console.warn('IndexedDB hydrate failed', error))
     .finally(() => scheduleLoyaltyPhotoOffload());
   refreshPreImportBackupAvailability(true).catch((error) => console.warn('Pre-import backup availability failed', error));
+  refreshPreRepairBackupAvailability(true).catch((error) => console.warn('Pre-repair backup availability failed', error));
 
   } catch (error) {
     console.error('Domácnost+ boot failed', error);

@@ -1701,6 +1701,21 @@ async function run() {
     if (!settingsValue.verifiedBackupLabel) { fail('Nastavení Data nevysvětluje ověřenou zálohu.'); settingsOk = false; }
     if (!settingsValue.integrity?.valid || !/^[0-9a-f]{8}$/.test(settingsValue.integrity?.checksum || '')) { fail('Kontrolní součet exportu není stabilní.'); settingsOk = false; }
     if (!settingsValue.dataAuditCard || !Number.isFinite(settingsValue.dataAudit?.records) || !/^[0-9a-f]{8}$/.test(settingsValue.dataAudit?.checksum || '')) { fail('Nastavení Data nemá funkční kontrolu integrity záznamů.'); settingsOk = false; }
+    const dataRepairCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      awaitPromise: true,
+      expression: `(async () => {
+        const before = window.__DOMACNOST_E2E_PREPARE_DATA_REPAIR__?.();
+        const plan = window.__DOMACNOST_E2E_DATA_REPAIR_PLAN__?.();
+        const previewVisible = Boolean(document.querySelector('[data-data-repair-preview]'));
+        const result = await window.__DOMACNOST_E2E_APPLY_DATA_REPAIR__?.();
+        return { before, plan, previewVisible, result, restoreButton: Boolean(document.querySelector('[data-action="restore-pre-repair"]')) };
+      })()`
+    });
+    const dataRepairValue = dataRepairCheck.result?.value || {};
+    if (!dataRepairValue.before?.repairableCount || dataRepairValue.plan?.actions?.length !== 1 || !dataRepairValue.previewVisible) { fail('Průvodce opravou nevytvořil náhled bezpečné opravy.'); settingsOk = false; }
+    if (!dataRepairValue.result?.applied || dataRepairValue.result?.matchingRows !== 1 || dataRepairValue.result?.remainingDuplicates !== 0) { fail('Průvodce opravy neodstranil pouze nadbytečnou shodnou kopii.'); settingsOk = false; }
+    if (!dataRepairValue.result?.backupAvailable || !dataRepairValue.restoreButton || dataRepairValue.result?.result?.changedRecords !== 1) { fail('Průvodce opravy nevytvořil funkční bod návratu.'); settingsOk = false; }
     const damagedImportCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       awaitPromise: true,
@@ -1711,7 +1726,7 @@ async function run() {
     });
     const damagedImportValue = damagedImportCheck.result?.value || {};
     if (damagedImportValue.accepted !== false || !/poškozen/i.test(damagedImportValue.toast || '')) { fail('Poškozená záloha nebyla bezpečně odmítnuta.'); settingsOk = false; }
-    if (settingsOk) ok('Nastavení: karty, volby vzhledu a import dat renderují v novém povrchu.');
+    if (settingsOk) ok('Nastavení: zálohy, kontrola dat a bezpečný průvodce opravou fungují.');
 
     await page.send('Runtime.evaluate', {
       expression: `window.__DOMACNOST_E2E_NAV__('settings', 'notifications')`,

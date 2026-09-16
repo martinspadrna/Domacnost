@@ -16553,6 +16553,102 @@ button[data-busy-submit="true"]::before {
   .cloud-recovery-list { grid-template-columns: 1fr; }
   .cloud-recovery-error-row { grid-template-columns: 1fr; }
 }
+
+/* v511: průvodce bezpečnou opravou dat s náhledem a bodem návratu */
+.data-repair-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.data-integrity-issue.repairable {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 7px;
+}
+
+.data-repair-select {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.data-repair-select > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.data-integrity-issue.selected {
+  border-color: color-mix(in srgb, var(--good) 48%, var(--line));
+  background: color-mix(in srgb, var(--good) 7%, var(--card, transparent));
+}
+
+.data-integrity-issue.selected .data-repair-select > span:first-child {
+  border-color: color-mix(in srgb, var(--good) 62%, var(--line));
+  background: color-mix(in srgb, var(--good) 18%, transparent);
+  color: var(--good);
+}
+
+.data-repair-select > span:last-child,
+.data-integrity-issue.manual > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.data-integrity-issue small {
+  color: var(--good);
+  font-size: .7rem;
+  line-height: 1.35;
+}
+
+.data-integrity-issue.manual small { color: var(--warn); }
+.data-integrity-issue.manual { grid-template-columns: 26px minmax(0, 1fr) auto; }
+.data-integrity-issue.manual > .badge { width: auto; height: auto; padding: 4px 7px; border-radius: 999px; }
+
+.mini-ghost {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: .7rem;
+  font-weight: 800;
+}
+
+.data-repair-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--card, transparent));
+}
+
+.data-repair-preview > div:first-child { display: flex; justify-content: space-between; gap: 12px; }
+.data-repair-preview > div:first-child span { color: var(--muted); font-size: .76rem; }
+.data-repair-preview ol { display: grid; gap: 6px; margin: 0; padding-left: 22px; color: var(--muted); font-size: .78rem; }
+.data-repair-preview .compact-actions { margin: 0; }
+
+@media (max-width: 720px) {
+  .data-integrity-issue.repairable { grid-template-columns: 1fr; }
+  .data-integrity-issue.repairable .mini-ghost { width: 100%; }
+  .data-repair-preview > div:first-child { display: grid; }
+}
 /* v510: bezpečné řešení souběžných změn jednotlivých cloudových záznamů */
 .record-conflict-panel {
   display: grid;

@@ -224,8 +224,14 @@ if (app && styles) {
   expect(styles, '.record-conflict-panel {', 'styles.css: konflikty jednotlivých záznamů mají vlastní responzivní povrch.');
   expect(app, 'function buildDataIntegrityAudit()', 'app.js: Data obsahují kontrolu duplicit a chybějících vazeb.');
   expect(app, 'data-data-integrity-card', 'app.js: výsledek kontroly dat je viditelný v Nastavení > Data.');
+  expect(app, "const PRE_REPAIR_STATE_IDB_KEY = 'pre-repair'", 'app.js: automatická oprava má vlastní trvalý bod návratu.');
+  expect(app, 'function buildDataRepairPlan(', 'app.js: bezpečné opravy se nejdřív skládají do náhledu.');
+  expect(app, 'function applyDataRepairPlan(', 'app.js: vybraný plán oprav lze potvrzeně provést.');
+  expect(app, 'data-data-repair-preview', 'app.js: uživatel před potvrzením vidí přesný náhled oprav.');
+  expect(app, 'function restorePreRepairBackup(', 'app.js: poslední automatickou opravu lze vrátit.');
   expect(styles, '.cloud-recovery-panel {', 'styles.css: obnova synchronizace má vlastní responzivní povrch.');
   expect(styles, '.data-integrity-issue {', 'styles.css: nalezené datové problémy mají čitelné řádky.');
+  expect(styles, '.data-repair-preview {', 'styles.css: náhled oprav má vlastní čitelný povrch.');
 }
 
 if (app && index && styles && pwa) {
