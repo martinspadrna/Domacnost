@@ -1007,6 +1007,36 @@ async function run() {
       ok('Formuláře: rozepsané údaje přežijí přechod do jiného modulu i session uložení.');
     }
 
+    const safeUpdateCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const hook = window.__DOMACNOST_E2E_PWA_UPDATE__;
+        if (!hook) return { hook: false };
+        hook.markReady();
+        const protection = hook.protection();
+        const banner = document.querySelector('.pwa-update-banner');
+        const prepared = hook.prepare();
+        const result = {
+          hook: true,
+          banner: Boolean(banner),
+          button: Boolean(banner?.querySelector('[data-action="pwa-apply-update"]')),
+          safetyText: banner?.textContent?.includes('Rozepsané údaje') === true,
+          dirtyFormCount: Number(protection?.dirtyFormCount || 0),
+          safeToAutoReload: protection?.safeToAutoReload,
+          preparedDirtyCount: Number(prepared?.dirtyFormCount || 0),
+          draftStored: (sessionStorage.getItem('domacnostPlus.formDrafts.v1') || '').includes('Rozepsaný nákup E2E')
+        };
+        hook.reset();
+        return result;
+      })()`
+    });
+    const safeUpdateValue = safeUpdateCheck.result?.value || {};
+    if (!safeUpdateValue.hook || !safeUpdateValue.banner || !safeUpdateValue.button || !safeUpdateValue.safetyText || safeUpdateValue.dirtyFormCount < 1 || safeUpdateValue.safeToAutoReload !== false || safeUpdateValue.preparedDirtyCount < 1 || !safeUpdateValue.draftStored) {
+      fail(`PWA update neochránil rozepsaný formulář (${JSON.stringify(safeUpdateValue)}).`);
+    } else {
+      ok('PWA update: nová verze čeká na potvrzení a rozepsaný formulář se před přepnutím bezpečně uloží.');
+    }
+
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance', 'summary')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]')?.click()` });

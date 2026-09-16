@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-508`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-509`;
 const APP_ASSETS = [
   './',
   './index.html',
@@ -71,9 +71,10 @@ const RUNTIME_CACHE_PATHS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_ASSETS))
-      .then(() => self.skipWaiting())
+    // Nový build se nejdřív celý uloží do vlastní cache a potom zůstane
+    // ve waiting stavu. Běžící stránku tak nikdy nepřepne uprostřed psaní;
+    // aktivaci spustí až bezpečný update flow v pwa.js.
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_ASSETS))
   );
 });
 
@@ -139,7 +140,13 @@ self.addEventListener('fetch', (event) => {
   if (requestUrl.hostname === 'localhost' || requestUrl.hostname === '127.0.0.1') return;
 
   const isManifest = requestUrl.pathname.endsWith('/manifest.webmanifest');
+  const isReleaseMarker = requestUrl.pathname.endsWith('/release.json');
   const isInstallIcon = requestUrl.pathname.includes('/icons/') && /apple-touch-icon|favicon|domacnost-plus-icon|maskable/.test(requestUrl.pathname);
+
+  if (isReleaseMarker) {
+    event.respondWith(fetch(event.request, { cache: 'no-store' }));
+    return;
+  }
 
   if (isManifest || isInstallIcon) {
     event.respondWith(

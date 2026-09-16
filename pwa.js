@@ -17,17 +17,21 @@
     const getState = deps.getState || (() => ({}));
     const saveState = deps.saveState || (() => {});
     const render = deps.render || (() => {});
+    const renderUpdateUi = deps.renderUpdateUi || render;
     const showToast = deps.showToast || (() => {});
     const escapeHtml = deps.escapeHtml || ((v) => String(v ?? ''));
     const formatDateTime = deps.formatDateTime || ((v) => String(v || ''));
     const APP_VERSION = deps.APP_VERSION || 'Domácnost+';
     const APP_BUILD = deps.APP_BUILD || 0;
+    const getReloadProtectionStatus = deps.getReloadProtectionStatus || (() => ({ safeToAutoReload: true, dirtyFormCount: 0, busyFormCount: 0 }));
+    const prepareForReload = deps.prepareForReload || (() => ({ dirtyFormCount: 0, busyFormCount: 0 }));
 
     // Sladěno s boot fallbackem v index.html (key.indexOf('domacnost-plus-')
     // === 0) a s activate handlerem v sw.js (startsWith CACHE_PREFIX). Cizí
     // cache jiných PWA na stejném originu se nesmí mazat.
     const PWA_CACHE_PREFIX = 'domacnost-plus-';
     const PWA_EXPECTED_CACHE = `${PWA_CACHE_PREFIX}v0-1-${APP_BUILD}`;
+    const RELEASE_MARKER_URL = './release.json';
 
     let deferredInstallPrompt = null;
     let serviceWorkerRegistration = null;
@@ -35,7 +39,10 @@
     let pwaUpdateAvailable = false;
     let pwaControllerReloadTriggered = false;
     let userRequestedUpdate = false;
+    let reloadPreparedForUpdate = false;
     let lastAutoUpdateCheckAt = 0;
+    let latestReleaseBuild = APP_BUILD;
+    let releaseCheckInFlight = null;
     // Zachyceno co nejdřív po startu: vrácející se uživatel má aktivní SW z
     // minula, takže "controller" je nastavený hned (žádná změna, appka
     // je pořád ta samá běžící verze). Naproti tomu první instalace SW (po
@@ -63,6 +70,7 @@
         android,
         canPrompt: Boolean(deferredInstallPrompt),
         updateAvailable: Boolean(pwaUpdateAvailable),
+        latestReleaseBuild,
         fileMode: location.protocol === 'file:',
         manifestHref: manifestLink ? new URL(manifestLink.getAttribute('href'), location.href).href : '',
         appleIconCount: appleLinks.length,
@@ -114,6 +122,7 @@
       const swControlling = Boolean(navigator.serviceWorker?.controller);
       const pwaState = getState().pwa || {};
       const lastCheck = pwaState.lastUpdateCheck ? formatDateTime(pwaState.lastUpdateCheck) : 'zatím neprobíhla';
+      const lastReleaseCheck = pwaState.lastReleaseCheck ? formatDateTime(pwaState.lastReleaseCheck) : 'zatím neproběhla';
       const lastClear = pwaState.lastCacheClearAt ? formatDateTime(pwaState.lastCacheClearAt) : '';
       let statusTone = 'good';
       let statusLabel = 'aktuální';
@@ -146,6 +155,7 @@
             <div class="mini-stat"><span>Build</span><strong>${APP_BUILD}</strong></div>
             <div class="mini-stat"><span>Cache klíč</span><strong>${escapeHtml(PWA_EXPECTED_CACHE)}</strong></div>
             <div class="mini-stat"><span>Poslední kontrola</span><strong>${escapeHtml(lastCheck)}</strong></div>
+            <div class="mini-stat"><span>Kontrola vydání</span><strong>${escapeHtml(lastReleaseCheck)}</strong></div>
           </div>
           <div class="inline-note">${escapeHtml(statusNote)}${lastClear ? ` Cache naposled vyčištěná ${escapeHtml(lastClear)}.` : ''}</div>
           <div class="form-actions compact-actions">
@@ -344,18 +354,54 @@
       render();
     }
 
+    async function checkReleaseMarker() {
+      if (location.protocol === 'file:' || !navigator.onLine) return false;
+      if (releaseCheckInFlight) return releaseCheckInFlight;
+      releaseCheckInFlight = (async () => {
+        try {
+          const markerUrl = new URL(RELEASE_MARKER_URL, location.href);
+          markerUrl.searchParams.set('check', String(Date.now()));
+          const response = await fetch(markerUrl.href, { cache: 'no-store' });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const marker = await response.json();
+          const build = Math.max(0, Number(marker?.build || 0));
+          if (Number.isFinite(build)) latestReleaseBuild = Math.max(latestReleaseBuild, build);
+          const state = getState();
+          state.pwa = {
+            ...(state.pwa || {}),
+            lastReleaseCheck: new Date().toISOString(),
+            latestReleaseBuild
+          };
+          saveState();
+          return latestReleaseBuild > APP_BUILD;
+        } catch (error) {
+          console.warn('Kontrola vydání aplikace selhala', error);
+          return false;
+        } finally {
+          releaseCheckInFlight = null;
+        }
+      })();
+      return releaseCheckInFlight;
+    }
+
     async function checkForAppUpdate(showMessage = false) {
       if (!serviceWorkerRegistration) {
         if (showMessage) showToast('Service worker zatím není připravený');
         return;
       }
       try {
-        await serviceWorkerRegistration.update();
+        const [newerRelease] = await Promise.all([
+          checkReleaseMarker(),
+          serviceWorkerRegistration.update()
+        ]);
         const state = getState();
         state.pwa = { ...(state.pwa || {}), lastUpdateCheck: new Date().toISOString() };
         saveState();
-        if (showMessage) showToast(pwaUpdateAvailable ? 'Je dostupná nová verze' : 'Update zkontrolován');
-        render();
+        if (showMessage) showToast(pwaUpdateAvailable ? 'Je dostupná nová verze' : newerRelease ? 'Novou verzi právě připravuji' : 'Používáš aktuální verzi');
+        // Tichá síťová kontrola nesmí překreslit právě otevřený modul.
+        // Nově nainstalovaný worker si UI obnoví přes markUpdateAvailable();
+        // ruční kontrola v Nastavení naopak stavovou kartu překreslí hned.
+        if (showMessage) render();
       } catch {
         if (showMessage) showToast('Update se nepovedlo zkontrolovat');
       }
@@ -364,27 +410,57 @@
     function markUpdateAvailable(worker) {
       pendingServiceWorker = worker || pendingServiceWorker;
       pwaUpdateAvailable = true;
-      render();
+      renderUpdateUi();
       showToast('Je dostupná nová verze aplikace');
+      window.setTimeout(() => maybeApplyWaitingUpdateInBackground(), 800);
     }
 
-    function applyAppUpdate() {
+    function updateProtectionStatus() {
+      try {
+        const status = getReloadProtectionStatus() || {};
+        return {
+          dirtyFormCount: Math.max(0, Number(status.dirtyFormCount || 0)),
+          busyFormCount: Math.max(0, Number(status.busyFormCount || 0)),
+          safeToAutoReload: status.safeToAutoReload !== false
+        };
+      } catch {
+        return { dirtyFormCount: 0, busyFormCount: 0, safeToAutoReload: false };
+      }
+    }
+
+    function applyAppUpdate(options = {}) {
+      const automatic = options?.automatic === true;
+      const protection = updateProtectionStatus();
+      if (automatic && !protection.safeToAutoReload) return false;
+      const prepared = prepareForReload() || protection;
       // Explicitní tap uživatele na "Aktualizovat" - na rozdíl od tichého
       // controllerchange na pozadí je bezpečné (a chtěné) rovnou obnovit
       // stránku, i na iOS. Timeout je pojistka pro standalone iOS PWA, kde
       // controllerchange po skipWaiting někdy vůbec nedorazí.
-      userRequestedUpdate = true;
+      userRequestedUpdate = !automatic;
+      reloadPreparedForUpdate = true;
       if (pendingServiceWorker) {
         pendingServiceWorker.postMessage({ type: 'SKIP_WAITING' });
-        showToast('Aktualizuji aplikaci…');
+        if (!automatic) {
+          const draftCount = Math.max(0, Number(prepared?.dirtyFormCount || protection.dirtyFormCount || 0));
+          showToast(draftCount ? 'Rozepsané údaje jsou uložené, aktualizuji…' : 'Aktualizuji aplikaci…');
+        }
         window.setTimeout(() => {
           if (pwaControllerReloadTriggered) return;
           pwaControllerReloadTriggered = true;
           window.location.reload();
         }, 2500);
-        return;
+        return true;
       }
-      window.location.reload();
+      reloadPreparedForUpdate = false;
+      if (!automatic) showToast('Nová verze se ještě připravuje');
+      checkForAppUpdate(false);
+      return false;
+    }
+
+    function maybeApplyWaitingUpdateInBackground() {
+      if (!pwaUpdateAvailable || !pendingServiceWorker || !document.hidden) return false;
+      return applyAppUpdate({ automatic: true });
     }
 
     // Volané při návratu appky do popředí (tab/PWA zpátky viditelná, focus).
@@ -419,7 +495,8 @@
       });
 
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) maybeCheckForAppUpdateOnResume();
+        if (document.hidden) maybeApplyWaitingUpdateInBackground();
+        else maybeCheckForAppUpdateOnResume();
       });
       window.addEventListener('focus', maybeCheckForAppUpdateOnResume);
     }
@@ -437,6 +514,7 @@
               if (worker.state === 'installed' && navigator.serviceWorker.controller) markUpdateAvailable(worker);
             });
           });
+          checkForAppUpdate(false);
         }).catch(() => {});
       });
 
@@ -457,9 +535,9 @@
         // standalone PWA, proto tam jen ukážeme trvalý pruh k dotažení.
         // Když si to ale uživatel právě odklikl přes "Aktualizovat"
         // (userRequestedUpdate), je to jeho gesto - obnovit rovnou.
-        if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !userRequestedUpdate) {
+        if (!reloadPreparedForUpdate || (/iPhone|iPad|iPod/.test(navigator.userAgent) && !userRequestedUpdate && !document.hidden)) {
           pwaUpdateAvailable = true;
-          render();
+          renderUpdateUi();
           showToast('Nová verze k dispozici – klepni na Aktualizovat');
           return;
         }
@@ -483,7 +561,16 @@
       registerServiceWorker,
       // pro debug/introspection
       getPwaStatus,
-      isUpdateAvailable: () => pwaUpdateAvailable
+      isUpdateAvailable: () => pwaUpdateAvailable,
+      getUpdateProtectionStatus: updateProtectionStatus,
+      testMarkUpdateAvailable: (worker) => markUpdateAvailable(worker),
+      testResetUpdate: () => {
+        pendingServiceWorker = null;
+        pwaUpdateAvailable = false;
+        userRequestedUpdate = false;
+        reloadPreparedForUpdate = false;
+        renderUpdateUi();
+      }
     };
   }
 

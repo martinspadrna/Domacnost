@@ -23,6 +23,14 @@ const checks = [
       app.includes('flushSessionFormDrafts();')
   },
   {
+    name: 'PWA update flushes dirty forms and state before switching versions',
+    ok: app.includes('function getAppReloadProtectionStatus()') &&
+      app.includes('function prepareForAppReload()') &&
+      app.includes('allForms.filter(isSessionDraftForm).forEach(rememberSessionFormDraft);') &&
+      app.includes('getReloadProtectionStatus: getAppReloadProtectionStatus') &&
+      app.includes('prepareForReload: prepareForAppReload')
+  },
+  {
     name: 'form submit guard blocks duplicate saves and exposes an accessible busy state',
     ok: app.includes("if (!form || form.dataset.busy === 'true') return false;") &&
       app.includes("form.setAttribute('aria-busy', 'true');") &&

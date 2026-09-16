@@ -16,6 +16,7 @@ const indexPath = resolve(projectRoot, 'index.html');
 const swPath = resolve(projectRoot, 'sw.js');
 const pwaPath = resolve(projectRoot, 'pwa.js');
 const moduleLoaderPath = resolve(projectRoot, 'module-loader.js');
+const releaseMarkerPath = resolve(projectRoot, 'release.json');
 
 const errors = [];
 const notes = [];
@@ -46,6 +47,7 @@ const sw = readOrFail(swPath);
 const indexReferencesPwa = /<script\s+src="\.\/pwa\.js\?/.test(index);
 const pwa = indexReferencesPwa ? readOrFail(pwaPath) : '';
 const moduleLoader = readOrFail(moduleLoaderPath);
+const releaseMarkerSource = readOrFail(releaseMarkerPath);
 if (indexReferencesPwa && !existsSync(pwaPath)) {
   errors.push('index.html načítá ./pwa.js, ale soubor v repu chybí.');
 }
@@ -74,6 +76,19 @@ if (versionMatch && buildMatch) {
 
   const expectedQuery = `0-1-${buildNumber}`;
   const expectedCache = `domacnost-plus-v0-1-${buildNumber}`;
+
+  try {
+    const releaseMarker = JSON.parse(releaseMarkerSource);
+    if (String(releaseMarker.build) !== buildNumber) {
+      errors.push(`release.json build=${releaseMarker.build} neodpovídá APP_BUILD=${buildNumber}.`);
+    } else if (releaseMarker.version !== `Domácnost+ v.0.1_${buildNumber}`) {
+      errors.push(`release.json má nesprávný text verze: ${releaseMarker.version}.`);
+    } else {
+      notes.push(`release.json: síťový marker odpovídá buildu ${buildNumber}.`);
+    }
+  } catch (error) {
+    errors.push(`release.json není platný JSON: ${error.message}`);
+  }
 
   // index.html title <title>Domácnost+ v.0.1_<build></title>
   if (!index.includes(`Domácnost+ v.0.1_${buildNumber}`)) {

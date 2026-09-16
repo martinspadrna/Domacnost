@@ -751,6 +751,22 @@ button.kpi.kpi-clickable {
   padding: 6px 14px;
 }
 
+.pwa-update-banner > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pwa-update-banner > span small {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 650;
+}
+
+[data-theme="dark"] .pwa-update-banner > span small {
+  color: #fde68a;
+}
+
 .copy-toast {
   position: fixed;
   right: 16px;
@@ -1671,6 +1687,18 @@ button.kpi.kpi-clickable {
   .due-card {
     padding: 11px;
   }
+}
+
+/* v0.1_509: bezpečné a atomické aktualizace bez ztráty rozepsaných údajů */
+@media (max-width: 560px) {
+  .pwa-update-banner {
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    text-align: left;
+  }
+
+  .pwa-update-banner > span { flex: 1 1 auto; }
+  .pwa-update-banner .primary-btn { flex: 0 0 auto; }
 }
 
 /* v1.0 tabletový domácí dashboard */

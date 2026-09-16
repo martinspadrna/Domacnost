@@ -506,6 +506,12 @@ if (app && index && moduleLoader) {
   expect(app, 'data-preserve-scroll="module-main-${escapeHtml(active.id)}"', 'app.js: hlavní scroll má stabilní klíč oddělený pro každý modul.');
   expect(styles, '/* Domacnost+ v0.1_491 - spolehlivy svisly scroll Home ve vsech layoutech */', 'styles.css: existuje finální oprava svislého scrollu Domů.');
   expect(styles, '.home-redesign-shell.home-app-shell .app-desktop-row {\n  height: 100%;', 'styles.css: Home předává skutečnou výšku vnitřnímu scrollovacímu kontejneru.');
+  expect(app, 'window.__DOMACNOST_E2E_PWA_UPDATE__', 'app.js: bezpečný PWA update lze ověřit v reálném prohlížeči.');
+  expect(app, 'renderUpdateUi: renderOverlaysOnly', 'app.js: oznámení o nové verzi nepřekresluje rozepsaný modul.');
+  expect(pwa, "const RELEASE_MARKER_URL = './release.json';", 'pwa.js: novou verzi ověřuje nezávislý síťový marker.');
+  expect(pwa, 'maybeApplyWaitingUpdateInBackground()', 'pwa.js: čekající verze se bezpečně aktivuje na pozadí jen bez rozepsané práce.');
+  expect(sw, "const isReleaseMarker = requestUrl.pathname.endsWith('/release.json');", 'sw.js: release marker obchází PWA cache.');
+  expectAbsent(sw, '.then(() => self.skipWaiting())', 'sw.js: nový build nepřepíná běžící stránku uprostřed práce.');
 }
 
 if (app && finance && readings && garage && contracts && warranty && styles) {

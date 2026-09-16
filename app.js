@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_508';
-  const APP_BUILD = 508;
+  const APP_VERSION = 'Domácnost+ v.0.1_509';
+  const APP_BUILD = 509;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -3446,6 +3446,29 @@
     }
   }
 
+  function getAppReloadProtectionStatus() {
+    const allForms = Array.from(app?.querySelectorAll?.('form') || []);
+    const dirtyForms = allForms.filter((form) => isSessionDraftForm(form) && shouldPreserveForm(form));
+    const busyForms = allForms.filter((form) => form.dataset?.busy === 'true' || form.getAttribute?.('aria-busy') === 'true');
+    return {
+      dirtyFormCount: dirtyForms.length,
+      busyFormCount: busyForms.length,
+      safeToAutoReload: dirtyForms.length === 0 && busyForms.length === 0
+    };
+  }
+
+  function prepareForAppReload() {
+    const protection = getAppReloadProtectionStatus();
+    const allForms = Array.from(app?.querySelectorAll?.('form') || []);
+    allForms.filter(isSessionDraftForm).forEach(rememberSessionFormDraft);
+    persistActiveModuleSoon(activeModule);
+    persistModuleTabsSoon();
+    flushSessionFormDrafts();
+    flushDeferredUiStorage();
+    flushStatePersist();
+    return protection;
+  }
+
   function captureFormStabilitySnapshot() {
     if (!app) return null;
     // Jedno querySelectorAll('form') pro celou appku, sdílené jak pro filtr
@@ -4295,8 +4318,8 @@
   function renderPwaUpdateBanner() {
     if (!isPwaUpdateAvailable()) return '';
     return `
-      <div class="pwa-update-banner" role="status">
-        <span>Je dostupná nová verze aplikace</span>
+      <div class="pwa-update-banner" role="status" aria-live="polite">
+        <span><strong>Nová verze je připravená</strong><small>Rozepsané údaje před aktualizací bezpečně uložím.</small></span>
         <button class="primary-btn" type="button" data-action="pwa-apply-update">Aktualizovat</button>
       </div>
     `;
@@ -7839,11 +7862,14 @@
       getState: () => state,
       saveState,
       render,
+      renderUpdateUi: renderOverlaysOnly,
       showToast,
       escapeHtml,
       formatDateTime,
       APP_VERSION,
-      APP_BUILD
+      APP_BUILD,
+      getReloadProtectionStatus: getAppReloadProtectionStatus,
+      prepareForReload: prepareForAppReload
     });
     return pwaInstance;
   }
@@ -21952,6 +21978,17 @@
     };
     window.__DOMACNOST_E2E_IMPORT_DATA__ = (json) => importData(json);
     window.__DOMACNOST_E2E_DATA_INTEGRITY__ = () => buildDataIntegrityAudit();
+    window.__DOMACNOST_E2E_PWA_UPDATE__ = {
+      markReady: () => {
+        const worker = {
+          postMessage: (message) => { window.__DOMACNOST_E2E_PWA_MESSAGE__ = message; }
+        };
+        getPwaModule().testMarkUpdateAvailable(worker);
+      },
+      reset: () => getPwaModule().testResetUpdate(),
+      protection: () => getAppReloadProtectionStatus(),
+      prepare: () => prepareForAppReload()
+    };
     window.__DOMACNOST_E2E_SET_SYNC_FAILURE__ = () => {
       state.cloud = {
         ...(state.cloud || {}),
