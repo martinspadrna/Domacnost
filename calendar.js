@@ -43,6 +43,7 @@
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
     const cloudReady = deps.cloudReady || (() => false);
+    const registerCloudRecordConflict = deps.registerCloudRecordConflict || (() => null);
     const runWhenUiQuiet = deps.runWhenUiQuiet || ((cb) => setTimeout(cb, 0));
     const requestRender = deps.requestRender || render;
 
@@ -1100,23 +1101,52 @@
       if (sourceId === 'manual' || !sourceId || !getCalendarSource(sourceId)) {
         sourceId = await ensureManualCalendarSource();
       }
-      const { data, error } = await client.from('calendar_events').insert(cloudCalendarPayload(event, user.id, sourceId)).select('id,source_id').single();
+      const { data, error } = await client.from('calendar_events').insert(cloudCalendarPayload(event, user.id, sourceId)).select('id,source_id,updated_at').single();
       if (error) {
         showToast(error.message || 'Událost se nepovedlo uložit do cloudu');
         return null;
       }
       event.cloudId = data.id;
+      event.cloudUpdatedAt = data.updated_at || '';
       event.sourceId = data.source_id || sourceId || '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
-    async function cloudDeleteCalendarEvent(event) {
+    async function cloudCalendarRow(cloudId) {
+      const client = getSupabaseClient();
+      if (!client || !cloudId || !getState().cloud?.householdId) return null;
+      const { data, error } = await client
+        .from('calendar_events')
+        .select('id,source_id,title,description,location,starts_at,ends_at,all_day,event_type,provider_event_id,provider_status,created_at,updated_at')
+        .eq('id', cloudId)
+        .eq('household_id', getState().cloud.householdId)
+        .maybeSingle();
+      return error ? null : data;
+    }
+
+    async function cloudDeleteCalendarEvent(event, options = {}) {
       const client = getSupabaseClient();
       if (!client || !event?.cloudId || !getState().cloud?.householdId) return true;
-      const { error } = await client.from('calendar_events').delete().eq('id', event.cloudId).eq('household_id', getState().cloud.householdId);
+      const current = options.expectedRevision ? null : (!event.cloudUpdatedAt ? await cloudCalendarRow(event.cloudId) : null);
+      const expectedRevision = options.expectedRevision || event.cloudUpdatedAt || current?.updated_at || '';
+      let query = client.from('calendar_events').delete().eq('id', event.cloudId).eq('household_id', getState().cloud.householdId);
+      if (expectedRevision) query = query.eq('updated_at', expectedRevision);
+      const { data, error } = await query.select('id').maybeSingle();
       if (error) {
         showToast(error.message || 'Cloud událost se nepovedlo smazat');
+        return false;
+      }
+      if (!data) {
+        const remoteRow = await cloudCalendarRow(event.cloudId);
+        if (remoteRow && options.skipConflict !== true) {
+          registerCloudRecordConflict({
+            collection: 'calendar', table: 'calendar_events', cloudId: event.cloudId, localId: event.id,
+            operation: 'delete', label: event.title || 'Událost', expectedRevision,
+            remoteRevision: remoteRow.updated_at, localRecord: event, remoteRow
+          });
+          return 'conflict';
+        }
         return false;
       }
       getState().cloud.lastSyncAt = new Date().toISOString();
@@ -1132,7 +1162,7 @@
       await cloudLoadCalendarSources(false);
       const { data, error } = await client
         .from('calendar_events')
-        .select('id,source_id,title,description,location,starts_at,ends_at,all_day,event_type,provider_event_id,provider_status,created_at')
+        .select('id,source_id,title,description,location,starts_at,ends_at,all_day,event_type,provider_event_id,provider_status,created_at,updated_at')
         .eq('household_id', getState().cloud.householdId)
         .neq('status', 'cancelled')
         .order('starts_at', { ascending: true });
@@ -1156,6 +1186,8 @@
           householdId: currentHouseholdId(),
           profileId: currentProfileId(),
           createdAt: item.created_at || new Date().toISOString(),
+          updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+          cloudUpdatedAt: item.updated_at || '',
           title: item.title || 'Událost',
           date: start.date,
           time: item.all_day ? '' : start.time,
@@ -1166,13 +1198,49 @@
           note: item.description || ''
         };
       });
-      getState().calendar = [...cloudItems, ...localOnly];
+      const conflictingDeletes = new Set((getState().cloud?.recordConflicts || []).filter((entry) => entry.collection === 'calendar' && entry.operation === 'delete').map((entry) => entry.cloudId));
+      getState().calendar = [...cloudItems.filter((item) => !conflictingDeletes.has(item.cloudId)), ...localOnly];
       getState().calendarCloud = { ...(getState().calendarCloud || {}), loadedAt: new Date().toISOString(), sourcesLoadedAt: getState().calendarCloud?.sourcesLoadedAt || new Date().toISOString() };
       touchState();
       saveState();
       render();
       if (showMessage) showToast('Cloud kalendář načten');
       return true;
+    }
+
+    function applyCalendarCloudRow(remoteRow, localRecord = {}) {
+      if (!remoteRow?.id) return null;
+      const start = splitCalendarDateTime(remoteRow.starts_at, { allDay: remoteRow.all_day });
+      const end = splitCalendarDateTime(remoteRow.ends_at, { allDay: remoteRow.all_day });
+      const existing = (getState().calendar || []).find((entry) => entry.cloudId === remoteRow.id || entry.id === localRecord.id);
+      const mapped = {
+        ...localRecord,
+        ...(existing || {}),
+        id: existing?.id || localRecord.id || `event-cloud-${remoteRow.id}`,
+        cloudId: remoteRow.id, externalId: remoteRow.provider_event_id || '', sourceId: remoteRow.source_id || '',
+        householdId: currentHouseholdId(), profileId: currentProfileId(),
+        title: remoteRow.title || localRecord.title || 'Událost', date: start.date, time: remoteRow.all_day ? '' : start.time,
+        endDate: end.date && end.date !== start.date ? end.date : '', endTime: remoteRow.all_day ? '' : end.time || '',
+        type: normalizeCalendarType(remoteRow.event_type), location: remoteRow.location || '', note: remoteRow.description || '',
+        createdAt: remoteRow.created_at || localRecord.createdAt || new Date().toISOString(),
+        updatedAt: remoteRow.updated_at || '', cloudUpdatedAt: remoteRow.updated_at || ''
+      };
+      if (existing) Object.assign(existing, mapped);
+      else getState().calendar.push(mapped);
+      return mapped;
+    }
+
+    async function resolveCalendarRecordConflict(conflict, strategy) {
+      if (strategy === 'cloud') {
+        if (!conflict.remoteRow) return false;
+        applyCalendarCloudRow(conflict.remoteRow, conflict.localRecord || {});
+        return true;
+      }
+      const event = (getState().calendar || []).find((entry) => entry.id === conflict.localId || entry.cloudId === conflict.cloudId) || { ...(conflict.localRecord || {}) };
+      if (!event?.cloudId) return false;
+      const ok = await cloudDeleteCalendarEvent(event, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+      if (ok === true) getState().calendar = (getState().calendar || []).filter((entry) => entry.id !== event.id && entry.cloudId !== event.cloudId);
+      return ok === true;
     }
 
     async function cloudSyncCalendarById(id) {
@@ -1695,6 +1763,7 @@
       cloudSyncLocalCalendar,
       cloudSyncLocalCalendarSources,
       cloudSyncCalendarById,
+      resolveCalendarRecordConflict,
       // handlery
       addEventFromForm,
       deleteCalendarEvent,

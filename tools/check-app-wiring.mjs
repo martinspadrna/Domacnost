@@ -202,6 +202,13 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   expect(app, 'data-action="resolve-household-conflict-cloud"', 'app.js: konflikt nabízí zachování cloudové verze.');
   expect(app, 'data-action="resolve-household-conflict-local"', 'app.js: konflikt nabízí vědomé zachování tohoto zařízení.');
   expect(app, 'function renderCloudRecoveryPanel()', 'app.js: cloud má přehled čekajících a chybných operací.');
+  expect(app, 'function registerCloudRecordConflict(entry = {})', 'app.js: jednotlivé záznamy mají vlastní trvalou evidenci konfliktů.');
+  expect(app, "query = query.eq('updated_at', expectedRevision);", 'app.js: nákup se ukládá jen proti naposledy načtené cloudové verzi.');
+  expect(app, 'function renderCloudRecordConflicts()', 'app.js: rozdílné verze záznamů mají společný přehled a rozhodnutí.');
+  expect(finance, "query = query.eq('updated_at', expectedRevision);", 'finance.js: finanční pohyb používá kontrolu cloudové revize.');
+  expect(finance, 'resolveFinanceRecordConflict', 'finance.js: konflikt finančního pohybu umí použít cloud i toto zařízení.');
+  expect(calendar, "query = query.eq('updated_at', expectedRevision);", 'calendar.js: smazání události používá kontrolu cloudové revize.');
+  expect(calendar, 'resolveCalendarRecordConflict', 'calendar.js: konflikt smazané události umí použít cloud i toto zařízení.');
   expect(app, 'function maybeResumeDueCloudAutosync(source = \'watchdog\')', 'app.js: prošlý pokus synchronizace se po uspání automaticky obnoví.');
   expect(app, 'autosyncFailureCount: cloudAutosyncFailureCount', 'app.js: počet neúspěšných pokusů přežívá restart aplikace.');
   expect(app, 'data-action="cloud-retry-now"', 'app.js: problémovou synchronizaci lze zopakovat jedním tlačítkem.');
@@ -214,6 +221,7 @@ if (app && styles) {
   expect(app, 'await putStoredAppStateRecord(PRE_IMPORT_STATE_IDB_KEY, currentSnapshot)', 'app.js: před importem se uloží aktuální stav zařízení.');
   expect(app, 'function restorePreImportBackup()', 'app.js: bod návratu lze obnovit z Nastavení > Data.');
   expect(styles, '.household-sync-conflict {', 'styles.css: konflikt synchronizace má zřetelný responzivní povrch.');
+  expect(styles, '.record-conflict-panel {', 'styles.css: konflikty jednotlivých záznamů mají vlastní responzivní povrch.');
   expect(app, 'function buildDataIntegrityAudit()', 'app.js: Data obsahují kontrolu duplicit a chybějících vazeb.');
   expect(app, 'data-data-integrity-card', 'app.js: výsledek kontroly dat je viditelný v Nastavení > Data.');
   expect(styles, '.cloud-recovery-panel {', 'styles.css: obnova synchronizace má vlastní responzivní povrch.');

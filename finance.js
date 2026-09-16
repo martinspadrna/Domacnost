@@ -50,6 +50,7 @@
     const currentProfileId = deps.currentProfileId || (() => '');
     const cloudReady = deps.cloudReady || (() => false);
     const cloudSaveHouseholdUiSettings = deps.cloudSaveHouseholdUiSettings || (() => Promise.resolve(false));
+    const registerCloudRecordConflict = deps.registerCloudRecordConflict || (() => null);
     const getSupabaseClient = deps.getSupabaseClient || (() => null);
     const refreshCloudSession = deps.refreshCloudSession || (async () => null);
     const getFormData = deps.getFormData || (() => ({}));
@@ -1056,18 +1057,31 @@
         const target = financeAccountById(item.transferAccountId);
         if (target && !target.cloudId) await cloudAddFinanceAccount(target);
       }
-      const { data, error } = await client.from('finance_transactions').insert(cloudFinancePayload(item, user.id)).select('id').single();
+      const { data, error } = await client.from('finance_transactions').insert(cloudFinancePayload(item, user.id)).select('id,updated_at').single();
       if (error) {
         showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
         return null;
       }
       item.cloudId = data.id;
+      item.cloudUpdatedAt = data.updated_at || '';
       item.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
-    async function cloudUpdateFinance(item) {
+    async function cloudFinanceRow(cloudId) {
+      const client = getSupabaseClient();
+      if (!client || !cloudId || !getState().cloud?.householdId) return null;
+      const { data, error } = await client
+        .from('finance_transactions')
+        .select('id,type,title,amount,transaction_date,payment_method,note,created_at,updated_at,account_id,transfer_account_id')
+        .eq('id', cloudId)
+        .eq('household_id', getState().cloud.householdId)
+        .maybeSingle();
+      return error ? null : data;
+    }
+
+    async function cloudUpdateFinance(item, options = {}) {
       const client = getSupabaseClient();
       if (!client || !item?.cloudId || !getState().cloud?.householdId) return true;
       const user = await refreshCloudSession(false);
@@ -1082,11 +1096,33 @@
       }
       const payload = cloudFinancePayload(item, user.id);
       delete payload.created_by;
-      const { error } = await client.from('finance_transactions').update(payload).eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
+      const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
+      const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+      const nextRevision = new Date().toISOString();
+      payload.updated_at = nextRevision;
+      let query = client.from('finance_transactions').update(payload).eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
+      if (expectedRevision) query = query.eq('updated_at', expectedRevision);
+      const { data, error } = await query.select('id,updated_at').maybeSingle();
       if (error) {
         showToast(error.message || 'Finance se nepovedlo upravit v cloudu');
         return false;
       }
+      if (!data) {
+        const remoteRow = await cloudFinanceRow(item.cloudId);
+        if (remoteRow && options.skipConflict !== true) {
+          item.syncStatus = 'conflict';
+          registerCloudRecordConflict({
+            collection: 'finance', table: 'finance_transactions', cloudId: item.cloudId, localId: item.id,
+            operation: 'update', label: item.title || 'Finanční pohyb', expectedRevision,
+            remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
+          });
+          return 'conflict';
+        }
+        return false;
+      }
+      item.cloudUpdatedAt = data.updated_at || nextRevision;
+      item.updatedAt = item.cloudUpdatedAt;
+      item.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
@@ -1124,7 +1160,7 @@
 
       const { data, error } = await client
         .from('finance_transactions')
-        .select('id,type,title,amount,transaction_date,payment_method,note,created_at,account_id,transfer_account_id')
+        .select('id,type,title,amount,transaction_date,payment_method,note,created_at,updated_at,account_id,transfer_account_id')
         .eq('household_id', getState().cloud.householdId)
         .order('transaction_date', { ascending: false })
         .order('created_at', { ascending: false });
@@ -1148,7 +1184,9 @@
         transferAccountId: cloudAccountById[item.transfer_account_id]?.id || '',
         category: item.type === 'income' ? 'other_income' : 'other_expense',
         note: item.note || '',
-        createdAt: item.created_at || new Date().toISOString()
+        createdAt: item.created_at || new Date().toISOString(),
+        updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+        cloudUpdatedAt: item.updated_at || ''
       }));
       getState().finance = [...cloudItems, ...localOnly];
       getState().financeCloud = { ...(getState().financeCloud || {}), accountsLoadedAt: new Date().toISOString(), loadedAt: new Date().toISOString() };
@@ -1160,12 +1198,28 @@
       return true;
     }
 
-    async function cloudDeleteFinance(item) {
+    async function cloudDeleteFinance(item, options = {}) {
       const client = getSupabaseClient();
       if (!client || !item?.cloudId || !getState().cloud?.householdId) return true;
-      const { error } = await client.from('finance_transactions').delete().eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
+      const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
+      const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+      let query = client.from('finance_transactions').delete().eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
+      if (expectedRevision) query = query.eq('updated_at', expectedRevision);
+      const { data, error } = await query.select('id').maybeSingle();
       if (error) {
         showToast(error.message || 'Záznam se nepovedlo smazat v cloudu');
+        return false;
+      }
+      if (!data) {
+        const remoteRow = await cloudFinanceRow(item.cloudId);
+        if (remoteRow && options.skipConflict !== true) {
+          registerCloudRecordConflict({
+            collection: 'finance', table: 'finance_transactions', cloudId: item.cloudId, localId: item.id,
+            operation: 'delete', label: item.title || 'Finanční pohyb', expectedRevision,
+            remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
+          });
+          return 'conflict';
+        }
         return false;
       }
       getState().cloud.lastSyncAt = new Date().toISOString();
@@ -1181,6 +1235,50 @@
         return false;
       }
       return true;
+    }
+
+    function applyFinanceCloudRow(remoteRow, localRecord = {}) {
+      if (!remoteRow?.id) return null;
+      const accountByCloudId = Object.fromEntries((getState().financeAccounts || []).filter((account) => account.cloudId).map((account) => [account.cloudId, account]));
+      const existing = (getState().finance || []).find((entry) => entry.cloudId === remoteRow.id || entry.id === localRecord.id);
+      const mapped = {
+        ...localRecord,
+        ...(existing || {}),
+        id: existing?.id || localRecord.id || `finance-cloud-${remoteRow.id}`,
+        householdId: currentHouseholdId(), profileId: currentProfileId(), cloudId: remoteRow.id,
+        type: remoteRow.type === 'transfer' || remoteRow.transfer_account_id ? 'transfer' : remoteRow.type || 'expense',
+        title: remoteRow.title || localRecord.title || 'Záznam', amount: Number(remoteRow.amount || 0),
+        date: remoteRow.transaction_date || todayISO(), paymentMethod: remoteRow.payment_method || 'other',
+        accountId: accountByCloudId[remoteRow.account_id]?.id || localRecord.accountId || '',
+        transferAccountId: accountByCloudId[remoteRow.transfer_account_id]?.id || localRecord.transferAccountId || '',
+        category: remoteRow.type === 'income' ? 'other_income' : localRecord.category || 'other_expense',
+        note: remoteRow.note || '', createdAt: remoteRow.created_at || localRecord.createdAt || new Date().toISOString(),
+        updatedAt: remoteRow.updated_at || '', cloudUpdatedAt: remoteRow.updated_at || '', syncStatus: ''
+      };
+      if (existing) Object.assign(existing, mapped);
+      else getState().finance.push(mapped);
+      return mapped;
+    }
+
+    async function resolveFinanceRecordConflict(conflict, strategy) {
+      if (strategy === 'cloud') {
+        if (!conflict.remoteRow) return false;
+        applyFinanceCloudRow(conflict.remoteRow, conflict.localRecord || {});
+        return true;
+      }
+      const item = (getState().finance || []).find((entry) => entry.id === conflict.localId || entry.cloudId === conflict.cloudId) || { ...(conflict.localRecord || {}) };
+      if (!item?.cloudId) return false;
+      if (conflict.operation === 'delete') {
+        const ok = await cloudDeleteFinance(item, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+        if (ok === true) getState().finance = (getState().finance || []).filter((entry) => entry.id !== item.id && entry.cloudId !== item.cloudId);
+        return ok === true;
+      }
+      const ok = await cloudUpdateFinance(item, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+      if (ok === true) {
+        const existing = (getState().finance || []).find((entry) => entry.id === item.id || entry.cloudId === item.cloudId);
+        if (existing) Object.assign(existing, item, { syncStatus: '' });
+      }
+      return ok === true;
     }
 
     async function addFinanceAccountFromForm(data, form) {
@@ -1620,13 +1718,16 @@
       render();
       if (cloudReady() && next.cloudId) {
         const ok = await cloudUpdateFinance(next);
-        if (ok) {
+        if (ok === true) {
           next.syncStatus = '';
           clearFinanceCloudPendingIfClean();
           touchState();
           saveState();
           requestRender();
           showToast('Pohyb upraven v cloudu');
+        } else if (ok === 'conflict') {
+          persistStateSnapshot();
+          requestRender();
         } else {
           next.syncStatus = 'pending_update';
           markFinanceCloudPending('update-finance-failed');
@@ -1840,7 +1941,7 @@
     }
 
     async function cloudSyncLocalFinance() {
-      const local = (getState().finance || []).filter((item) => !item.cloudId || item.syncStatus);
+      const local = (getState().finance || []).filter((item) => (!item.cloudId || item.syncStatus) && item.syncStatus !== 'conflict');
       if (!local.length) return showToast('Žádné lokální finance k odeslání');
       let count = 0;
       for (const item of local) {
@@ -1984,6 +2085,7 @@
       cloudSyncFinanceAccountById,
       cloudSyncLocalFinanceAccounts,
       cloudSyncAllFinance,
+      resolveFinanceRecordConflict,
       // mazání
       deleteFinanceTransaction,
       deleteFinanceAccount

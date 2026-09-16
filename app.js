@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_509';
-  const APP_BUILD = 509;
+  const APP_VERSION = 'Domácnost+ v.0.1_510';
+  const APP_BUILD = 510;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -918,6 +918,7 @@
       householdUiPendingAt: '',
       householdUiRevision: '',
       householdUiConflict: null,
+      recordConflicts: [],
       localPendingCount: 0,
       outbox: [],
       autoSyncEnabled: true,
@@ -2032,6 +2033,7 @@
           includeName: Boolean(migrated.cloud.householdUiConflict.includeName)
         }
       : null;
+    migrated.cloud.recordConflicts = normalizeCloudRecordConflicts(migrated.cloud?.recordConflicts || []);
     migrated.cloud.profilesLoadedAt = migrated.cloud?.profilesLoadedAt || '';
     migrated.cloud.localPendingCount = Number(migrated.cloud?.localPendingCount || 0);
     migrated.cloud.outbox = normalizeCloudOutbox(migrated.cloud?.outbox || []);
@@ -2464,6 +2466,9 @@
         table: normalizeText(entry.table),
         cloudId: normalizeText(entry.cloudId),
         collection: normalizeText(entry.collection),
+        expectedRevision: normalizeText(entry.expectedRevision),
+        label: normalizeText(entry.label),
+        localRecord: entry.localRecord && typeof entry.localRecord === 'object' ? structuredCloneSafe(entry.localRecord) : null,
         createdAt: Number.isFinite(Date.parse(entry.createdAt || '')) ? entry.createdAt : new Date().toISOString(),
         attempts: Math.max(0, Number(entry.attempts || 0)),
         lastError: normalizeText(entry.lastError),
@@ -2473,6 +2478,71 @@
     return [...unique.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   }
 
+  function normalizeCloudRecordConflicts(value) {
+    const unique = new Map();
+    (Array.isArray(value) ? value : []).forEach((entry) => {
+      const table = normalizeText(entry?.table);
+      const cloudId = normalizeText(entry?.cloudId);
+      const collection = normalizeText(entry?.collection);
+      if (!table || !cloudId || !['shopping', 'finance', 'calendar'].includes(collection)) return;
+      const operation = entry?.operation === 'delete' ? 'delete' : 'update';
+      unique.set(`${table}:${cloudId}`, {
+        id: normalizeText(entry.id) || `record-conflict-${uid()}`,
+        collection,
+        table,
+        cloudId,
+        localId: normalizeText(entry.localId),
+        operation,
+        label: normalizeText(entry.label) || cloudOutboxCollectionLabel({ collection }),
+        expectedRevision: normalizeText(entry.expectedRevision),
+        remoteRevision: normalizeText(entry.remoteRevision || entry.remoteRow?.updated_at),
+        detectedAt: Number.isFinite(Date.parse(entry.detectedAt || '')) ? entry.detectedAt : new Date().toISOString(),
+        localRecord: entry.localRecord && typeof entry.localRecord === 'object' ? structuredCloneSafe(entry.localRecord) : null,
+        remoteRow: entry.remoteRow && typeof entry.remoteRow === 'object' ? structuredCloneSafe(entry.remoteRow) : null,
+        e2e: Boolean(entry.e2e)
+      });
+    });
+    return [...unique.values()].sort((a, b) => String(a.detectedAt).localeCompare(String(b.detectedAt)));
+  }
+
+  function cloudRecordConflicts(collection = '') {
+    const conflicts = normalizeCloudRecordConflicts(state.cloud?.recordConflicts || []);
+    return collection ? conflicts.filter((entry) => entry.collection === collection) : conflicts;
+  }
+
+  function registerCloudRecordConflict(entry = {}) {
+    const normalized = normalizeCloudRecordConflicts([entry])[0];
+    if (!normalized) return null;
+    state.cloud = {
+      ...(state.cloud || {}),
+      recordConflicts: normalizeCloudRecordConflicts([
+        ...(state.cloud?.recordConflicts || []).filter((item) => !(item.table === normalized.table && item.cloudId === normalized.cloudId)),
+        normalized
+      ]),
+      autosyncStatus: 'blocked',
+      autosyncRetryAt: '',
+      lastAutosyncError: 'Záznam byl mezitím změněn na jiném zařízení'
+    };
+    clearCloudAutosyncTimer();
+    persistStateSnapshot({ immediate: true });
+    requestBackgroundRender();
+    showToast('Záznam změnilo jiné zařízení. Vyber, která verze má zůstat.');
+    return normalized;
+  }
+
+  function clearCloudRecordConflict(conflictOrId) {
+    const id = typeof conflictOrId === 'string' ? conflictOrId : conflictOrId?.id;
+    if (!id) return false;
+    state.cloud.recordConflicts = cloudRecordConflicts().filter((entry) => entry.id !== id);
+    if (!state.cloud.recordConflicts.length && !state.cloud?.householdUiConflict) {
+      state.cloud.autosyncStatus = cloudLocalPendingCount() ? 'pending' : 'idle';
+      state.cloud.lastAutosyncError = '';
+    }
+    touchState();
+    saveState({ immediate: true, skipTrashTracking: true });
+    return true;
+  }
+
   function enqueueTrashCloudDeletes(trashIds = []) {
     const ids = new Set(trashIds.map(String));
     const additions = [];
@@ -2480,7 +2550,12 @@
       entry.records.forEach(({ collection, record }) => {
         const table = CLOUD_DELETE_TABLES[collection];
         if (!table || !record?.cloudId) return;
-        additions.push({ id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection, createdAt: entry.deletedAt || new Date().toISOString(), attempts: 0, lastError: '', nextRetryAt: '' });
+        if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(record.cloudId))) return;
+        additions.push({
+          id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection,
+          expectedRevision: normalizeText(record.cloudUpdatedAt), label: trashRecordTitle(collection, record), localRecord: record,
+          createdAt: entry.deletedAt || new Date().toISOString(), attempts: 0, lastError: '', nextRetryAt: ''
+        });
       });
     });
     if (!additions.length) return;
@@ -2499,7 +2574,9 @@
     if (!client) return false;
     while (queue.length) {
       const entry = queue[0];
-      const { error } = await client.from(entry.table).delete().eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
+      let deleteQuery = client.from(entry.table).delete().eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
+      if (entry.expectedRevision) deleteQuery = deleteQuery.eq('updated_at', entry.expectedRevision);
+      const { data, error } = await deleteQuery.select('id').maybeSingle();
       if (error) {
         entry.attempts += 1;
         entry.lastError = error.message || error.code || 'Smazání čeká na další pokus';
@@ -2508,6 +2585,33 @@
         state.cloud.outbox = normalizeCloudOutbox(queue);
         persistStateSnapshot({ immediate: true });
         return false;
+      }
+      if (!data && entry.expectedRevision && ['shopping', 'finance', 'calendar'].includes(entry.collection)) {
+        const { data: remoteRow, error: remoteError } = await client
+          .from(entry.table)
+          .select('*')
+          .eq('id', entry.cloudId)
+          .eq('household_id', state.cloud.householdId)
+          .maybeSingle();
+        if (remoteError) {
+          entry.attempts += 1;
+          entry.lastError = remoteError.message || 'Kontrola změněného záznamu selhala';
+          state.cloud.outbox = normalizeCloudOutbox(queue);
+          persistStateSnapshot({ immediate: true });
+          return false;
+        }
+        if (remoteRow) {
+          queue = queue.slice(1);
+          state.cloud.outbox = queue;
+          registerCloudRecordConflict({
+            collection: entry.collection, table: entry.table, cloudId: entry.cloudId,
+            localId: entry.localRecord?.id || '', operation: 'delete', label: entry.label,
+            expectedRevision: entry.expectedRevision, remoteRevision: remoteRow.updated_at,
+            localRecord: entry.localRecord, remoteRow
+          });
+          persistStateSnapshot({ immediate: true });
+          return false;
+        }
       }
       queue = queue.slice(1);
       state.cloud.outbox = queue;
@@ -7046,7 +7150,7 @@
     const pending = totalLocal === null ? getCloudSyncOverviewItems().reduce((sum, item) => sum + item.local, 0) : Number(totalLocal || 0);
     const status = String(state.cloud?.autosyncStatus || 'idle');
     const disabled = state.cloud?.autoSyncEnabled === false;
-    const conflict = Boolean(state.cloud?.householdUiConflict);
+    const conflict = Boolean(state.cloud?.householdUiConflict || cloudRecordConflicts().length);
     const failed = conflict || disabled || ['error', 'blocked'].includes(status) || state.cloud?.realtimeStatus === 'channel_error';
     const waiting = status === 'waiting' || !browserAppearsOnline();
     const syncing = status === 'syncing';
@@ -8292,6 +8396,7 @@
       getSupabaseClient,
       refreshCloudSession,
       getFormData,
+      registerCloudRecordConflict,
       FINANCE_CATEGORY_OPTIONS,
       DEFAULT_FINANCE_TEMPLATES
     });
@@ -8672,6 +8777,7 @@
       getSupabaseClient,
       refreshCloudSession,
       cloudReady,
+      registerCloudRecordConflict,
       DEFAULT_CALENDAR_EVENT_MINUTES,
       APP_TIME_ZONE
     }));
@@ -14139,6 +14245,7 @@
           <div class="card-subheader"><h3>Cloud domácnosti</h3><p>Cloud je hlavní zdroj dat pro všechny členy domácnosti. Lokální úložiště zůstává jen jako cache a nouzový fallback.</p></div>
           ${renderUnifiedCloudControl()}
           ${renderHouseholdUiConflict()}
+          ${renderCloudRecordConflicts()}
           ${renderCloudRecoveryPanel()}
         ${households.length ? `
           ${households.length > 1 ? '<div class="inline-note warn-note">Pod účtem je víc aktivních domácností. Appka teď novou nevytváří automaticky; duplicitní můžeš jen skrýt z tohoto účtu.</div>' : ''}
@@ -14195,6 +14302,24 @@
           <button class="primary-btn" type="button" data-action="resolve-household-conflict-local">Ponechat toto zařízení</button>
         </div>
       </div>`;
+  }
+
+  function renderCloudRecordConflicts() {
+    const conflicts = cloudRecordConflicts();
+    if (!conflicts.length) return '';
+    const collectionLabels = { shopping: 'Nákupy', finance: 'Finance', calendar: 'Kalendář' };
+    return `
+      <section class="record-conflict-panel" data-record-conflict-panel>
+        <div class="card-subheader"><h3>Rozdílné verze záznamů</h3><p>Domácnost+ zabránila tichému přepsání změn z jiného zařízení.</p></div>
+        <div class="record-conflict-list">${conflicts.map((conflict) => `
+          <article class="record-conflict-row" data-record-conflict-id="${escapeHtml(conflict.id)}">
+            <div><span class="badge warn">${escapeHtml(collectionLabels[conflict.collection] || conflict.collection)}</span><strong>${escapeHtml(conflict.label)}</strong><em>${conflict.operation === 'delete' ? 'Na tomto zařízení byl záznam smazán, ale v cloudu se mezitím změnil.' : 'Lokální a cloudová verze se od posledního načtení změnily.'}${conflict.remoteRevision ? ` · Cloud ${escapeHtml(formatDateTime(conflict.remoteRevision))}` : ''}</em></div>
+            <div class="item-actions compact-actions">
+              <button class="ghost-btn" type="button" data-action="resolve-record-conflict-cloud" data-id="${escapeHtml(conflict.id)}">Použít cloud</button>
+              <button class="primary-btn" type="button" data-action="resolve-record-conflict-local" data-id="${escapeHtml(conflict.id)}">Ponechat toto zařízení</button>
+            </div>
+          </article>`).join('')}</div>
+      </section>`;
   }
 
   function renderCloudInvitationsPanel() {
@@ -15552,7 +15677,7 @@
     }
 
     const cloudListIds = cloudLists.map((list) => list.cloudId).filter(Boolean);
-    const itemsRes = await client.from('shopping_list_items').select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,created_at').eq('household_id', householdId).in('list_id', cloudListIds).order('position').order('created_at');
+    const itemsRes = await client.from('shopping_list_items').select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,done_at,created_at,updated_at').eq('household_id', householdId).in('list_id', cloudListIds).order('position').order('created_at');
     if (itemsRes.error) return showToast(itemsRes.error.message || 'Položky nákupu se nepovedlo načíst');
 
     const cloudItems = (itemsRes.data || []).map((item) => {
@@ -15564,19 +15689,24 @@
         householdId: currentHouseholdId(),
         profileId: currentProfileId(),
         createdAt: item.created_at || new Date().toISOString(),
+        updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+        cloudUpdatedAt: item.updated_at || '',
         listId: cloudIdToLocalId.get(item.list_id) || state.activeShoppingListId || '',
         name: item.name,
         quantity: item.quantity || 1,
         unit: item.unit || 'ks',
         note: item.note || '',
         done: Boolean(item.is_done),
+        doneAt: item.done_at || '',
         catalogItemId: item.catalog_item_id || '',
         category: catalogItem?.kind || catalogItem?.category || 'Ostatní',
         kind: catalogItem?.kind || catalogItem?.category || 'Ostatní'
       };
     });
-    const localOnly = state.shopping.filter((item) => !item.cloudId);
-    state.shopping = [...localOnly, ...cloudItems];
+    const localOnly = state.shopping.filter((item) => !item.cloudId || item.syncStatus === 'conflict');
+    const conflictingIds = new Set(cloudRecordConflicts('shopping').map((entry) => entry.cloudId));
+    const safeCloudItems = cloudItems.filter((item) => !conflictingIds.has(item.cloudId));
+    state.shopping = [...localOnly, ...safeCloudItems];
     dedupeShoppingData(state);
     if (!state.shoppingLists.some((list) => list.id === state.activeShoppingListId)) state.activeShoppingListId = state.shoppingLists[0]?.id || '';
 
@@ -15740,7 +15870,7 @@
       is_done: false,
       added_by_profile_id: null,
       created_by: state.cloud.userId
-    }).select('id,list_id,catalog_item_id').single();
+    }).select('id,list_id,catalog_item_id,updated_at').single();
     if (error) {
       showToast(error.message || 'Cloud položka se nepovedla uložit');
       return null;
@@ -15750,42 +15880,140 @@
   }
 
 
-  async function cloudUpdateShoppingItem(item) {
+  async function cloudShoppingRow(cloudId) {
+    const client = getSupabaseClient();
+    if (!client || !cloudId || !state.cloud?.householdId) return null;
+    const { data, error } = await client
+      .from('shopping_list_items')
+      .select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,done_at,created_at,updated_at')
+      .eq('id', cloudId)
+      .eq('household_id', state.cloud.householdId)
+      .maybeSingle();
+    return error ? null : data;
+  }
+
+  async function cloudUpdateShoppingItem(item, options = {}) {
     const client = getSupabaseClient();
     if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
-    const { error } = await client
+    const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudShoppingRow(item.cloudId) : null);
+    const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+    const nextRevision = new Date().toISOString();
+    let query = client
       .from('shopping_list_items')
       .update({
         is_done: Boolean(item.done),
         done_at: item.done ? new Date().toISOString() : null,
         quantity: item.quantity || 1,
         unit: item.unit || 'ks',
-        note: item.note || null
+        note: item.note || null,
+        updated_at: nextRevision
       })
       .eq('id', item.cloudId)
       .eq('household_id', state.cloud.householdId);
+    if (expectedRevision) query = query.eq('updated_at', expectedRevision);
+    const { data, error } = await query.select('id,updated_at').maybeSingle();
     if (error) {
       showToast(error.message || 'Cloud nákup se nepovedlo aktualizovat');
+      return false;
+    }
+    if (!data) {
+      const remoteRow = await cloudShoppingRow(item.cloudId);
+      if (remoteRow && options.skipConflict !== true) {
+        item.syncStatus = 'conflict';
+        registerCloudRecordConflict({
+          collection: 'shopping', table: 'shopping_list_items', cloudId: item.cloudId, localId: item.id,
+          operation: 'update', label: item.name || 'Položka nákupu', expectedRevision,
+          remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
+        });
+        return 'conflict';
+      }
+      return false;
+    }
+    item.cloudUpdatedAt = data.updated_at || nextRevision;
+    item.updatedAt = item.cloudUpdatedAt;
+    item.syncStatus = '';
+    state.cloud.lastSyncAt = new Date().toISOString();
+    return true;
+  }
+
+  async function cloudDeleteShoppingItem(item, options = {}) {
+    const client = getSupabaseClient();
+    if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
+    const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudShoppingRow(item.cloudId) : null);
+    const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+    let query = client
+      .from('shopping_list_items')
+      .delete()
+      .eq('id', item.cloudId)
+      .eq('household_id', state.cloud.householdId);
+    if (expectedRevision) query = query.eq('updated_at', expectedRevision);
+    const { data, error } = await query.select('id').maybeSingle();
+    if (error) {
+      showToast(error.message || 'Cloud nákup se nepovedlo smazat');
+      return false;
+    }
+    if (!data) {
+      const remoteRow = await cloudShoppingRow(item.cloudId);
+      if (remoteRow && options.skipConflict !== true) {
+        registerCloudRecordConflict({
+          collection: 'shopping', table: 'shopping_list_items', cloudId: item.cloudId, localId: item.id,
+          operation: 'delete', label: item.name || 'Položka nákupu', expectedRevision,
+          remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
+        });
+        return 'conflict';
+      }
       return false;
     }
     state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
-  async function cloudDeleteShoppingItem(item) {
-    const client = getSupabaseClient();
-    if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
-    const { error } = await client
-      .from('shopping_list_items')
-      .delete()
-      .eq('id', item.cloudId)
-      .eq('household_id', state.cloud.householdId);
-    if (error) {
-      showToast(error.message || 'Cloud nákup se nepovedlo smazat');
-      return false;
+  function applyShoppingCloudRow(remoteRow, localRecord = {}) {
+    if (!remoteRow?.id) return null;
+    const list = (state.shoppingLists || []).find((entry) => [entry.cloudId, entry.cloudListId].includes(remoteRow.list_id));
+    const existing = (state.shopping || []).find((entry) => entry.cloudId === remoteRow.id || entry.id === localRecord.id);
+    const catalogItem = findShoppingCatalogItem(remoteRow.name);
+    const mapped = {
+      ...localRecord,
+      ...(existing || {}),
+      id: existing?.id || localRecord.id || uid(),
+      cloudId: remoteRow.id,
+      cloudListId: remoteRow.list_id,
+      listId: list?.id || existing?.listId || localRecord.listId || state.activeShoppingListId || '',
+      householdId: currentHouseholdId(), profileId: currentProfileId(),
+      name: remoteRow.name || localRecord.name || 'Položka',
+      quantity: Number(remoteRow.quantity || 1), unit: remoteRow.unit || 'ks', note: remoteRow.note || '',
+      done: Boolean(remoteRow.is_done), doneAt: remoteRow.done_at || '',
+      catalogItemId: remoteRow.catalog_item_id || '',
+      category: catalogItem?.kind || catalogItem?.category || localRecord.category || 'Ostatní',
+      kind: catalogItem?.kind || catalogItem?.category || localRecord.kind || 'Ostatní',
+      createdAt: remoteRow.created_at || localRecord.createdAt || new Date().toISOString(),
+      updatedAt: remoteRow.updated_at || '', cloudUpdatedAt: remoteRow.updated_at || '', syncStatus: ''
+    };
+    if (existing) Object.assign(existing, mapped);
+    else state.shopping.push(mapped);
+    return mapped;
+  }
+
+  async function resolveShoppingRecordConflict(conflict, strategy) {
+    if (strategy === 'cloud') {
+      if (!conflict.remoteRow) return false;
+      applyShoppingCloudRow(conflict.remoteRow, conflict.localRecord || {});
+      return true;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
-    return true;
+    const item = (state.shopping || []).find((entry) => entry.id === conflict.localId || entry.cloudId === conflict.cloudId) || structuredCloneSafe(conflict.localRecord || {});
+    if (!item?.cloudId) return false;
+    if (conflict.operation === 'delete') {
+      const ok = await cloudDeleteShoppingItem(item, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+      if (ok === true) state.shopping = (state.shopping || []).filter((entry) => entry.id !== item.id && entry.cloudId !== item.cloudId);
+      return ok === true;
+    }
+    const ok = await cloudUpdateShoppingItem(item, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+    if (ok === true) {
+      const existing = (state.shopping || []).find((entry) => entry.id === item.id || entry.cloudId === item.cloudId);
+      if (existing) Object.assign(existing, item, { syncStatus: '' });
+    }
+    return ok === true;
   }
 
 
@@ -17309,7 +17537,7 @@
     const outbox = normalizeCloudOutbox(state.cloud?.outbox || []);
     const failedOutbox = outbox.filter((entry) => entry.attempts > 0 || entry.lastError);
     const status = String(state.cloud?.autosyncStatus || 'idle');
-    const conflict = Boolean(state.cloud?.householdUiConflict);
+    const conflict = Boolean(state.cloud?.householdUiConflict || cloudRecordConflicts().length);
     const error = normalizeText(state.cloud?.lastAutosyncError);
     const needsAttention = conflict || ['error', 'blocked'].includes(status) || failedOutbox.length > 0;
     const retryLabel = cloudRetryRelativeLabel();
@@ -17376,6 +17604,12 @@
   function scheduleCloudAutosync(source = 'save', options = {}) {
     if (!cloudReady()) return;
     if (state.cloud?.autoSyncEnabled === false) return;
+    if (cloudRecordConflicts().length) {
+      clearCloudAutosyncTimer();
+      state.cloud.autosyncStatus = 'blocked';
+      state.cloud.autosyncRetryAt = '';
+      return;
+    }
     if (cloudAutosyncRunning || cloudRealtimeReloading || suppressToastDepth > 0) return;
     const pending = cloudLocalPendingCount();
     state.cloud.localPendingCount = pending;
@@ -17427,6 +17661,14 @@
   async function runCloudAutosyncNow(showMessage = true) {
     if (!cloudReady()) {
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
+      return false;
+    }
+    if (cloudRecordConflicts().length) {
+      state.cloud.autosyncStatus = 'blocked';
+      state.cloud.autosyncRetryAt = '';
+      persistStateSnapshot();
+      requestBackgroundRender();
+      if (showMessage) showToast('Nejdřív vyřeš rozdílné verze záznamů');
       return false;
     }
     clearCloudAutosyncTimer();
@@ -17532,7 +17774,7 @@
   }
 
   function dismissCloudSyncError() {
-    if (state.cloud?.householdUiConflict || cloudLocalPendingCount()) {
+    if (state.cloud?.householdUiConflict || cloudRecordConflicts().length || cloudLocalPendingCount()) {
       showToast('Nejdřív je potřeba dokončit čekající synchronizaci');
       return false;
     }
@@ -18624,6 +18866,14 @@
     }
     if (action === 'resolve-household-conflict-local') {
       resolveHouseholdUiConflict('local');
+      return;
+    }
+    if (action === 'resolve-record-conflict-cloud') {
+      resolveCloudRecordConflict(button.dataset.id || '', 'cloud');
+      return;
+    }
+    if (action === 'resolve-record-conflict-local') {
+      resolveCloudRecordConflict(button.dataset.id || '', 'local');
       return;
     }
     if (action === 'open-global-quick-add') {
@@ -19843,6 +20093,7 @@
       householdId: '',
       householdUiRevision: '',
       householdUiConflict: null,
+      recordConflicts: [],
       householdUiPendingAt: '',
       households: [],
       invitations: [],
@@ -20040,6 +20291,7 @@
       state.cloud.householdId = '';
       state.cloud.householdUiRevision = '';
       state.cloud.householdUiConflict = null;
+      state.cloud.recordConflicts = [];
       state.cloud.profilesLoadedAt = '';
       resetCloudModuleCachesForUserSwitch();
     }
@@ -20414,6 +20666,51 @@
     }
   }
 
+  async function resolveCloudRecordConflict(id, strategy) {
+    const conflict = cloudRecordConflicts().find((entry) => entry.id === id);
+    if (!conflict) return;
+    const wantsCloud = strategy === 'cloud';
+    const question = wantsCloud
+      ? `Použít cloudovou verzi záznamu „${conflict.label}“? Lokální změna se nahradí.`
+      : `Ponechat verzi z tohoto zařízení pro „${conflict.label}“ a nahradit jí cloud?`;
+    if (!conflict.e2e && !window.confirm(question)) return;
+    let ok = false;
+    if (conflict.e2e) {
+      ok = applyE2eRecordConflict(conflict, strategy);
+    } else if (conflict.collection === 'shopping') {
+      ok = await resolveShoppingRecordConflict(conflict, strategy);
+    } else if (conflict.collection === 'finance') {
+      await ensureModuleCode('finance');
+      ok = await getFinanceModule().resolveFinanceRecordConflict(conflict, strategy);
+    } else if (conflict.collection === 'calendar') {
+      await ensureModuleCode('calendar');
+      ok = await getCalendarModule().resolveCalendarRecordConflict(conflict, strategy);
+    }
+    if (!ok) return showToast('Rozdílné verze se zatím nepovedlo vyřešit');
+    state.cloud.outbox = normalizeCloudOutbox(state.cloud?.outbox || []).filter((entry) => !(entry.table === conflict.table && entry.cloudId === conflict.cloudId));
+    if (conflict.operation === 'delete' && strategy === 'cloud') {
+      state.trash = normalizeTrashEntries((state.trash || []).map((entry) => ({
+        ...entry,
+        records: (entry.records || []).filter(({ collection, record }) => !(collection === conflict.collection && String(record?.cloudId || '') === conflict.cloudId))
+      })).filter((entry) => entry.records.length));
+    }
+    clearCloudRecordConflict(conflict);
+    render();
+    showToast(wantsCloud ? 'Použita cloudová verze záznamu' : 'Cloud byl aktualizován z tohoto zařízení');
+  }
+
+  function applyE2eRecordConflict(conflict, strategy) {
+    const item = (state.shopping || []).find((entry) => entry.id === conflict.localId || entry.cloudId === conflict.cloudId);
+    if (strategy === 'cloud' && item && conflict.remoteRow) {
+      item.note = conflict.remoteRow.note || '';
+      item.quantity = Number(conflict.remoteRow.quantity || item.quantity || 1);
+      item.cloudUpdatedAt = conflict.remoteRow.updated_at || '';
+      item.syncStatus = '';
+    }
+    if (strategy === 'local' && item) item.syncStatus = '';
+    return true;
+  }
+
   function currentWorkspaceKey() {
     return state.cloud?.householdId || state.household?.id || 'local';
   }
@@ -20494,6 +20791,7 @@
     state.cloud.householdId = householdId;
     state.cloud.householdUiRevision = '';
     state.cloud.householdUiConflict = null;
+    state.cloud.recordConflicts = [];
     restoreHouseholdWorkspace(householdId, name);
     state.household.name = name || state.household.name || 'Domácnost';
     state.cloud.lastSyncAt = new Date().toISOString();
@@ -20530,6 +20828,7 @@
     state.cloud.householdId = household.id;
     state.cloud.householdUiRevision = household.updated_at || '';
     state.cloud.householdUiConflict = null;
+    state.cloud.recordConflicts = [];
     restoreHouseholdWorkspace(household.id, household.name);
     state.household.name = household.name;
     const cleanProfileName = normalizeText(profileName) || currentProfile()?.name || 'Já';
@@ -20644,6 +20943,7 @@
     state.cloud.householdId = householdId;
     state.cloud.householdUiRevision = '';
     state.cloud.householdUiConflict = null;
+    state.cloud.recordConflicts = [];
     restoreHouseholdWorkspace(householdId, accepted?.householdName || 'Sdílená domácnost');
     state.cloud.lastSyncAt = new Date().toISOString();
     await cloudLoadProfilesForCurrentHousehold();
@@ -21122,6 +21422,7 @@
         invitations: Array.isArray(currentCloud.invitations) ? currentCloud.invitations : [],
         householdUiRevision: currentCloud.householdUiRevision || '',
         householdUiConflict: null,
+        recordConflicts: [],
         householdUiPendingAt: pendingAt,
         autosyncStatus: pendingAt ? 'pending' : 'idle',
         autosyncRetryAt: '',
@@ -21274,8 +21575,8 @@
       }
     };
     undoToastExpireAction = async () => {
-      if (trashIds.length) enqueueTrashCloudDeletes(trashIds);
       if (typeof onExpire === 'function') await onExpire();
+      if (trashIds.length) enqueueTrashCloudDeletes(trashIds);
     };
     button.addEventListener('click', async () => {
       if (!undoToastAction || button.disabled) return;
@@ -21971,6 +22272,33 @@
       state.cloud.householdUiPendingAt = '';
       render();
     };
+    window.__DOMACNOST_E2E_SET_RECORD_CONFLICT__ = () => {
+      const list = getShoppingLists()[0];
+      const item = {
+        id: 'shopping-record-conflict-e2e', cloudId: 'shopping-cloud-conflict-e2e',
+        cloudListId: list?.cloudId || 'shopping-list-cloud-e2e', listId: list?.id || state.activeShoppingListId || '',
+        householdId: currentHouseholdId(), profileId: currentProfileId(), name: 'Konfliktní mléko',
+        quantity: 2, unit: 'ks', note: 'verze zařízení', done: false,
+        createdAt: new Date(Date.now() - 120000).toISOString(), updatedAt: new Date().toISOString(),
+        cloudUpdatedAt: new Date(Date.now() - 60000).toISOString(), syncStatus: 'conflict'
+      };
+      state.shopping = [...(state.shopping || []).filter((entry) => entry.id !== item.id), item];
+      registerCloudRecordConflict({
+        collection: 'shopping', table: 'shopping_list_items', cloudId: item.cloudId, localId: item.id,
+        operation: 'update', label: item.name, expectedRevision: item.cloudUpdatedAt, localRecord: item,
+        remoteRevision: new Date().toISOString(), e2e: true,
+        remoteRow: {
+          id: item.cloudId, list_id: item.cloudListId, name: item.name, quantity: 4, unit: 'ks',
+          note: 'verze cloudu', is_done: false, created_at: item.createdAt, updated_at: new Date().toISOString()
+        }
+      });
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
+      render();
+      return item.id;
+    };
+    window.__DOMACNOST_E2E_RECORD_CONFLICTS__ = () => cloudRecordConflicts();
+    window.__DOMACNOST_E2E_RECORD_CONFLICT_ITEM__ = () => (state.shopping || []).find((item) => item.id === 'shopping-record-conflict-e2e') || null;
     window.__DOMACNOST_E2E_EXPORT_INTEGRITY__ = () => {
       const snapshot = structuredCloneSafe(state);
       const checksum = stateIntegrityChecksum(snapshot);

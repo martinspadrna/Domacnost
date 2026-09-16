@@ -99,6 +99,8 @@
       if (existingItem) {
         const previousQuantity = existingItem.quantity;
         existingItem.quantity = sanitizeShoppingQuantity((Number(existingItem.quantity || 1) || 1) + quantity, unit);
+        existingItem.updatedAt = new Date().toISOString();
+        if (existingItem.cloudId) existingItem.syncStatus = 'pending_update';
         existingItem.kind = kind;
         existingItem.category = category;
         if (catalogItem?.id && !existingItem.catalogItemId) existingItem.catalogItemId = catalogItem.id;
@@ -111,8 +113,10 @@
             const ok = await deps.cloudUpdateShoppingItem(existingItem);
             if (ok === false) {
               existingItem.quantity = previousQuantity;
+              existingItem.syncStatus = '';
               persist('request');
             } else {
+              if (ok === true) existingItem.syncStatus = '';
               persist('request');
             }
           });
@@ -120,11 +124,13 @@
         return;
       }
 
+      const createdAt = new Date().toISOString();
       const localItem = {
         id: uid(),
         householdId: deps.currentHouseholdId?.() || '',
         profileId: deps.currentProfileId?.() || '',
-        createdAt: new Date().toISOString(),
+        createdAt,
+        updatedAt: createdAt,
         listId,
         name,
         category,
@@ -150,6 +156,7 @@
             localItem.cloudId = cloudItem.id;
             localItem.cloudListId = cloudItem.list_id;
             localItem.catalogItemId = cloudItem.catalog_item_id || localItem.catalogItemId;
+            localItem.cloudUpdatedAt = cloudItem.updated_at || '';
             if (localItem.done || localItem.quantity !== quantity || localItem.note !== note || localItem.unit !== unit) {
               await deps.cloudUpdateShoppingItem?.(localItem);
             }
@@ -335,12 +342,18 @@
       const direction = delta < 0 ? -1 : 1;
       const next = current + (direction * step);
       item.quantity = sanitizeShoppingQuantity(next, unit);
+      item.updatedAt = new Date().toISOString();
+      if (item.cloudId) item.syncStatus = 'pending_update';
       deps.setQuantityEditId?.(id);
       persist('request');
       if (deps.cloudUpdateShoppingItem) {
         const ok = await deps.cloudUpdateShoppingItem(item);
         if (ok === false) {
           item.quantity = sanitizeShoppingQuantity(previousQuantity, unit);
+          item.syncStatus = '';
+          persist('request');
+        } else if (ok === true) {
+          item.syncStatus = '';
           persist('request');
         }
       }
@@ -392,6 +405,7 @@
           item.cloudId = cloudItem.id;
           item.cloudListId = cloudItem.list_id;
           item.catalogItemId = cloudItem.catalog_item_id || item.catalogItemId || '';
+          item.cloudUpdatedAt = cloudItem.updated_at || '';
           syncedItems += 1;
         }
       }
@@ -408,13 +422,19 @@
       const previousDoneAt = item.doneAt || '';
       item.done = !item.done;
       item.doneAt = item.done ? new Date().toISOString() : '';
+      item.updatedAt = new Date().toISOString();
+      if (item.cloudId) item.syncStatus = 'pending_update';
       persist('request');
       const ok = await deps.cloudUpdateShoppingItem?.(item);
       if (ok === false) {
         item.done = previousDone;
         item.doneAt = previousDoneAt;
+        item.syncStatus = '';
         persist('request');
         showToast('Cloud úprava se nepovedla, změnu jsem vrátil');
+      } else if (ok === true) {
+        item.syncStatus = '';
+        persist('request');
       }
     }
 

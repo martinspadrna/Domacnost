@@ -1782,6 +1782,48 @@ async function run() {
     else ok('Cloud: souběžná změna se zastaví a nabídne obě bezpečné volby.');
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__?.()` });
 
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_RECORD_CONFLICT__?.()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const recordConflictPanelCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        panel: document.querySelectorAll('[data-record-conflict-panel]').length,
+        rows: document.querySelectorAll('[data-record-conflict-id]').length,
+        cloudChoice: document.querySelectorAll('[data-action="resolve-record-conflict-cloud"]').length,
+        localChoice: document.querySelectorAll('[data-action="resolve-record-conflict-local"]').length,
+        text: document.querySelector('[data-record-conflict-panel]')?.innerText || ''
+      }))()`
+    });
+    const recordConflictPanelValue = recordConflictPanelCheck.result?.value || {};
+    if (recordConflictPanelValue.panel !== 1 || recordConflictPanelValue.rows !== 1 || recordConflictPanelValue.cloudChoice !== 1 || recordConflictPanelValue.localChoice !== 1 || !/Konfliktní mléko/i.test(recordConflictPanelValue.text)) fail('Konflikt jednotlivého záznamu nemá vlastní bezpečné rozhodnutí.');
+    else ok('Cloud: konflikt jednotlivého záznamu je viditelný a nabízí obě verze.');
+
+    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="resolve-record-conflict-cloud"]')?.click()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const recordCloudResolution = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        conflicts: window.__DOMACNOST_E2E_RECORD_CONFLICTS__?.().length ?? -1,
+        note: window.__DOMACNOST_E2E_RECORD_CONFLICT_ITEM__?.()?.note || ''
+      }))()`
+    });
+    const recordCloudValue = recordCloudResolution.result?.value || {};
+    if (recordCloudValue.conflicts !== 0 || recordCloudValue.note !== 'verze cloudu') fail('Volba cloudové verze konflikt nevyřešila správně.');
+    else ok('Cloud: volba „Použít cloud“ nahradí jen konkrétní konfliktní záznam.');
+
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_RECORD_CONFLICT__?.(); document.querySelector('[data-action="resolve-record-conflict-local"]')?.click()` });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    const recordLocalResolution = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        conflicts: window.__DOMACNOST_E2E_RECORD_CONFLICTS__?.().length ?? -1,
+        note: window.__DOMACNOST_E2E_RECORD_CONFLICT_ITEM__?.()?.note || ''
+      }))()`
+    });
+    const recordLocalValue = recordLocalResolution.result?.value || {};
+    if (recordLocalValue.conflicts !== 0 || recordLocalValue.note !== 'verze zařízení') fail('Volba lokální verze konflikt nevyřešila správně.');
+    else ok('Cloud: volba „Ponechat toto zařízení“ zachová jen konkrétní lokální záznam.');
+
     await page.send('Runtime.evaluate', {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('pool') : document.querySelector('[data-nav="pool"]')?.click()`
     });
