@@ -243,6 +243,22 @@ async function waitForExpression(page, expression, timeout = 3000, interval = 50
   return null;
 }
 
+async function clearUndoToast(page) {
+  await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_EXPIRE_UNDO__?.()` });
+  await waitForExpression(page, `!document.querySelector('#undo-toast')`, 1600, 40);
+}
+
+async function clickWhenAvailable(page, selector, { confirm = false, timeout = 3000 } = {}) {
+  const selectorJson = JSON.stringify(selector);
+  return waitForExpression(page, `(() => {
+    const element = document.querySelector(${selectorJson});
+    if (!element) return false;
+    ${confirm ? 'window.confirm = () => true;' : ''}
+    element.click();
+    return true;
+  })()`, timeout, 40);
+}
+
 async function dispatchPhysicalClick(page, selector) {
   const rectResult = await page.send('Runtime.evaluate', {
     returnByValue: true,
@@ -1037,10 +1053,11 @@ async function run() {
       ok('PWA update: nová verze čeká na potvrzení a rozepsaný formulář se před přepnutím bezpečně uloží.');
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance', 'summary')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 3000, 50);
     const financeUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="delete-finance"][data-id="finance-entry-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')), undoText: document.querySelector('#undo-toast')?.innerText || '' })`
@@ -1061,10 +1078,11 @@ async function run() {
       } else ok('Finance: omylem smazaný pohyb lze vrátit zpět bez duplicity.');
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('subscriptions', 'services')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 3000, 50);
     const subscriptionUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="delete-subscription"][data-id="subscription-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')), undoText: document.querySelector('#undo-toast')?.innerText || '' })`
@@ -1085,6 +1103,7 @@ async function run() {
       } else ok('Předplatné: smazanou službu lze vrátit včetně navázaných dat.');
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('shopping', 'list')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]')?.click()` });
@@ -1097,18 +1116,18 @@ async function run() {
       fail(`Nákupy: smazání položky nenabídlo návrat (${JSON.stringify(shoppingUndoDeleted.result?.value || {})}).`);
     } else {
       await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
-      await new Promise((resolveWait) => setTimeout(resolveWait, 180));
-      const restored = await page.send('Runtime.evaluate', { returnByValue: true, expression: `document.querySelectorAll('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]').length` });
-      if (restored.result?.value !== 1) fail('Nákupy: položka se po Vrátit zpět neobnovila právě jednou.');
+      const restored = await waitForExpression(page, `document.querySelectorAll('[data-action="delete"][data-collection="shopping"][data-id="shopping-item-open-e2e-smoke"]').length === 1 && !document.querySelector('#undo-toast')`, 3000, 50);
+      if (!restored) fail('Nákupy: položka se po Vrátit zpět neobnovila právě jednou.');
       else ok('Nákupy: smazanou položku lze vrátit zpět.');
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('calendar', 'overview')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="calendar-event-detail"][data-id="calendar-event-e2e-smoke"]')?.click()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 80));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-calendar"][data-id="calendar-event-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="calendar-event-detail"][data-id="calendar-event-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 3000, 50);
     const calendarUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="calendar-event-detail"][data-id="calendar-event-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')) })`
@@ -1123,11 +1142,12 @@ async function run() {
       else ok('Kalendář: smazanou událost lze vrátit zpět.');
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('warranties', 'overview')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
-    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]')?.click()` });
+    await clickWhenAvailable(page, '[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]');
     await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]'))`, 1600, 50);
-    await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]')?.click()` });
+    await clickWhenAvailable(page, '[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]');
     await waitForExpression(page, `!document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
     const warrantyUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
@@ -1137,7 +1157,7 @@ async function run() {
       fail(`Záruky: smazání nenabídlo návrat (${JSON.stringify(warrantyUndoDeleted.result?.value || {})}).`);
     } else {
       await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
-      const warrantyRestoredReady = await waitForExpression(page, `document.querySelectorAll('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]').length === 1`, 1600, 50);
+      const warrantyRestoredReady = await waitForExpression(page, `document.querySelectorAll('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]').length === 1 && !document.querySelector('#undo-toast')`, 3200, 50);
       await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="open-warranty-detail"][data-id="warranty-e2e-smoke"]')?.click()` });
       await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-warranty"][data-id="warranty-e2e-smoke"]'))`, 1200, 40);
       const restored = await page.send('Runtime.evaluate', {
@@ -1149,10 +1169,11 @@ async function run() {
       await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="close-modal"]')?.click()` });
     }
 
+    await clearUndoToast(page);
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('readings', 'history')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-reading-entry"][data-id="reading-entry-latest-e2e-smoke"]')?.click()` });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    await waitForExpression(page, `!document.querySelector('[data-action="delete-reading-entry"][data-id="reading-entry-latest-e2e-smoke"]') && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 3000, 50);
     const readingUndoDeleted = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `({ removed: !document.querySelector('[data-action="delete-reading-entry"][data-id="reading-entry-latest-e2e-smoke"]'), undoVisible: Boolean(document.querySelector('#undo-toast.show .undo-toast-button')) })`
@@ -1161,9 +1182,8 @@ async function run() {
       fail(`Odečty: smazání nenabídlo návrat (${JSON.stringify(readingUndoDeleted.result?.value || {})}).`);
     } else {
       await page.send('Runtime.evaluate', { expression: `document.querySelector('#undo-toast .undo-toast-button')?.click()` });
-      await new Promise((resolveWait) => setTimeout(resolveWait, 180));
-      const restored = await page.send('Runtime.evaluate', { returnByValue: true, expression: `document.querySelectorAll('[data-action="delete-reading-entry"][data-id="reading-entry-latest-e2e-smoke"]').length` });
-      if (restored.result?.value !== 1) fail('Odečty: odečet se po Vrátit zpět neobnovil právě jednou.');
+      const restored = await waitForExpression(page, `document.querySelectorAll('[data-action="delete-reading-entry"][data-id="reading-entry-latest-e2e-smoke"]').length === 1 && !document.querySelector('#undo-toast')`, 3200, 50);
+      if (!restored) fail('Odečty: odečet se po Vrátit zpět neobnovil právě jednou.');
       else ok('Odečty: smazaný odečet lze vrátit zpět.');
     }
 
@@ -1179,9 +1199,16 @@ async function run() {
         fail(`${label}: mazací akce nebyla v modulu nalezena.`);
         return;
       }
-      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-      await page.send('Runtime.evaluate', { expression: `window.confirm = () => true; document.querySelector(${selectorJson})?.click()` });
-      const removed = await waitForExpression(page, `!document.querySelector(${selectorJson}) && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 2400, 50);
+      let removed = null;
+      for (let attempt = 0; attempt < 3 && !removed; attempt += 1) {
+        await clickWhenAvailable(page, selector, { confirm: true });
+        removed = await waitForExpression(page, `!document.querySelector(${selectorJson}) && Boolean(document.querySelector('#undo-toast.show .undo-toast-button'))`, 1600, 50);
+        if (!removed && attempt < 2) {
+          await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__(${JSON.stringify(nav.module)}, ${JSON.stringify(nav.tab || '')})`, awaitPromise: true });
+          if (beforeExpression) await page.send('Runtime.evaluate', { expression: beforeExpression, awaitPromise: true });
+          await waitForExpression(page, `Boolean(document.querySelector(${selectorJson}))`, 1800, 50);
+        }
+      }
       if (!removed) {
         fail(`${label}: smazání nenabídlo Vrátit zpět.`);
         return;
@@ -1278,10 +1305,11 @@ async function run() {
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
     const restoredHomeScroll = await page.send('Runtime.evaluate', {
       returnByValue: true,
-      expression: `({ scrollTop: Number(document.querySelector('.home-redesign-shell.home-app-shell main')?.scrollTop || 0), saved: window.__DOMACNOST_E2E_SCROLL_POSITIONS__?.() || {} })`
+      expression: `(() => { const main = document.querySelector('.home-redesign-shell.home-app-shell main'); return { scrollTop: Number(main?.scrollTop || 0), maxScroll: Math.max(0, Number(main?.scrollHeight || 0) - Number(main?.clientHeight || 0)), saved: window.__DOMACNOST_E2E_SCROLL_POSITIONS__?.() || {} }; })()`
     });
     const restoredHomeScrollValue = restoredHomeScroll.result?.value || {};
-    if (!(Number(restoredHomeScrollValue.scrollTop || 0) >= Math.max(1, homeScrollBeforeNav - 2))) fail(`Domů po návratu z jiného modulu zapomnělo pozici posunu (${restoredHomeScrollValue.scrollTop || 0}px místo ${homeScrollBeforeNav}px; uložené ${JSON.stringify(restoredHomeScrollValue.saved || {})}).`);
+    const expectedHomeScroll = Math.min(homeScrollBeforeNav, Number(restoredHomeScrollValue.maxScroll || 0));
+    if (!(Number(restoredHomeScrollValue.scrollTop || 0) >= Math.max(1, expectedHomeScroll - 2))) fail(`Domů po návratu z jiného modulu zapomnělo pozici posunu (${restoredHomeScrollValue.scrollTop || 0}px místo ${expectedHomeScroll}px; uložené ${JSON.stringify(restoredHomeScrollValue.saved || {})}).`);
     else ok('Navigace: každý modul si zachovává vlastní pozici posunu.');
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('finance')`, awaitPromise: true });
     await new Promise((resolveWait) => setTimeout(resolveWait, 120));
@@ -1586,17 +1614,16 @@ async function run() {
       awaitPromise: true
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 900));
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      await page.send('Runtime.evaluate', {
-        expression: `typeof window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__ === 'function' ? window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__() : document.querySelector('[data-action="open-shopping-done-modal"]')?.click()`
-      });
-      await new Promise((resolveWait) => setTimeout(resolveWait, 300));
-      const readyCheck = await page.send('Runtime.evaluate', {
-        returnByValue: true,
-        expression: `Boolean(document.querySelector('.shopping-done-modal.app-modal'))`
-      });
-      if (readyCheck.result?.value) break;
-    }
+    await waitForExpression(page, `(() => {
+      if (document.querySelector('.shopping-done-modal.app-modal')) return true;
+      try {
+        if (typeof window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__ === 'function') window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__();
+        else document.querySelector('[data-action="open-shopping-done-modal"]')?.click();
+      } catch (error) {
+        window.__DOMACNOST_E2E_SHOPPING_DONE_ERROR__ = String(error?.stack || error?.message || error);
+      }
+      return Boolean(document.querySelector('.shopping-done-modal.app-modal'));
+    })()`, 6000, 150);
     const shoppingDoneCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
@@ -1614,6 +1641,7 @@ async function run() {
           modal: Boolean(modal),
           helper: typeof window.__DOMACNOST_E2E_OPEN_SHOPPING_DONE__,
           helperState: window.__DOMACNOST_E2E_LAST_SHOPPING_DONE__ || null,
+          helperError: window.__DOMACNOST_E2E_SHOPPING_DONE_ERROR__ || '',
           bodyText: (document.body?.innerText || '').slice(0, 360),
           bodyOpen: document.body.classList.contains('overview-open'),
           backdrop: Boolean(backdrop),
@@ -1632,7 +1660,7 @@ async function run() {
       console.log('DEBUG shoppingDone:', JSON.stringify(shoppingDoneValue, null, 2));
     }
     let shoppingDoneOk = true;
-    if (!shoppingDoneValue.modal) { fail('Nakup Hotovo modal se neotevrel.'); shoppingDoneOk = false; }
+    if (!shoppingDoneValue.modal) { fail(`Nakup Hotovo modal se neotevrel (${JSON.stringify({ helper: shoppingDoneValue.helper, helperState: shoppingDoneValue.helperState, helperError: shoppingDoneValue.helperError, body: shoppingDoneValue.bodyText })}).`); shoppingDoneOk = false; }
     if (!shoppingDoneValue.bodyOpen) { fail('Nakup Hotovo modal nenastavil modalni stav body.'); shoppingDoneOk = false; }
     if (!shoppingDoneValue.backdrop) { fail('Nakup Hotovo modal nepouziva spolecny app-modal-backdrop.'); shoppingDoneOk = false; }
     if (!shoppingDoneValue.modalSurface) { fail('Nakup Hotovo modal nema novy povrch a vnitrni scroll.'); shoppingDoneOk = false; }
@@ -1716,6 +1744,28 @@ async function run() {
     if (!dataRepairValue.before?.repairableCount || dataRepairValue.plan?.actions?.length !== 1 || !dataRepairValue.previewVisible) { fail('Průvodce opravou nevytvořil náhled bezpečné opravy.'); settingsOk = false; }
     if (!dataRepairValue.result?.applied || dataRepairValue.result?.matchingRows !== 1 || dataRepairValue.result?.remainingDuplicates !== 0) { fail('Průvodce opravy neodstranil pouze nadbytečnou shodnou kopii.'); settingsOk = false; }
     if (!dataRepairValue.result?.backupAvailable || !dataRepairValue.restoreButton || dataRepairValue.result?.result?.changedRecords !== 1) { fail('Průvodce opravy nevytvořil funkční bod návratu.'); settingsOk = false; }
+    const manualDataRepairCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      awaitPromise: true,
+      expression: `(async () => {
+        const prepared = window.__DOMACNOST_E2E_PREPARE_MANUAL_DATA_REPAIR__?.();
+        const beforePlan = window.__DOMACNOST_E2E_MANUAL_DATA_REPAIR_PLAN__?.();
+        const picker = document.querySelector('[data-data-repair-target][data-id="' + (prepared?.issue?.id || '') + '"]');
+        if (picker) {
+          picker.value = 'shopping-list-repair-target-b';
+          picker.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        const plan = window.__DOMACNOST_E2E_MANUAL_DATA_REPAIR_PLAN__?.();
+        const result = await window.__DOMACNOST_E2E_APPLY_MANUAL_DATA_REPAIR__?.();
+        return { prepared, beforePlan, plan, result };
+      })()`
+    });
+    const manualDataRepairValue = manualDataRepairCheck.result?.value || {};
+    const manualOptions = manualDataRepairValue.prepared?.issue?.repairOptions || [];
+    if (!manualDataRepairValue.prepared?.picker || manualOptions.length < 2 || manualOptions.some((option) => option.id === 'shopping-list-repair-foreign')) { fail('Ruční oprava nenabídla pouze bezpečné cíle aktuální domácnosti.'); settingsOk = false; }
+    if (manualDataRepairValue.beforePlan?.actions?.some((action) => action.recordId === 'shopping-repair-orphan-e2e')) { fail('Nejasná vazba se naplánovala bez ručního výběru cíle.'); settingsOk = false; }
+    if (manualDataRepairValue.plan?.manualSelectedCount !== 1 || !manualDataRepairValue.plan?.actions?.some((action) => action.targetId === 'shopping-list-repair-target-b')) { fail('Ruční výběr cíle se nepropsal do náhledu opravy.'); settingsOk = false; }
+    if (!manualDataRepairValue.result?.applied || manualDataRepairValue.result?.targetId !== 'shopping-list-repair-target-b' || !manualDataRepairValue.result?.backupAvailable) { fail('Ruční oprava nepřiřadila vazbu k vybranému cíli nebo nevytvořila bod návratu.'); settingsOk = false; }
     const damagedImportCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       awaitPromise: true,

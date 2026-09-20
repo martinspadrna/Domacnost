@@ -174,6 +174,7 @@ if (app && pool && subscriptions && calendar && warranty) {
   expect(calendar, 'render: renderCalendarEventDetailModal', 'calendar.js: Kalendář publikuje detail do společné overlay vrstvy.');
   expect(warranty, 'render: renderWarrantyDetailModal', 'warranty.js: Záruky publikuje detail do společné overlay vrstvy.');
   expect(app, 'function renderOverlaysOnly()', 'app.js: modaly a rychlé přehledy mají samostatnou render cestu.');
+  expect(app, "lastRenderedSurfaceMode !== 'app' || !overlays || renderInProgress", 'app.js: samostatná okna nejsou blokovaná dlouhým cloudovým načítáním hlavního obsahu.');
   expect(app, "app.dataset.lastRenderSurface = changed ? 'overlay' : 'none'", 'app.js: overlay render neoznačuje změnu hlavního modulu.');
   expect(app, 'renderOverlays: renderOverlaysOnly', 'app.js: modulům se předává úzká overlay render cesta.');
   expect(app, 'function renderActiveModuleOnly()', 'app.js: otevřený modul má vlastní render cestu bez přestavby shellu.');
@@ -228,10 +229,13 @@ if (app && styles) {
   expect(app, 'function buildDataRepairPlan(', 'app.js: bezpečné opravy se nejdřív skládají do náhledu.');
   expect(app, 'function applyDataRepairPlan(', 'app.js: vybraný plán oprav lze potvrzeně provést.');
   expect(app, 'data-data-repair-preview', 'app.js: uživatel před potvrzením vidí přesný náhled oprav.');
+  expect(app, 'data-data-repair-target', 'app.js: nejasná návaznost nabízí ruční výběr bezpečného cíle.');
+  expect(app, 'dataRepairCandidateBelongsToHousehold', 'app.js: cíle ruční opravy jsou omezené na aktuální domácnost.');
   expect(app, 'function restorePreRepairBackup(', 'app.js: poslední automatickou opravu lze vrátit.');
   expect(styles, '.cloud-recovery-panel {', 'styles.css: obnova synchronizace má vlastní responzivní povrch.');
   expect(styles, '.data-integrity-issue {', 'styles.css: nalezené datové problémy mají čitelné řádky.');
   expect(styles, '.data-repair-preview {', 'styles.css: náhled oprav má vlastní čitelný povrch.');
+  expect(styles, '.data-repair-target-field {', 'styles.css: ruční výběr cíle má čitelný formulář.');
 }
 
 if (app && index && styles && pwa) {

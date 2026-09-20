@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_511';
-  const APP_BUILD = 511;
+  const APP_VERSION = 'Domácnost+ v.0.1_512';
+  const APP_BUILD = 512;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -1313,7 +1313,7 @@
   let preImportBackupAvailable = false;
   let preRepairBackupAvailable = false;
   let dataIntegrityAuditCache = { revision: -1, result: null };
-  let dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
+  let dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: null };
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
   let toastTimer = null;
   let undoToastTimer = null;
@@ -3892,7 +3892,9 @@
 
   function renderOverlaysOnly() {
     const overlays = app?.querySelector?.('[data-app-overlays]');
-    if (lastRenderedSurfaceMode !== 'app' || !overlays || renderInProgress || renderDeferDepth > 0) {
+    // Okna jsou samostatná vrstva a musí reagovat i během delšího cloudového
+    // načítání, které dočasně odkládá překreslení hlavního obsahu.
+    if (lastRenderedSurfaceMode !== 'app' || !overlays || renderInProgress) {
       render();
       return false;
     }
@@ -13644,16 +13646,31 @@
     };
   }
 
+  function dataRepairCandidateBelongsToHousehold(record) {
+    const recordHouseholdId = normalizeText(record?.householdId);
+    const householdId = normalizeText(currentHouseholdId(false));
+    return !recordHouseholdId || (Boolean(householdId) && recordHouseholdId === householdId);
+  }
+
+  function dataRepairCandidateOptions(collection) {
+    return (state[collection] || [])
+      .filter((item) => item?.id && dataRepairCandidateBelongsToHousehold(item))
+      .map((item) => ({ id: String(item.id), label: trashRecordTitle(collection, item) }));
+  }
+
   function buildDataIntegrityAudit() {
     if (dataIntegrityAuditCache.revision === globalSearchIndexRevision && dataIntegrityAuditCache.result) return dataIntegrityAuditCache.result;
     const issues = [];
     let records = 0;
     const addIssue = (collection, title, detail, options = {}) => {
       const action = options.action || null;
+      const manualAction = options.manualAction || null;
+      const repairOptions = Array.isArray(options.repairOptions) ? options.repairOptions : [];
       const kind = options.kind || 'manual';
       issues.push({
-        id: dataRepairIssueId(collection, kind, action, detail), collection, title, detail, kind,
-        repairable: Boolean(action), repairLabel: normalizeText(options.repairLabel), action, ...dataIntegrityTarget(collection)
+        id: dataRepairIssueId(collection, kind, action || manualAction, detail), collection, title, detail, kind,
+        repairable: Boolean(action), manualRepair: Boolean(manualAction && repairOptions.length),
+        repairLabel: normalizeText(options.repairLabel), action, manualAction, repairOptions, ...dataIntegrityTarget(collection)
       });
     };
     const collections = getCollectionNames().map((collection) => [collection, Array.isArray(state[collection]) ? state[collection] : []]);
@@ -13689,16 +13706,19 @@
 
     const ids = (collection) => new Set((state[collection] || []).map((item) => String(item?.id || '')).filter(Boolean));
     const checkReference = (collection, field, parentCollection, label) => {
-      const parents = (state[parentCollection] || []).filter((item) => item?.id);
+      const parents = (state[parentCollection] || []).filter((item) => item?.id && dataRepairCandidateBelongsToHousehold(item));
       const validIds = new Set(parents.map((item) => String(item.id)));
       (state[collection] || []).forEach((row, index) => {
         const value = String(row?.[field] || '');
         if (!value || validIds.has(value)) return;
-        const target = parents.length === 1 ? parents[0] : null;
+        const sourceAllowed = dataRepairCandidateBelongsToHousehold(row);
+        const target = sourceAllowed && parents.length === 1 ? parents[0] : null;
         addIssue(collection, 'Chybějící návaznost', `${label}: ${value.slice(0, 12)}…`, {
           kind: 'orphan-reference',
-          action: target ? { type: 'reattach-reference', collection, index, recordId: normalizeText(row.id), field, expectedValue: value, targetId: String(target.id) } : null,
-          repairLabel: target ? `Přiřadit k „${trashRecordTitle(parentCollection, target)}“` : parents.length ? 'Je potřeba vybrat správnou cílovou položku' : 'Nejdřív je potřeba vytvořit cílovou položku'
+          action: target ? { type: 'reattach-reference', collection, index, recordId: normalizeText(row.id), field, expectedValue: value, targetCollection: parentCollection, targetId: String(target.id) } : null,
+          manualAction: sourceAllowed && parents.length > 1 ? { type: 'reattach-reference', collection, index, recordId: normalizeText(row.id), field, expectedValue: value, targetCollection: parentCollection } : null,
+          repairOptions: sourceAllowed && parents.length > 1 ? dataRepairCandidateOptions(parentCollection) : [],
+          repairLabel: !sourceAllowed ? 'Záznam patří jiné domácnosti a automaticky se nemění' : target ? `Přiřadit k „${trashRecordTitle(parentCollection, target)}“` : parents.length ? 'Je potřeba vybrat správnou cílovou položku' : 'Nejdřív je potřeba vytvořit cílovou položku'
         });
       });
     };
@@ -13711,16 +13731,19 @@
     checkReference('subscriptionPayments', 'subscriptionId', 'subscriptions', 'Platba bez existující služby');
     checkReference('subscriptionPayments', 'personId', 'subscriptionPeople', 'Platba bez existující osoby');
     const personIds = ids('subscriptionPeople');
-    const people = (state.subscriptionPeople || []).filter((item) => item?.id);
+    const people = (state.subscriptionPeople || []).filter((item) => item?.id && dataRepairCandidateBelongsToHousehold(item));
     (state.subscriptions || []).forEach((service, serviceIndex) => {
       (service.shares || []).forEach((share, shareIndex) => {
         records += 1;
         if (share.personId && !personIds.has(String(share.personId))) {
-          const target = people.length === 1 ? people[0] : null;
+          const sourceAllowed = dataRepairCandidateBelongsToHousehold(service);
+          const target = sourceAllowed && people.length === 1 ? people[0] : null;
           addIssue('subscriptions', 'Chybějící návaznost', 'Sdílení předplatného odkazuje na neexistující osobu', {
             kind: 'orphan-subscription-share',
-            action: target ? { type: 'reattach-subscription-share', serviceIndex, shareIndex, expectedValue: String(share.personId), targetId: String(target.id) } : null,
-            repairLabel: target ? `Přiřadit k „${trashRecordTitle('subscriptionPeople', target)}“` : people.length ? 'Je potřeba vybrat správnou osobu' : 'Nejdřív je potřeba přidat osobu'
+            action: target ? { type: 'reattach-subscription-share', serviceIndex, shareIndex, expectedValue: String(share.personId), targetCollection: 'subscriptionPeople', targetId: String(target.id) } : null,
+            manualAction: sourceAllowed && people.length > 1 ? { type: 'reattach-subscription-share', serviceIndex, shareIndex, expectedValue: String(share.personId), targetCollection: 'subscriptionPeople' } : null,
+            repairOptions: sourceAllowed && people.length > 1 ? dataRepairCandidateOptions('subscriptionPeople') : [],
+            repairLabel: !sourceAllowed ? 'Předplatné patří jiné domácnosti a automaticky se nemění' : target ? `Přiřadit k „${trashRecordTitle('subscriptionPeople', target)}“` : people.length ? 'Je potřeba vybrat správnou osobu' : 'Nejdřív je potřeba přidat osobu'
           });
         }
       });
@@ -13758,27 +13781,45 @@
   }
 
   function syncDataRepairSelection(audit) {
-    const validIds = new Set(audit.issues.filter((issue) => issue.repairable).map((issue) => issue.id));
+    const validIds = new Set(audit.issues.filter((issue) => issue.repairable || issue.manualRepair).map((issue) => issue.id));
+    const defaultIds = new Set(audit.issues.filter((issue) => issue.repairable).map((issue) => issue.id));
     if (dataRepairUi.checksum !== audit.checksum) {
-      dataRepairUi = { checksum: audit.checksum, selectedIssueIds: new Set(validIds), preview: null, lastResult: dataRepairUi.lastResult || null };
+      dataRepairUi = { checksum: audit.checksum, selectedIssueIds: defaultIds, manualTargets: new Map(), preview: null, lastResult: dataRepairUi.lastResult || null };
       return;
     }
     dataRepairUi.selectedIssueIds = new Set([...dataRepairUi.selectedIssueIds].filter((id) => validIds.has(id)));
+    dataRepairUi.manualTargets = new Map([...(dataRepairUi.manualTargets || new Map())].filter(([id, targetId]) => {
+      const issue = audit.issues.find((item) => item.id === id && item.manualRepair);
+      return issue?.repairOptions?.some((option) => option.id === targetId);
+    }));
     if (dataRepairUi.preview?.checksum !== audit.checksum) dataRepairUi.preview = null;
   }
 
   function buildDataRepairPlan(selectedIssueIds = dataRepairUi.selectedIssueIds) {
     const audit = buildDataIntegrityAudit();
     const selected = selectedIssueIds instanceof Set ? selectedIssueIds : new Set(selectedIssueIds || []);
-    const issues = audit.issues.filter((issue) => issue.repairable && selected.has(issue.id));
+    const issues = audit.issues.filter((issue) => selected.has(issue.id) && (issue.repairable || issue.manualRepair));
+    const plannedIssues = issues.map((issue) => {
+      if (issue.repairable) return { issue, action: structuredCloneSafe(issue.action), step: issue.repairLabel || issue.title, manual: false };
+      const targetId = dataRepairUi.manualTargets?.get(issue.id) || '';
+      const option = issue.repairOptions?.find((item) => item.id === targetId);
+      if (!option) return null;
+      return {
+        issue,
+        action: { ...structuredCloneSafe(issue.manualAction), targetId },
+        step: `${issue.title}: přiřadit k „${option.label}“ (ručně vybráno)`,
+        manual: true
+      };
+    }).filter(Boolean);
     return {
       checksum: audit.checksum,
       createdAt: new Date().toISOString(),
-      issueIds: issues.map((issue) => issue.id),
-      actions: issues.map((issue) => structuredCloneSafe(issue.action)),
-      steps: issues.map((issue) => issue.repairLabel || issue.title),
-      changedRecords: issues.reduce((sum, issue) => sum + Math.max(1, Number(issue.action?.removeCount || 1)), 0),
-      manualCount: audit.manualCount
+      issueIds: plannedIssues.map(({ issue }) => issue.id),
+      actions: plannedIssues.map(({ action }) => action),
+      steps: plannedIssues.map(({ step }) => step),
+      changedRecords: plannedIssues.reduce((sum, { action }) => sum + Math.max(1, Number(action?.removeCount || 1)), 0),
+      manualSelectedCount: plannedIssues.filter(({ manual }) => manual).length,
+      manualCount: audit.issues.filter((issue) => !issue.repairable && !plannedIssues.some(({ issue: planned }) => planned.id === issue.id)).length
     };
   }
 
@@ -13832,17 +13873,22 @@
       return removedIndexes.size;
     }
     if (action.type === 'reattach-reference') {
-      const row = state[action.collection]?.[action.index];
-      if (!row || String(row[action.field] || '') !== String(action.expectedValue || '')) return 0;
+      const target = (state[action.targetCollection] || []).find((item) => String(item?.id || '') === String(action.targetId || ''));
+      if (!target || !dataRepairCandidateBelongsToHousehold(target)) return 0;
+      const rows = state[action.collection] || [];
+      const row = rows.find((item) => normalizeText(item?.id) === normalizeText(action.recordId) && String(item?.[action.field] || '') === String(action.expectedValue || '')) || rows[action.index];
+      if (!row || !dataRepairCandidateBelongsToHousehold(row) || String(row[action.field] || '') !== String(action.expectedValue || '')) return 0;
       row[action.field] = action.targetId;
       markDataRepairRecordPending(row);
       changedCollections.add(action.collection);
       return 1;
     }
     if (action.type === 'reattach-subscription-share') {
+      const target = (state.subscriptionPeople || []).find((item) => String(item?.id || '') === String(action.targetId || ''));
+      if (!target || !dataRepairCandidateBelongsToHousehold(target)) return 0;
       const service = state.subscriptions?.[action.serviceIndex];
       const share = service?.shares?.[action.shareIndex];
-      if (!share || String(share.personId || '') !== String(action.expectedValue || '')) return 0;
+      if (!service || !dataRepairCandidateBelongsToHousehold(service) || !share || String(share.personId || '') !== String(action.expectedValue || '')) return 0;
       share.personId = action.targetId;
       markDataRepairRecordPending(service);
       changedCollections.add('subscriptions');
@@ -13889,28 +13935,42 @@
     touchState();
     saveState({ immediate: true, skipTrashTracking: true });
     dataIntegrityAuditCache = { revision: -1, result: null };
-    dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: { changedRecords, finishedAt: new Date().toISOString() } };
+    dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: { changedRecords, finishedAt: new Date().toISOString() } };
     render();
     showToast(`Bezpečně opraveno ${changedRecords} záznamů`, { force: true });
     scheduleCloudAutosync('data-repair', { force: true, delayMs: 500 });
     return true;
   }
 
+  function renderDataIntegrityIssue(issue) {
+    const selected = dataRepairUi.selectedIssueIds.has(issue.id);
+    if (issue.repairable) {
+      return `<div class="data-integrity-issue repairable ${selected ? 'selected' : ''}"><button type="button" class="data-repair-select" data-action="toggle-data-repair-issue" data-id="${escapeHtml(issue.id)}" aria-pressed="${selected ? 'true' : 'false'}"><span aria-hidden="true">${selected ? '✓' : '+'}</span><span><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></span></button><button class="mini-ghost" type="button" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}">Otevřít</button></div>`;
+    }
+    if (issue.manualRepair) {
+      const targetId = dataRepairUi.manualTargets?.get(issue.id) || '';
+      return `<div class="data-integrity-issue manual manual-repair ${targetId ? 'selected' : ''}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small><label class="data-repair-target-field"><span>Správný cíl</span><select data-data-repair-target data-id="${escapeHtml(issue.id)}"><option value="">Vyber cíl…</option>${issue.repairOptions.map((option) => `<option value="${escapeHtml(option.id)}" ${option.id === targetId ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}</select></label></div><button class="mini-ghost" type="button" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}">Otevřít</button></div>`;
+    }
+    return `<button type="button" class="data-integrity-issue manual" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></div><span class="badge warn">ručně</span></button>`;
+  }
+
   function renderDataIntegrityCard() {
     const audit = buildDataIntegrityAudit();
     syncDataRepairSelection(audit);
     const ok = audit.issueCount === 0;
-    const selectedCount = dataRepairUi.selectedIssueIds.size;
+    const selectedCount = buildDataRepairPlan().actions.length;
     const preview = dataRepairUi.preview?.checksum === audit.checksum ? dataRepairUi.preview : null;
     const visibleIssues = audit.issues.slice(0, 50);
+    const manualRepairCount = audit.issues.filter((issue) => issue.manualRepair).length;
+    const selectableCount = audit.repairableCount + manualRepairCount;
     return `
       <section class="card desktop-span-2 compact-settings-card data-integrity-card" data-data-integrity-card>
         <div class="card-header"><div><h2>Kontrola a oprava dat</h2><p>Najde duplicity a chybějící vazby. Bezpečné opravy vždy nejdřív ukáže v náhledu a před změnou vytvoří bod návratu.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
         <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Zkontrolováno</span><strong>${audit.records}</strong></div><div class="mini-stat"><span>Otisk dat</span><strong>${escapeHtml(audit.checksum)}</strong></div><div class="mini-stat"><span>Čas kontroly</span><strong>${escapeHtml(formatDateTime(audit.checkedAt))}</strong></div></div>
         ${dataRepairUi.lastResult ? `<div class="inline-note success-note">Poslední oprava změnila ${dataRepairUi.lastResult.changedRecords} záznamů. Bod návratu zůstal uložený.</div>` : ''}
-        ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-repair-summary"><span class="badge good">${audit.repairableCount} bezpečně opravitelných</span>${audit.manualCount ? `<span class="badge warn">${audit.manualCount} k ruční kontrole</span>` : ''}</div><div class="data-integrity-issues">${visibleIssues.map((issue) => issue.repairable ? `<div class="data-integrity-issue repairable ${dataRepairUi.selectedIssueIds.has(issue.id) ? 'selected' : ''}"><button type="button" class="data-repair-select" data-action="toggle-data-repair-issue" data-id="${escapeHtml(issue.id)}" aria-pressed="${dataRepairUi.selectedIssueIds.has(issue.id) ? 'true' : 'false'}"><span aria-hidden="true">${dataRepairUi.selectedIssueIds.has(issue.id) ? '✓' : '+'}</span><span><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></span></button><button class="mini-ghost" type="button" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}">Otevřít</button></div>` : `<button type="button" class="data-integrity-issue manual" data-nav="${escapeHtml(issue.nav)}" data-target-tab="${escapeHtml(issue.tab)}"><span aria-hidden="true">!</span><div><strong>${escapeHtml(issue.title)}</strong><em>${escapeHtml(issue.detail)}</em><small>${escapeHtml(issue.repairLabel)}</small></div><span class="badge warn">ručně</span></button>`).join('')}</div>${audit.issueCount > visibleIssues.length ? `<div class="inline-note">Zobrazeno prvních ${visibleIssues.length} problémů. Po jejich opravě spusť kontrolu znovu.</div>` : ''}`}
-        ${preview ? `<div class="data-repair-preview" data-data-repair-preview><div><strong>Náhled vybraných změn</strong><span>${preview.actions.length} oprav · přibližně ${preview.changedRecords} záznamů</span></div><ol>${preview.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>${preview.manualCount ? `<div class="inline-note">${preview.manualCount} nejasných problémů zůstane beze změny k ruční kontrole.</div>` : ''}<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="apply-data-repair">Potvrdit a opravit</button><button class="ghost-btn" type="button" data-action="cancel-data-repair-preview">Zpět k výběru</button></div></div>` : ''}
-        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button>${audit.repairableCount ? `<button class="ghost-btn" type="button" data-action="select-safe-data-repairs">Vybrat bezpečné</button><button class="primary-btn" type="button" data-action="preview-data-repair" ${selectedCount ? '' : 'disabled'}>Náhled oprav (${selectedCount})</button>` : ''}${preRepairBackupAvailable ? '<button class="ghost-btn" type="button" data-action="restore-pre-repair">Vrátit poslední opravu</button>' : ''}</div>
+        ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-repair-summary"><span class="badge good">${audit.repairableCount} bezpečně opravitelných</span>${manualRepairCount ? `<span class="badge">${manualRepairCount} s výběrem cíle</span>` : ''}${audit.manualCount - manualRepairCount > 0 ? `<span class="badge warn">${audit.manualCount - manualRepairCount} k ruční kontrole</span>` : ''}</div><div class="data-integrity-issues">${visibleIssues.map(renderDataIntegrityIssue).join('')}</div>${audit.issueCount > visibleIssues.length ? `<div class="inline-note">Zobrazeno prvních ${visibleIssues.length} problémů. Po jejich opravě spusť kontrolu znovu.</div>` : ''}`}
+        ${preview ? `<div class="data-repair-preview" data-data-repair-preview><div><strong>Náhled vybraných změn</strong><span>${preview.actions.length} oprav · přibližně ${preview.changedRecords} záznamů</span></div>${preview.manualSelectedCount ? `<div class="inline-note success-note">${preview.manualSelectedCount} ${preview.manualSelectedCount === 1 ? 'vazba byla vybrána' : 'vazby byly vybrány'} ručně.</div>` : ''}<ol>${preview.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>${preview.manualCount ? `<div class="inline-note">${preview.manualCount} nejasných problémů zůstane beze změny k ruční kontrole.</div>` : ''}<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="apply-data-repair">Potvrdit a opravit</button><button class="ghost-btn" type="button" data-action="cancel-data-repair-preview">Zpět k výběru</button></div></div>` : ''}
+        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button>${audit.repairableCount ? `<button class="ghost-btn" type="button" data-action="select-safe-data-repairs">Vybrat bezpečné</button>` : ''}${selectableCount ? `<button class="primary-btn" type="button" data-action="preview-data-repair" ${selectedCount ? '' : 'disabled'}>Náhled oprav (${selectedCount})</button>` : ''}${preRepairBackupAvailable ? '<button class="ghost-btn" type="button" data-action="restore-pre-repair">Vrátit poslední opravu</button>' : ''}</div>
       </section>`;
   }
 
@@ -21795,7 +21855,7 @@
       if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error('Bod návratu není dostupný');
       applyImportedStateSnapshot(snapshot);
       dataIntegrityAuditCache = { revision: -1, result: null };
-      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
+      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: null };
       showToast('Stav před poslední opravou byl obnoven', { force: true });
       return true;
     } catch (error) {
@@ -22138,6 +22198,23 @@
 
   app.addEventListener('change', (event) => {
     rememberSessionFormDraft(event.target.closest?.('form'));
+    const dataRepairTarget = event.target.closest('[data-data-repair-target]');
+    if (dataRepairTarget) {
+      const audit = buildDataIntegrityAudit();
+      const issue = audit.issues.find((item) => item.id === normalizeText(dataRepairTarget.dataset.id) && item.manualRepair);
+      const targetId = normalizeText(dataRepairTarget.value);
+      if (!issue || (targetId && !issue.repairOptions.some((option) => option.id === targetId))) return;
+      if (targetId) {
+        dataRepairUi.manualTargets.set(issue.id, targetId);
+        dataRepairUi.selectedIssueIds.add(issue.id);
+      } else {
+        dataRepairUi.manualTargets.delete(issue.id);
+        dataRepairUi.selectedIssueIds.delete(issue.id);
+      }
+      dataRepairUi.preview = null;
+      render();
+      return;
+    }
     const loyaltyPhotoInput = event.target.closest('[data-loyalty-card-photo]');
     if (loyaltyPhotoInput) {
       handleLoyaltyPhotoInput(loyaltyPhotoInput);
@@ -22612,7 +22689,7 @@
       state.shopping = [...(state.shopping || []).filter((item) => item.id !== duplicate.id), duplicate, structuredCloneSafe(duplicate)];
       touchState();
       dataIntegrityAuditCache = { revision: -1, result: null };
-      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), preview: null, lastResult: null };
+      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: null };
       activeModule = 'settings';
       moduleTabs = { ...(moduleTabs || {}), settings: 'data' };
       render();
@@ -22634,6 +22711,47 @@
         matchingRows: (state.shopping || []).filter((item) => item.id === 'shopping-repair-duplicate-e2e').length,
         backupAvailable: preRepairBackupAvailable, result: dataRepairUi.lastResult
       };
+    };
+    window.__DOMACNOST_E2E_PREPARE_MANUAL_DATA_REPAIR__ = () => {
+      const householdId = currentHouseholdId();
+      const targets = [
+        { id: 'shopping-list-repair-target-a', householdId, name: 'E2E cíl A', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'shopping-list-repair-target-b', householdId, name: 'E2E cíl B', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'shopping-list-repair-foreign', householdId: 'other-household-e2e', name: 'Cizí domácnost', createdAt: '2026-01-01T00:00:00.000Z' }
+      ];
+      const targetIds = new Set(targets.map((item) => item.id));
+      state.shoppingLists = [...(state.shoppingLists || []).filter((item) => !targetIds.has(item.id)), ...targets];
+      const orphan = {
+        id: 'shopping-repair-orphan-e2e', householdId, profileId: currentProfileId(), listId: 'missing-shopping-list-e2e',
+        cloudId: '', name: 'E2E osiřelá položka', quantity: 1, unit: 'ks', note: '', done: false,
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
+      };
+      state.shopping = [...(state.shopping || []).filter((item) => item.id !== orphan.id), orphan];
+      touchState();
+      dataIntegrityAuditCache = { revision: -1, result: null };
+      dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: null };
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'data' };
+      render();
+      const audit = buildDataIntegrityAudit();
+      const issue = audit.issues.find((item) => item.manualAction?.recordId === orphan.id);
+      return { issue, picker: Boolean(document.querySelector(`[data-data-repair-target][data-id="${issue?.id || ''}"]`)) };
+    };
+    window.__DOMACNOST_E2E_SELECT_MANUAL_DATA_REPAIR__ = (targetId = 'shopping-list-repair-target-b') => {
+      const audit = buildDataIntegrityAudit();
+      const issue = audit.issues.find((item) => item.manualAction?.recordId === 'shopping-repair-orphan-e2e');
+      if (!issue || !issue.repairOptions.some((option) => option.id === targetId)) return null;
+      dataRepairUi.manualTargets.set(issue.id, targetId);
+      dataRepairUi.selectedIssueIds.add(issue.id);
+      dataRepairUi.preview = buildDataRepairPlan(dataRepairUi.selectedIssueIds);
+      render();
+      return dataRepairUi.preview;
+    };
+    window.__DOMACNOST_E2E_MANUAL_DATA_REPAIR_PLAN__ = () => buildDataRepairPlan();
+    window.__DOMACNOST_E2E_APPLY_MANUAL_DATA_REPAIR__ = async () => {
+      const applied = await applyDataRepairPlan({ skipConfirm: true });
+      const row = (state.shopping || []).find((item) => item.id === 'shopping-repair-orphan-e2e');
+      return { applied, targetId: row?.listId || '', backupAvailable: preRepairBackupAvailable };
     };
     window.__DOMACNOST_E2E_PWA_UPDATE__ = {
       markReady: () => {

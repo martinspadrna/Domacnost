@@ -16554,7 +16554,7 @@ button[data-busy-submit="true"]::before {
   .cloud-recovery-error-row { grid-template-columns: 1fr; }
 }
 
-/* v511: průvodce bezpečnou opravou dat s náhledem a bodem návratu */
+/* v512: průvodce bezpečnou opravou dat včetně ručního výběru cíle */
 .data-repair-summary {
   display: flex;
   flex-wrap: wrap;
@@ -16619,6 +16619,34 @@ button[data-busy-submit="true"]::before {
 .data-integrity-issue.manual { grid-template-columns: 26px minmax(0, 1fr) auto; }
 .data-integrity-issue.manual > .badge { width: auto; height: auto; padding: 4px 7px; border-radius: 999px; }
 
+.data-integrity-issue.manual-repair {
+  align-items: start;
+}
+
+.data-repair-target-field {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.data-repair-target-field > span {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 800;
+}
+
+.data-repair-target-field select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 30px 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--input, var(--card));
+  color: var(--text);
+}
+
 .mini-ghost {
   padding: 7px 9px;
   border: 1px solid var(--line);
@@ -16647,6 +16675,9 @@ button[data-busy-submit="true"]::before {
 @media (max-width: 720px) {
   .data-integrity-issue.repairable { grid-template-columns: 1fr; }
   .data-integrity-issue.repairable .mini-ghost { width: 100%; }
+  .data-integrity-issue.manual-repair { grid-template-columns: 26px minmax(0, 1fr); }
+  .data-integrity-issue.manual-repair .mini-ghost { grid-column: 1 / -1; width: 100%; }
+  .data-repair-target-field { grid-template-columns: 1fr; }
   .data-repair-preview > div:first-child { display: grid; }
 }
 /* v510: bezpečné řešení souběžných změn jednotlivých cloudových záznamů */
