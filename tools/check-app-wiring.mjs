@@ -230,6 +230,12 @@ if (app && styles) {
   expect(app, "scheduleAutomaticDataIntegrityAudit('boot'", 'app.js: automatická kontrola se naplánuje po spuštění aplikace.');
   expect(app, "scheduleAutomaticDataIntegrityAudit('local-change'", 'app.js: kontrola se zopakuje po ustálení lokální změny.');
   expect(app, 'data-data-integrity-card', 'app.js: výsledek kontroly dat je viditelný v Nastavení > Data.');
+  expect(app, "const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1'", 'app.js: lokální měření rychlosti má oddělené omezené úložiště.');
+  expect(app, 'function recordAppPerformanceSample(', 'app.js: start a otevírání modulů se měří přímo v aplikaci.');
+  expect(app, 'function appPerformanceSummary()', 'app.js: opakovaná zpomalení se vyhodnocují z více měření.');
+  expect(app, "{ id: 'performance', label: 'Rychlost aplikace'", 'app.js: upozornění na výkon lze samostatně vypnout.');
+  expect(app, 'data-performance-card', 'app.js: Nastavení > Data ukazuje lokální přehled rychlosti.');
+  expect(app, 'data-action="clear-performance-metrics"', 'app.js: lokální měření rychlosti lze vymazat.');
   expect(app, "const PRE_REPAIR_STATE_IDB_KEY = 'pre-repair'", 'app.js: automatická oprava má vlastní trvalý bod návratu.');
   expect(app, 'function buildDataRepairPlan(', 'app.js: bezpečné opravy se nejdřív skládají do náhledu.');
   expect(app, 'function applyDataRepairPlan(', 'app.js: vybraný plán oprav lze potvrzeně provést.');

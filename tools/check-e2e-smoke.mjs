@@ -1711,7 +1711,9 @@ async function run() {
           verifiedBackupLabel: /ověřená záloha/i.test(document.querySelector('.panel-data')?.innerText || ''),
           integrity: window.__DOMACNOST_E2E_EXPORT_INTEGRITY__?.() || null,
           dataAuditCard: Boolean(document.querySelector('[data-data-integrity-card]')),
-          dataAudit: window.__DOMACNOST_E2E_DATA_INTEGRITY__?.() || null
+          dataAudit: window.__DOMACNOST_E2E_DATA_INTEGRITY__?.() || null,
+          performanceCard: Boolean(document.querySelector('[data-performance-card]')),
+          performance: window.__DOMACNOST_E2E_PERFORMANCE__?.() || null
         };
       })()`
     });
@@ -1729,6 +1731,22 @@ async function run() {
     if (!settingsValue.verifiedBackupLabel) { fail('Nastavení Data nevysvětluje ověřenou zálohu.'); settingsOk = false; }
     if (!settingsValue.integrity?.valid || !/^[0-9a-f]{8}$/.test(settingsValue.integrity?.checksum || '')) { fail('Kontrolní součet exportu není stabilní.'); settingsOk = false; }
     if (!settingsValue.dataAuditCard || !Number.isFinite(settingsValue.dataAudit?.records) || !/^[0-9a-f]{8}$/.test(settingsValue.dataAudit?.checksum || '')) { fail('Nastavení Data nemá funkční kontrolu integrity záznamů.'); settingsOk = false; }
+    if (!settingsValue.performanceCard || !Number.isFinite(settingsValue.performance?.sampleCount)) { fail('Nastavení Data nemá lokální přehled rychlosti aplikace.'); settingsOk = false; }
+    const performanceMonitorCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const slow = window.__DOMACNOST_E2E_RECORD_SLOW_PERFORMANCE__?.();
+        const warning = window.__DOMACNOST_E2E_PERFORMANCE_NOTIFICATION__?.();
+        const cardText = document.querySelector('[data-performance-card]')?.innerText || '';
+        const cleared = window.__DOMACNOST_E2E_CLEAR_PERFORMANCE__?.();
+        const warningAfterClear = window.__DOMACNOST_E2E_PERFORMANCE_NOTIFICATION__?.();
+        return { slow, warning, cardText, cleared, warningAfterClear, cardAfterClear: Boolean(document.querySelector('[data-performance-card]')) };
+      })()`
+    });
+    const performanceMonitorValue = performanceMonitorCheck.result?.value || {};
+    if (performanceMonitorValue.slow?.warning?.moduleId !== 'garage' || performanceMonitorValue.warning?.type !== 'performance' || performanceMonitorValue.warning?.nav !== 'settings' || performanceMonitorValue.warning?.tab !== 'data') { fail('Opakované zpomalení modulu nevytvořilo upozornění do přehledu rychlosti.'); settingsOk = false; }
+    if (!/Garáž je opakovaně pomalejší/i.test(performanceMonitorValue.cardText || '')) { fail('Karta rychlosti nevysvětlila opakované zpomalení modulu.'); settingsOk = false; }
+    if (performanceMonitorValue.cleared?.sampleCount !== 0 || performanceMonitorValue.warningAfterClear || !performanceMonitorValue.cardAfterClear) { fail('Vymazání lokálních měření rychlosti nevyčistilo stav a upozornění.'); settingsOk = false; }
     const dataRepairCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       awaitPromise: true,
@@ -1801,8 +1819,8 @@ async function run() {
       })()`
     });
     const notificationSettingsValue = notificationSettingsCheck.result?.value || {};
-    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 8 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
-    else ok('Upozornění: osm typů lze samostatně zapnout nebo vypnout.');
+    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 9 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
+    else ok('Upozornění: devět typů lze samostatně zapnout nebo vypnout.');
 
     await page.send('Runtime.evaluate', {
       expression: `(window.__DOMACNOST_E2E_SET_CLOUD_STATUS__?.(), window.__DOMACNOST_E2E_NAV__('settings', 'cloud'))`,

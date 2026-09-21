@@ -9,8 +9,13 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_513';
-  const APP_BUILD = 513;
+  const APP_VERSION = 'Domácnost+ v.0.1_514';
+  const APP_BUILD = 514;
+  const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
+  const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
+  const APP_PERFORMANCE_MAX_SAMPLES = 96;
+  const APP_PERFORMANCE_SAMPLES_PER_MODULE = 12;
+  const APP_PERFORMANCE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -60,7 +65,8 @@
     { id: 'waste', label: 'Svoz odpadu', icon: '♻️' },
     { id: 'readings', label: 'Odečty', icon: '📊' },
     { id: 'tasks', label: 'Úkoly', icon: '✅' },
-    { id: 'dataHealth', label: 'Stav dat', icon: '🛡️' }
+    { id: 'dataHealth', label: 'Stav dat', icon: '🛡️' },
+    { id: 'performance', label: 'Rychlost aplikace', icon: '⚡' }
   ];
   const DEFAULT_NOTIFICATION_PREFERENCES = Object.fromEntries(NOTIFICATION_TYPE_DEFS.map((item) => [item.id, true]));
 
@@ -1116,6 +1122,10 @@
   let globalSearchIndexRevision = 0;
   let globalSearchIndexCache = { revision: -1, sources: [], rows: [] };
   let notificationItemsCache = { revision: -1, day: '', sources: [], rows: [] };
+  let appPerformanceMetrics = normalizeAppPerformanceMetrics(safeParse(localStorage.getItem(APP_PERFORMANCE_STORAGE_KEY), null));
+  let pendingPerformanceNavigation = null;
+  let appBootPerformanceRecorded = false;
+  let suppressNextAppPerformanceRender = false;
   let globalAlertsOpen = false;
   let moduleLoadBusyCount = 0;
   // Volitelné UI kontrakty modulů. Hlavní shell díky nim nemusí znát názvy
@@ -3986,8 +3996,9 @@
         window.setTimeout(() => requestRender({ quiet, surface }), 0);
       }
       clearQuietRenderClass();
+      const renderMs = Math.round((performance?.now ? performance.now() : Date.now()) - renderStartedAt);
+      recordAppPerformanceSample('render', activeId, renderMs, { surface: 'module-only' });
       if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
-        const renderMs = Math.round((performance?.now ? performance.now() : Date.now()) - renderStartedAt);
         const timings = window.__DOMACNOST_E2E_RENDER_TIMINGS__ || [];
         timings.push({ module: activeId, ms: renderMs, surface: 'module-only', at: Date.now() });
         window.__DOMACNOST_E2E_RENDER_TIMINGS__ = timings.slice(-80);
@@ -4154,8 +4165,16 @@
         window.setTimeout(() => requestRender({ quiet, surface }), 0);
       }
       clearQuietRenderClass();
+      const renderMs = Math.round((performance?.now ? performance.now() : Date.now()) - renderStartedAt);
+      if (suppressNextAppPerformanceRender) suppressNextAppPerformanceRender = false;
+      else recordAppPerformanceSample('render', renderModuleIdAtStart, renderMs, { surface: 'full' });
+      if (!appBootPerformanceRecorded && lastRenderedSurfaceMode === 'app') {
+        appBootPerformanceRecorded = true;
+        const bootEndedAt = performance?.now ? performance.now() : Date.now();
+        recordAppPerformanceSample('boot', 'app', bootEndedAt - APP_PERFORMANCE_STARTED_AT, { surface: 'ready' });
+      }
+      if (lastRenderedSurfaceMode === 'app') finishPendingPerformanceNavigation(activeModule || renderModuleIdAtStart);
       if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
-        const renderMs = Math.round((performance?.now ? performance.now() : Date.now()) - renderStartedAt);
         const timings = window.__DOMACNOST_E2E_RENDER_TIMINGS__ || [];
         timings.push({ module: renderModuleIdAtStart, ms: renderMs, at: Date.now() });
         window.__DOMACNOST_E2E_RENDER_TIMINGS__ = timings.slice(-80);
@@ -4442,6 +4461,133 @@
     `;
   }
 
+  function normalizeAppPerformanceMetrics(value) {
+    const allowedKinds = new Set(['boot', 'navigation', 'render']);
+    const oldestAllowedAt = Date.now() - APP_PERFORMANCE_MAX_AGE_MS;
+    const rawSamples = Array.isArray(value?.samples) ? value.samples : [];
+    const samples = rawSamples.map((sample) => ({
+      kind: normalizeText(sample?.kind),
+      module: normalizeText(sample?.module) || 'app',
+      surface: normalizeText(sample?.surface),
+      ms: Math.round(Number(sample?.ms)),
+      at: Math.round(Number(sample?.at))
+    })).filter((sample) => allowedKinds.has(sample.kind)
+      && Number.isFinite(sample.ms) && sample.ms >= 0 && sample.ms <= 60000
+      && Number.isFinite(sample.at) && sample.at >= oldestAllowedAt && sample.at <= Date.now() + 60000)
+      .slice(-APP_PERFORMANCE_MAX_SAMPLES);
+    return { version: 1, updatedAt: Math.max(0, Number(value?.updatedAt || 0)), samples };
+  }
+
+  function trimAppPerformanceSamples(samples) {
+    const counts = new Map();
+    return [...samples].reverse().filter((sample) => {
+      const key = `${sample.kind}:${sample.module}`;
+      const count = counts.get(key) || 0;
+      counts.set(key, count + 1);
+      return count < APP_PERFORMANCE_SAMPLES_PER_MODULE;
+    }).reverse().slice(-APP_PERFORMANCE_MAX_SAMPLES);
+  }
+
+  function recordAppPerformanceSample(kind, moduleId, durationMs, options = {}) {
+    const ms = Math.round(Number(durationMs));
+    if (!['boot', 'navigation', 'render'].includes(kind) || !Number.isFinite(ms) || ms < 0 || ms > 60000) return null;
+    const sample = {
+      kind,
+      module: normalizeText(moduleId) || 'app',
+      surface: normalizeText(options.surface),
+      ms,
+      at: Math.round(Number(options.at || Date.now()))
+    };
+    appPerformanceMetrics = {
+      version: 1,
+      updatedAt: Date.now(),
+      samples: trimAppPerformanceSamples([...(appPerformanceMetrics?.samples || []), sample])
+    };
+    notificationItemsCache = { revision: -1, day: '', sources: [], rows: [] };
+    if (options.persist !== false) deferUiStorageSet(APP_PERFORMANCE_STORAGE_KEY, JSON.stringify(appPerformanceMetrics));
+    return sample;
+  }
+
+  function performancePercentile(samples, percentile = 0.75) {
+    if (!samples.length) return 0;
+    const sorted = samples.map((sample) => Number(sample.ms || 0)).sort((a, b) => a - b);
+    return Math.round(sorted[Math.max(0, Math.ceil(sorted.length * percentile) - 1)] || 0);
+  }
+
+  function appPerformanceSummary() {
+    const samples = appPerformanceMetrics?.samples || [];
+    const navigationByModule = new Map();
+    samples.filter((sample) => sample.kind === 'navigation').forEach((sample) => {
+      const rows = navigationByModule.get(sample.module) || [];
+      rows.push(sample);
+      navigationByModule.set(sample.module, rows.slice(-8));
+    });
+    const moduleRows = [...navigationByModule.entries()].map(([moduleId, rows]) => {
+      const recent = rows.slice(-8);
+      return {
+        moduleId,
+        label: MODULES.find((item) => item.id === moduleId)?.label || moduleId,
+        count: recent.length,
+        p75: performancePercentile(recent),
+        slowCount: recent.filter((sample) => sample.ms >= 1500).length,
+        latestMs: Number(recent.at(-1)?.ms || 0)
+      };
+    }).sort((a, b) => b.p75 - a.p75);
+    const slowModule = moduleRows.find((row) => row.count >= 4 && row.slowCount >= 2 && row.p75 >= 1400) || null;
+    const bootSamples = samples.filter((sample) => sample.kind === 'boot').slice(-6);
+    const bootP75 = performancePercentile(bootSamples);
+    const slowBoot = bootSamples.length >= 3 && bootSamples.filter((sample) => sample.ms >= 3800).length >= 2 && bootP75 >= 3500;
+    const warning = slowModule
+      ? { kind: 'module', moduleId: slowModule.moduleId, label: slowModule.label, ms: slowModule.p75, count: slowModule.count }
+      : slowBoot ? { kind: 'boot', moduleId: 'app', label: 'Spuštění aplikace', ms: bootP75, count: bootSamples.length } : null;
+    return {
+      sampleCount: samples.length,
+      navigationCount: samples.filter((sample) => sample.kind === 'navigation').length,
+      latestBootMs: Number(bootSamples.at(-1)?.ms || 0),
+      bootP75,
+      slowestModule: moduleRows[0] || null,
+      moduleRows,
+      warning,
+      updatedAt: Number(appPerformanceMetrics?.updatedAt || 0)
+    };
+  }
+
+  function clearAppPerformanceMetrics({ renderAfter = true } = {}) {
+    appPerformanceMetrics = { version: 1, updatedAt: 0, samples: [] };
+    pendingPerformanceNavigation = null;
+    deferredUiStorageValues.delete(APP_PERFORMANCE_STORAGE_KEY);
+    deferredUiStorageLastWritten.delete(APP_PERFORMANCE_STORAGE_KEY);
+    try { localStorage.removeItem(APP_PERFORMANCE_STORAGE_KEY); } catch {}
+    notificationItemsCache = { revision: -1, day: '', sources: [], rows: [] };
+    if (renderAfter) {
+      suppressNextAppPerformanceRender = true;
+      render();
+    }
+    return appPerformanceSummary();
+  }
+
+  function finishPendingPerformanceNavigation(moduleId) {
+    const pending = pendingPerformanceNavigation;
+    if (!pending || pending.moduleId !== moduleId) return;
+    pendingPerformanceNavigation = null;
+    const endedAt = performance?.now ? performance.now() : Date.now();
+    recordAppPerformanceSample('navigation', moduleId, endedAt - pending.startedAt, { surface: 'open' });
+  }
+
+  function renderAppPerformanceCard() {
+    const summary = appPerformanceSummary();
+    const warning = summary.warning;
+    const slowest = summary.slowestModule;
+    const formatMs = (ms) => ms ? (ms >= 1000 ? `${(ms / 1000).toFixed(1).replace('.', ',')} s` : `${Math.round(ms)} ms`) : 'čeká na měření';
+    return `
+      <section class="card desktop-span-2 compact-settings-card performance-monitor-card" data-performance-card>
+        <div class="card-header"><div><h2>Rychlost aplikace</h2><p>Měří spuštění a otevírání modulů jen na tomto zařízení. Neukládá obsah ani osobní údaje a nic neposílá do další služby.</p></div><span class="badge ${warning ? 'warn' : 'good'}">${warning ? 'ke kontrole' : summary.navigationCount >= 4 ? 'rychlá' : 'sbírá měření'}</span></div>
+        <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Poslední spuštění</span><strong>${escapeHtml(formatMs(summary.latestBootMs))}</strong></div><div class="mini-stat"><span>Nejpomalejší modul</span><strong>${slowest ? `${escapeHtml(slowest.label)} · ${escapeHtml(formatMs(slowest.p75))}` : 'čeká na otevření'}</strong></div><div class="mini-stat"><span>Uložená měření</span><strong>${summary.sampleCount}</strong></div></div>
+        ${warning ? `<div class="inline-note warning-note"><strong>${escapeHtml(warning.label)} je opakovaně pomalejší.</strong> Běžné otevření trvá přibližně ${escapeHtml(formatMs(warning.ms))}. Aplikace upozorní až po několika shodných měřeních, ne po jednorázovém výkyvu.</div>` : '<div class="inline-note">Varování se ukáže jen při opakovaném výrazném zpomalení. První otevření po aktualizaci může být delší a samo o sobě se nehlásí.</div>'}
+        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="clear-performance-metrics" ${summary.sampleCount ? '' : 'disabled'}>Vymazat měření</button></div>
+      </section>`;
+  }
+
   function notificationPreferences() {
     return normalizeNotificationPreferences(state.settings?.notificationPreferences);
   }
@@ -4475,7 +4621,7 @@
       state.subscriptions, state.subscriptionPeople, state.subscriptionPayments, state.contracts,
       state.warranties, state.vehicles, state.services, state.fuel, state.waste,
       state.readingMeters, state.readings, state.homeTasks, state.settings?.notificationPreferences,
-      state.settings?.vehicleServicePlans, dataIntegrityAutoStatus
+      state.settings?.vehicleServicePlans, dataIntegrityAutoStatus, appPerformanceMetrics
     ];
     if (notificationItemsCache.revision === globalSearchIndexRevision
       && notificationItemsCache.day === cacheDay
@@ -4495,6 +4641,17 @@
       nav: 'settings',
       tab: 'data',
       rank: 0
+    });
+    const performanceStatus = appPerformanceSummary();
+    if (performanceStatus.warning) add('performance', {
+      icon: '⚡',
+      title: performanceStatus.warning.kind === 'boot'
+        ? 'Aplikace se opakovaně spouští pomalu'
+        : `${performanceStatus.warning.label} se opakovaně otevírá pomalu`,
+      meta: `Obvyklý čas ${performanceStatus.warning.ms >= 1000 ? `${(performanceStatus.warning.ms / 1000).toFixed(1).replace('.', ',')} s` : `${performanceStatus.warning.ms} ms`} · ${performanceStatus.warning.count} měření`,
+      nav: 'settings',
+      tab: 'data',
+      rank: 1
     });
     const currentMonth = todayISO().slice(0, 7);
     // Stejná kreditní matematika jako v modulu Předplatné. Platba zadaná
@@ -14164,6 +14321,7 @@
           </section>
 
           ${renderTrashCard()}
+          ${renderAppPerformanceCard()}
           ${renderDataIntegrityCard()}
           ${renderDeleteAccountCard()}
         </div>
@@ -20050,6 +20208,11 @@
       showToast(status?.issueCount ? 'Kontrola dat našla položky k prověření' : 'Kontrola dat je v pořádku');
       return;
     }
+    if (action === 'clear-performance-metrics') {
+      clearAppPerformanceMetrics();
+      showToast('Měření rychlosti bylo vymazáno');
+      return;
+    }
     if (action === 'toggle-data-repair-issue') {
       const id = normalizeText(button.dataset.id);
       const audit = buildDataIntegrityAudit();
@@ -22200,6 +22363,10 @@
       const navFromBottomBar = Boolean(nav.closest('.nav-shell'));
       const previousBottomNavId = navFromBottomBar ? currentRenderedBottomNavId(activeModule) : getActiveBottomNavId(activeModule);
       const nextModule = moduleIdFromNavigationTarget(nav);
+      pendingPerformanceNavigation = {
+        moduleId: nextModule,
+        startedAt: performance?.now ? performance.now() : Date.now()
+      };
       try {
         await ensureModuleCodeForInteraction(nextModule);
         if (nextModule !== activeModule) closeAllModuleOverlays();
@@ -22243,6 +22410,7 @@
         // vypadal, že appka "nic nedělá" (viditelně zaseklá, žádná chybová
         // hláška). Zkusíme fallback na Domů, ať se appka dá aspoň odněkud ovládat dál.
         console.error('Přepnutí modulu selhalo', nextModule, error);
+        pendingPerformanceNavigation = null;
         activeModule = 'home';
         try { render(); } catch {}
         showToast('Přepnutí se nepovedlo, zkus to prosím znovu.');
@@ -22778,6 +22946,18 @@
     window.__DOMACNOST_E2E_RUN_AUTO_INTEGRITY__ = () => runAutomaticDataIntegrityAudit({ source: 'e2e', force: true, announce: false, render: false });
     window.__DOMACNOST_E2E_AUTO_INTEGRITY_STATUS__ = () => currentDataIntegrityAutoStatus();
     window.__DOMACNOST_E2E_DATA_HEALTH_NOTIFICATION__ = () => getNotificationItems().find((item) => item.type === 'dataHealth') || null;
+    window.__DOMACNOST_E2E_PERFORMANCE__ = () => appPerformanceSummary();
+    window.__DOMACNOST_E2E_RECORD_SLOW_PERFORMANCE__ = () => {
+      clearAppPerformanceMetrics({ renderAfter: false });
+      [1820, 1760, 1910, 1840].forEach((ms, index) => recordAppPerformanceSample('navigation', 'garage', ms, { at: Date.now() - ((4 - index) * 60000), persist: false, surface: 'e2e' }));
+      deferUiStorageSet(APP_PERFORMANCE_STORAGE_KEY, JSON.stringify(appPerformanceMetrics));
+      activeModule = 'settings';
+      moduleTabs = { ...(moduleTabs || {}), settings: 'data' };
+      render();
+      return appPerformanceSummary();
+    };
+    window.__DOMACNOST_E2E_CLEAR_PERFORMANCE__ = () => clearAppPerformanceMetrics();
+    window.__DOMACNOST_E2E_PERFORMANCE_NOTIFICATION__ = () => getNotificationItems().find((item) => item.type === 'performance') || null;
     window.__DOMACNOST_E2E_PREPARE_DATA_REPAIR__ = () => {
       const list = (state.shoppingLists || [])[0];
       const duplicate = {
