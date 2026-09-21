@@ -16533,6 +16533,10 @@ button[data-busy-submit="true"]::before {
 }
 .cloud-recovery-row strong { min-width: 0; font-size: .82rem; }
 .cloud-recovery-row em { color: var(--muted); font-size: .72rem; font-style: normal; white-space: nowrap; }
+.cloud-recovery-copy { display: grid; gap: 2px; min-width: 0; }
+.cloud-recovery-copy small { color: var(--muted); font-size: .69rem; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-connection-history { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .74rem; }
+.cloud-connection-history .sync-status-dot { flex: 0 0 auto; }
 .cloud-recovery-errors { border-top: 1px solid var(--line); padding-top: 9px; }
 .cloud-recovery-errors summary { cursor: pointer; color: var(--muted); font-size: .78rem; font-weight: 750; }
 .cloud-recovery-error-list,
@@ -16541,6 +16545,8 @@ button[data-busy-submit="true"]::before {
 .cloud-recovery-error-row > div { display: grid; gap: 2px; }
 .cloud-recovery-error-row span,
 .cloud-recovery-error-row em { color: var(--muted); font-size: .72rem; font-style: normal; overflow-wrap: anywhere; }
+.cloud-recovery-error-row em { display: grid; gap: 3px; }
+.cloud-recovery-error-row em small { color: var(--muted); font-size: .66rem; }
 .data-integrity-issue { grid-template-columns: 26px minmax(0, 1fr); }
 .data-integrity-issue > span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); font-weight: 900; }
 .data-integrity-issue > div { display: grid; gap: 2px; min-width: 0; }
@@ -16551,6 +16557,8 @@ button[data-busy-submit="true"]::before {
   .cloud-recovery-header { align-items: stretch; flex-direction: column; }
   .cloud-recovery-header .badge { align-self: flex-start; }
   .cloud-recovery-list { grid-template-columns: 1fr; }
+  .cloud-recovery-row { grid-template-columns: auto minmax(0, 1fr); }
+  .cloud-recovery-row em { grid-column: 2; white-space: normal; }
   .cloud-recovery-error-row { grid-template-columns: 1fr; }
 }
 

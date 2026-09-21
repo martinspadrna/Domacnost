@@ -203,6 +203,10 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   expect(app, 'data-action="resolve-household-conflict-cloud"', 'app.js: konflikt nabízí zachování cloudové verze.');
   expect(app, 'data-action="resolve-household-conflict-local"', 'app.js: konflikt nabízí vědomé zachování tohoto zařízení.');
   expect(app, 'function renderCloudRecoveryPanel()', 'app.js: cloud má přehled čekajících a chybných operací.');
+  expect(app, 'function cloudErrorIsTransient(error)', 'app.js: cloud rozlišuje dočasné a trvalé chyby podle stabilního kódu.');
+  expect(app, 'function cloudSyncAlertStatus()', 'app.js: dlouho čekající synchronizace se vyhodnotí pro upozornění.');
+  expect(app, "{ id: 'cloudSync', label: 'Synchronizace cloudu'", 'app.js: upozornění na synchronizaci lze samostatně vypnout.');
+  expect(app, 'function cloudPendingItemSummary(item = {})', 'app.js: přehled čekajících změn ukazuje konkrétní položky.');
   expect(app, 'function registerCloudRecordConflict(entry = {})', 'app.js: jednotlivé záznamy mají vlastní trvalou evidenci konfliktů.');
   expect(app, "query = query.eq('updated_at', expectedRevision);", 'app.js: nákup se ukládá jen proti naposledy načtené cloudové verzi.');
   expect(app, 'function renderCloudRecordConflicts()', 'app.js: rozdílné verze záznamů mají společný přehled a rozhodnutí.');
@@ -213,6 +217,8 @@ if (app && shoppingRender && finance && contracts && hdoModule && wasteModule &&
   expect(app, 'function maybeResumeDueCloudAutosync(source = \'watchdog\')', 'app.js: prošlý pokus synchronizace se po uspání automaticky obnoví.');
   expect(app, 'autosyncFailureCount: cloudAutosyncFailureCount', 'app.js: počet neúspěšných pokusů přežívá restart aplikace.');
   expect(app, 'data-action="cloud-retry-now"', 'app.js: problémovou synchronizaci lze zopakovat jedním tlačítkem.');
+  expect(app, "if (action === 'cloud-retry-now') {\n      runCloudAutosyncNow(true);", 'app.js: ruční opakování synchronizuje pouze čekající moduly.');
+  expect(app, "lastConnectionEvent: 'offline'", 'app.js: aplikace si pamatuje poslední výpadek připojení.');
 }
 
 if (app && styles) {
@@ -244,6 +250,7 @@ if (app && styles) {
   expect(app, 'dataRepairCandidateBelongsToHousehold', 'app.js: cíle ruční opravy jsou omezené na aktuální domácnost.');
   expect(app, 'function restorePreRepairBackup(', 'app.js: poslední automatickou opravu lze vrátit.');
   expect(styles, '.cloud-recovery-panel {', 'styles.css: obnova synchronizace má vlastní responzivní povrch.');
+  expect(styles, '.cloud-recovery-copy {', 'styles.css: konkrétní čekající položky mají čitelné dvouřádkové zobrazení.');
   expect(styles, '.data-integrity-issue {', 'styles.css: nalezené datové problémy mají čitelné řádky.');
   expect(styles, '.data-repair-preview {', 'styles.css: náhled oprav má vlastní čitelný povrch.');
   expect(styles, '.data-repair-target-field {', 'styles.css: ruční výběr cíle má čitelný formulář.');
@@ -512,6 +519,7 @@ if (app && index && moduleLoader) {
   expect(app, "add('finance', 'overview'", 'app.js: globální hledání prohledává finance.');
   expect(app, "add('readings', 'overview'", 'app.js: globální hledání prohledává měřidla.');
   expect(app, "(event.ctrlKey || event.metaKey) && key === 'k'", 'app.js: Ctrl/Command+K otevírá globální hledání.');
+  expect(app, 'function focusGlobalSearchInput()', 'app.js: hledání udrží focus i přes pozdní background render po startu.');
   expect(moduleLoader, 'const ASSET_LOAD_TIMEOUT_MS = 15000', 'module-loader.js: načítání modulu má časový limit.');
   expect(moduleLoader, 'assetPromises.delete(key)', 'module-loader.js: neúspěšný asset lze při dalším kliknutí načíst znovu.');
   expect(moduleLoader, "script.dataset.domacnostAsset === path", 'module-loader.js: po chybě odstraní jen vlastní neúspěšný script.');
