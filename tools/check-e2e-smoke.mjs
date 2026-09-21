@@ -1734,16 +1734,22 @@ async function run() {
       awaitPromise: true,
       expression: `(async () => {
         const before = window.__DOMACNOST_E2E_PREPARE_DATA_REPAIR__?.();
+        const automatic = window.__DOMACNOST_E2E_RUN_AUTO_INTEGRITY__?.();
+        const healthNotification = window.__DOMACNOST_E2E_DATA_HEALTH_NOTIFICATION__?.();
         const plan = window.__DOMACNOST_E2E_DATA_REPAIR_PLAN__?.();
         const previewVisible = Boolean(document.querySelector('[data-data-repair-preview]'));
         const result = await window.__DOMACNOST_E2E_APPLY_DATA_REPAIR__?.();
-        return { before, plan, previewVisible, result, restoreButton: Boolean(document.querySelector('[data-action="restore-pre-repair"]')) };
+        const automaticAfterRepair = window.__DOMACNOST_E2E_AUTO_INTEGRITY_STATUS__?.();
+        const healthNotificationAfterRepair = window.__DOMACNOST_E2E_DATA_HEALTH_NOTIFICATION__?.();
+        return { before, automatic, healthNotification, plan, previewVisible, result, automaticAfterRepair, healthNotificationAfterRepair, restoreButton: Boolean(document.querySelector('[data-action="restore-pre-repair"]')) };
       })()`
     });
     const dataRepairValue = dataRepairCheck.result?.value || {};
     if (!dataRepairValue.before?.repairableCount || dataRepairValue.plan?.actions?.length !== 1 || !dataRepairValue.previewVisible) { fail('Průvodce opravou nevytvořil náhled bezpečné opravy.'); settingsOk = false; }
+    if (!dataRepairValue.automatic?.issueCount || dataRepairValue.healthNotification?.type !== 'dataHealth' || dataRepairValue.healthNotification?.nav !== 'settings' || dataRepairValue.healthNotification?.tab !== 'data') { fail('Automatická kontrola integrity nevytvořila upozornění vedoucí do opravy dat.'); settingsOk = false; }
     if (!dataRepairValue.result?.applied || dataRepairValue.result?.matchingRows !== 1 || dataRepairValue.result?.remainingDuplicates !== 0) { fail('Průvodce opravy neodstranil pouze nadbytečnou shodnou kopii.'); settingsOk = false; }
     if (!dataRepairValue.result?.backupAvailable || !dataRepairValue.restoreButton || dataRepairValue.result?.result?.changedRecords !== 1) { fail('Průvodce opravy nevytvořil funkční bod návratu.'); settingsOk = false; }
+    if (dataRepairValue.automaticAfterRepair?.issueCount !== 0 || dataRepairValue.healthNotificationAfterRepair) { fail('Po bezpečné opravě se automatické upozornění na integritu nevyčistilo.'); settingsOk = false; }
     const manualDataRepairCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       awaitPromise: true,
@@ -1795,8 +1801,8 @@ async function run() {
       })()`
     });
     const notificationSettingsValue = notificationSettingsCheck.result?.value || {};
-    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 7 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
-    else ok('Upozornění: sedm typů lze samostatně zapnout nebo vypnout.');
+    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 8 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
+    else ok('Upozornění: osm typů lze samostatně zapnout nebo vypnout.');
 
     await page.send('Runtime.evaluate', {
       expression: `(window.__DOMACNOST_E2E_SET_CLOUD_STATUS__?.(), window.__DOMACNOST_E2E_NAV__('settings', 'cloud'))`,

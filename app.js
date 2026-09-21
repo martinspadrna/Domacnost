@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_512';
-  const APP_BUILD = 512;
+  const APP_VERSION = 'Domácnost+ v.0.1_513';
+  const APP_BUILD = 513;
   const TRASH_RETENTION_DAYS = 30;
   const TRASH_MAX_ENTRIES = 100;
   const TRASH_COLLECTION_LABELS = {
@@ -59,7 +59,8 @@
     { id: 'vehicles', label: 'STK a servis', icon: '🚗' },
     { id: 'waste', label: 'Svoz odpadu', icon: '♻️' },
     { id: 'readings', label: 'Odečty', icon: '📊' },
-    { id: 'tasks', label: 'Úkoly', icon: '✅' }
+    { id: 'tasks', label: 'Úkoly', icon: '✅' },
+    { id: 'dataHealth', label: 'Stav dat', icon: '🛡️' }
   ];
   const DEFAULT_NOTIFICATION_PREFERENCES = Object.fromEntries(NOTIFICATION_TYPE_DEFS.map((item) => [item.id, true]));
 
@@ -520,6 +521,8 @@
   const APP_STATE_IDB_KEY = 'primary';
   const PRE_IMPORT_STATE_IDB_KEY = 'pre-import';
   const PRE_REPAIR_STATE_IDB_KEY = 'pre-repair';
+  const DATA_INTEGRITY_AUTO_CHECK_KEY = 'domacnostPlus.dataIntegrityAutoCheck.v1';
+  const DATA_INTEGRITY_AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
   const WARRANTY_FILE_MAX_BYTES = 15 * 1024 * 1024;
   const WARRANTY_IMAGE_MAX_DIMENSION = 1800;
   const WARRANTY_IMAGE_JPEG_QUALITY = 0.82;
@@ -1314,6 +1317,8 @@
   let preRepairBackupAvailable = false;
   let dataIntegrityAuditCache = { revision: -1, result: null };
   let dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: null };
+  let dataIntegrityAutoCheckTimer = 0;
+  let dataIntegrityAutoStatus = safeParse(localStorage.getItem(DATA_INTEGRITY_AUTO_CHECK_KEY), null);
   // warrantyFormDraft je nyni modulova promenna ve warranty.js
   let toastTimer = null;
   let undoToastTimer = null;
@@ -3067,6 +3072,9 @@
     persistStateSnapshot({ immediate: options.immediate === true });
     resetTrashTrackingBaseline();
     scheduleCloudAutosync('save');
+    if (state.household?.isConfigured && options.skipIntegrityCheck !== true) {
+      scheduleAutomaticDataIntegrityAudit('local-change', { delay: 2600, force: true });
+    }
   }
 
   // Local-first: cloud volání se spustí AŽ PO lokálním uložení, takže klik na
@@ -4442,13 +4450,32 @@
     return notificationPreferences()[String(type || '')] !== false;
   }
 
+  function currentDataIntegrityAutoStatus() {
+    if (!dataIntegrityAutoStatus || typeof dataIntegrityAutoStatus !== 'object') return null;
+    const householdId = normalizeText(currentHouseholdId(false));
+    if (normalizeText(dataIntegrityAutoStatus.householdId) !== householdId) return null;
+    const checkedAt = normalizeText(dataIntegrityAutoStatus.checkedAt);
+    const checkedAtMs = Date.parse(checkedAt);
+    if (!checkedAt || !Number.isFinite(checkedAtMs)) return null;
+    return {
+      householdId,
+      checkedAt,
+      issueCount: Math.max(0, Number(dataIntegrityAutoStatus.issueCount || 0)),
+      repairableCount: Math.max(0, Number(dataIntegrityAutoStatus.repairableCount || 0)),
+      manualCount: Math.max(0, Number(dataIntegrityAutoStatus.manualCount || 0)),
+      records: Math.max(0, Number(dataIntegrityAutoStatus.records || 0)),
+      checksum: normalizeText(dataIntegrityAutoStatus.checksum),
+      source: normalizeText(dataIntegrityAutoStatus.source) || 'automatic'
+    };
+  }
+
   function getNotificationItems() {
     const cacheDay = todayISO();
     const sources = [
       state.subscriptions, state.subscriptionPeople, state.subscriptionPayments, state.contracts,
       state.warranties, state.vehicles, state.services, state.fuel, state.waste,
       state.readingMeters, state.readings, state.homeTasks, state.settings?.notificationPreferences,
-      state.settings?.vehicleServicePlans
+      state.settings?.vehicleServicePlans, dataIntegrityAutoStatus
     ];
     if (notificationItemsCache.revision === globalSearchIndexRevision
       && notificationItemsCache.day === cacheDay
@@ -4460,6 +4487,15 @@
       if (!notificationTypeEnabled(type) || !item?.title) return;
       rows.push({ type, ...item });
     };
+    const dataHealth = currentDataIntegrityAutoStatus();
+    if (dataHealth?.issueCount > 0) add('dataHealth', {
+      icon: '🛡️',
+      title: dataHealth.issueCount === 1 ? 'Kontrola dat našla 1 problém' : `Kontrola dat našla ${dataHealth.issueCount} problémů`,
+      meta: `${dataHealth.repairableCount} bezpečně opravitelných · kontrola ${formatDateTime(dataHealth.checkedAt)}`,
+      nav: 'settings',
+      tab: 'data',
+      rank: 0
+    });
     const currentMonth = todayISO().slice(0, 7);
     // Stejná kreditní matematika jako v modulu Předplatné. Platba zadaná
     // dřív jako větší částka může pokrýt i aktuální a budoucí měsíce, takže
@@ -13780,6 +13816,56 @@
     return result;
   }
 
+  function storeDataIntegrityAutoStatus(audit, source = 'automatic') {
+    const previous = currentDataIntegrityAutoStatus();
+    const issueFingerprint = stateIntegrityChecksum((audit.issues || []).map((issue) => issue.id).sort());
+    const next = {
+      householdId: normalizeText(currentHouseholdId(false)),
+      checkedAt: audit.checkedAt || new Date().toISOString(),
+      issueCount: Math.max(0, Number(audit.issueCount || 0)),
+      repairableCount: Math.max(0, Number(audit.repairableCount || 0)),
+      manualCount: Math.max(0, Number(audit.manualCount || 0)),
+      records: Math.max(0, Number(audit.records || 0)),
+      checksum: normalizeText(audit.checksum),
+      issueFingerprint,
+      source: normalizeText(source) || 'automatic'
+    };
+    const changed = !previous
+      || Number(previous.issueCount || 0) !== next.issueCount
+      || normalizeText(dataIntegrityAutoStatus?.issueFingerprint) !== issueFingerprint;
+    dataIntegrityAutoStatus = next;
+    try { localStorage.setItem(DATA_INTEGRITY_AUTO_CHECK_KEY, JSON.stringify(next)); } catch {}
+    notificationItemsCache = { revision: -1, day: '', sources: [], rows: [] };
+    return { status: currentDataIntegrityAutoStatus(), changed };
+  }
+
+  function runAutomaticDataIntegrityAudit(options = {}) {
+    if (shouldShowStartChoice() || document.hidden) return currentDataIntegrityAutoStatus();
+    const force = options.force === true;
+    const previous = currentDataIntegrityAutoStatus();
+    const previousAt = Date.parse(previous?.checkedAt || '');
+    if (!force && Number.isFinite(previousAt) && Date.now() - previousAt < DATA_INTEGRITY_AUTO_CHECK_INTERVAL_MS) return previous;
+    dataIntegrityAuditCache = { revision: -1, result: null };
+    const audit = buildDataIntegrityAudit();
+    const saved = storeDataIntegrityAutoStatus(audit, options.source || 'automatic');
+    const e2e = state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+    if (options.announce !== false && !e2e && notificationTypeEnabled('dataHealth') && audit.issueCount > 0 && saved.changed) {
+      showToast(audit.issueCount === 1 ? 'Automatická kontrola našla 1 problém v datech' : `Automatická kontrola našla ${audit.issueCount} problémů v datech`, { force: true });
+      maybeSendSystemNotifications(false);
+    }
+    if (options.render !== false) requestBackgroundRender();
+    return saved.status;
+  }
+
+  function scheduleAutomaticDataIntegrityAudit(source = 'automatic', options = {}) {
+    if (dataIntegrityAutoCheckTimer) window.clearTimeout(dataIntegrityAutoCheckTimer);
+    const delay = Math.max(0, Number(options.delay ?? 1200));
+    dataIntegrityAutoCheckTimer = runWhenUiQuiet(() => {
+      dataIntegrityAutoCheckTimer = 0;
+      runAutomaticDataIntegrityAudit({ source, force: options.force === true, announce: options.announce !== false });
+    }, { delay, quietMs: Number(options.quietMs || 700), timeout: 3600 });
+  }
+
   function syncDataRepairSelection(audit) {
     const validIds = new Set(audit.issues.filter((issue) => issue.repairable || issue.manualRepair).map((issue) => issue.id));
     const defaultIds = new Set(audit.issues.filter((issue) => issue.repairable).map((issue) => issue.id));
@@ -13936,6 +14022,7 @@
     saveState({ immediate: true, skipTrashTracking: true });
     dataIntegrityAuditCache = { revision: -1, result: null };
     dataRepairUi = { checksum: '', selectedIssueIds: new Set(), manualTargets: new Map(), preview: null, lastResult: { changedRecords, finishedAt: new Date().toISOString() } };
+    runAutomaticDataIntegrityAudit({ source: 'after-repair', force: true, announce: false, render: false });
     render();
     showToast(`Bezpečně opraveno ${changedRecords} záznamů`, { force: true });
     scheduleCloudAutosync('data-repair', { force: true, delayMs: 500 });
@@ -13956,6 +14043,7 @@
 
   function renderDataIntegrityCard() {
     const audit = buildDataIntegrityAudit();
+    const autoStatus = currentDataIntegrityAutoStatus();
     syncDataRepairSelection(audit);
     const ok = audit.issueCount === 0;
     const selectedCount = buildDataRepairPlan().actions.length;
@@ -13965,12 +14053,12 @@
     const selectableCount = audit.repairableCount + manualRepairCount;
     return `
       <section class="card desktop-span-2 compact-settings-card data-integrity-card" data-data-integrity-card>
-        <div class="card-header"><div><h2>Kontrola a oprava dat</h2><p>Najde duplicity a chybějící vazby. Bezpečné opravy vždy nejdřív ukáže v náhledu a před změnou vytvoří bod návratu.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
-        <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Zkontrolováno</span><strong>${audit.records}</strong></div><div class="mini-stat"><span>Otisk dat</span><strong>${escapeHtml(audit.checksum)}</strong></div><div class="mini-stat"><span>Čas kontroly</span><strong>${escapeHtml(formatDateTime(audit.checkedAt))}</strong></div></div>
+        <div class="card-header"><div><h2>Kontrola a oprava dat</h2><p>Automaticky hlídá duplicity a chybějící vazby. Bezpečné opravy vždy nejdřív ukáže v náhledu a před změnou vytvoří bod návratu.</p></div><span class="badge ${ok ? 'good' : 'warn'}">${ok ? 'bez problémů' : `${audit.issueCount} ${audit.issueCount === 1 ? 'problém' : audit.issueCount < 5 ? 'problémy' : 'problémů'}`}</span></div>
+        <div class="cloud-status-grid compact-cloud-stats"><div class="mini-stat"><span>Zkontrolováno</span><strong>${audit.records}</strong></div><div class="mini-stat"><span>Otisk dat</span><strong>${escapeHtml(audit.checksum)}</strong></div><div class="mini-stat"><span>Poslední automatická</span><strong>${autoStatus ? escapeHtml(formatDateTime(autoStatus.checkedAt)) : 'čeká'}</strong></div></div>
         ${dataRepairUi.lastResult ? `<div class="inline-note success-note">Poslední oprava změnila ${dataRepairUi.lastResult.changedRecords} záznamů. Bod návratu zůstal uložený.</div>` : ''}
         ${ok ? '<div class="inline-note">Všechny kontrolované vazby i identifikátory jsou v pořádku.</div>' : `<div class="data-repair-summary"><span class="badge good">${audit.repairableCount} bezpečně opravitelných</span>${manualRepairCount ? `<span class="badge">${manualRepairCount} s výběrem cíle</span>` : ''}${audit.manualCount - manualRepairCount > 0 ? `<span class="badge warn">${audit.manualCount - manualRepairCount} k ruční kontrole</span>` : ''}</div><div class="data-integrity-issues">${visibleIssues.map(renderDataIntegrityIssue).join('')}</div>${audit.issueCount > visibleIssues.length ? `<div class="inline-note">Zobrazeno prvních ${visibleIssues.length} problémů. Po jejich opravě spusť kontrolu znovu.</div>` : ''}`}
         ${preview ? `<div class="data-repair-preview" data-data-repair-preview><div><strong>Náhled vybraných změn</strong><span>${preview.actions.length} oprav · přibližně ${preview.changedRecords} záznamů</span></div>${preview.manualSelectedCount ? `<div class="inline-note success-note">${preview.manualSelectedCount} ${preview.manualSelectedCount === 1 ? 'vazba byla vybrána' : 'vazby byly vybrány'} ručně.</div>` : ''}<ol>${preview.steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('')}</ol>${preview.manualCount ? `<div class="inline-note">${preview.manualCount} nejasných problémů zůstane beze změny k ruční kontrole.</div>` : ''}<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="apply-data-repair">Potvrdit a opravit</button><button class="ghost-btn" type="button" data-action="cancel-data-repair-preview">Zpět k výběru</button></div></div>` : ''}
-        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat znovu</button>${audit.repairableCount ? `<button class="ghost-btn" type="button" data-action="select-safe-data-repairs">Vybrat bezpečné</button>` : ''}${selectableCount ? `<button class="primary-btn" type="button" data-action="preview-data-repair" ${selectedCount ? '' : 'disabled'}>Náhled oprav (${selectedCount})</button>` : ''}${preRepairBackupAvailable ? '<button class="ghost-btn" type="button" data-action="restore-pre-repair">Vrátit poslední opravu</button>' : ''}</div>
+        <div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="run-data-integrity-audit">Zkontrolovat teď</button>${audit.repairableCount ? `<button class="ghost-btn" type="button" data-action="select-safe-data-repairs">Vybrat bezpečné</button>` : ''}${selectableCount ? `<button class="primary-btn" type="button" data-action="preview-data-repair" ${selectedCount ? '' : 'disabled'}>Náhled oprav (${selectedCount})</button>` : ''}${preRepairBackupAvailable ? '<button class="ghost-btn" type="button" data-action="restore-pre-repair">Vrátit poslední opravu</button>' : ''}</div>
       </section>`;
   }
 
@@ -18702,6 +18790,7 @@
         }
       });
       if (ok > 0) saveState({ immediate: true });
+      if (ok > 0) scheduleAutomaticDataIntegrityAudit(`module-${moduleId}`, { delay: 1400, force: true });
       if (renderAfter) requestBackgroundRender();
       if (showMessage) showToast(`Modul načten z cloudu: ${ok}/${loaders.length}`);
       // Strict režim (realtime): jakýkoli neuspěch jednoho loaderu shodí
@@ -18802,6 +18891,7 @@
       state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState({ immediate: true });
+      scheduleAutomaticDataIntegrityAudit('cloud-full-load', { delay: 1400, force: true });
       requestBackgroundRender();
       scheduleCalendarAutoSync('background-load', { delay: 6000 });
       if (showMessage) showToast(`Cloud pozadí načteno: ${ok}/${moduleOrder.length - skipModules.size}`);
@@ -19954,10 +20044,10 @@
       return;
     }
     if (action === 'run-data-integrity-audit') {
-      dataIntegrityAuditCache = { revision: -1, result: null };
       dataRepairUi.preview = null;
+      const status = runAutomaticDataIntegrityAudit({ source: 'manual', force: true, announce: false, render: false });
       render();
-      showToast(buildDataIntegrityAudit().issueCount ? 'Kontrola dat našla položky k prověření' : 'Kontrola dat je v pořádku');
+      showToast(status?.issueCount ? 'Kontrola dat našla položky k prověření' : 'Kontrola dat je v pořádku');
       return;
     }
     if (action === 'toggle-data-repair-issue') {
@@ -22463,6 +22553,7 @@
     }
     scheduleShoppingCloudRefresh('app-visible', { delay: 700, minAgeMs: 15000 });
     resumeCloudActivity('app-visible');
+    scheduleAutomaticDataIntegrityAudit('app-visible', { delay: 1100 });
   });
 
   window.addEventListener('pagehide', () => {
@@ -22502,6 +22593,7 @@
   window.addEventListener('focus', () => {
     scheduleShoppingCloudRefresh('app-focus', { delay: 700, minAgeMs: 15000 });
     resumeCloudActivity('app-focus');
+    scheduleAutomaticDataIntegrityAudit('app-focus', { delay: 1100 });
   });
 
   window.addEventListener('online', () => {
@@ -22543,9 +22635,13 @@
   setupInstallAndUpdateFlow();
   registerServiceWorker();
   installAppLikeTouchGuards();
+  scheduleAutomaticDataIntegrityAudit('boot', { delay: 8500 });
   window.setTimeout(() => maybeSendSystemNotifications(false), 12000);
   window.setInterval(() => {
-    if (!document.hidden) maybeSendSystemNotifications(false);
+    if (!document.hidden) {
+      scheduleAutomaticDataIntegrityAudit('periodic', { delay: 900 });
+      maybeSendSystemNotifications(false);
+    }
   }, 15 * 60 * 1000);
 
   if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
@@ -22679,6 +22775,9 @@
     };
     window.__DOMACNOST_E2E_IMPORT_DATA__ = (json) => importData(json);
     window.__DOMACNOST_E2E_DATA_INTEGRITY__ = () => buildDataIntegrityAudit();
+    window.__DOMACNOST_E2E_RUN_AUTO_INTEGRITY__ = () => runAutomaticDataIntegrityAudit({ source: 'e2e', force: true, announce: false, render: false });
+    window.__DOMACNOST_E2E_AUTO_INTEGRITY_STATUS__ = () => currentDataIntegrityAutoStatus();
+    window.__DOMACNOST_E2E_DATA_HEALTH_NOTIFICATION__ = () => getNotificationItems().find((item) => item.type === 'dataHealth') || null;
     window.__DOMACNOST_E2E_PREPARE_DATA_REPAIR__ = () => {
       const list = (state.shoppingLists || [])[0];
       const duplicate = {

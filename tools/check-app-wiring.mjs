@@ -224,6 +224,11 @@ if (app && styles) {
   expect(styles, '.household-sync-conflict {', 'styles.css: konflikt synchronizace má zřetelný responzivní povrch.');
   expect(styles, '.record-conflict-panel {', 'styles.css: konflikty jednotlivých záznamů mají vlastní responzivní povrch.');
   expect(app, 'function buildDataIntegrityAudit()', 'app.js: Data obsahují kontrolu duplicit a chybějících vazeb.');
+  expect(app, 'function runAutomaticDataIntegrityAudit(', 'app.js: kontrola integrity běží automaticky na pozadí.');
+  expect(app, 'function scheduleAutomaticDataIntegrityAudit(', 'app.js: automatická kontrola je úsporně plánovaná do klidného času UI.');
+  expect(app, "{ id: 'dataHealth', label: 'Stav dat'", 'app.js: datové problémy mají samostatně vypínatelné upozornění.');
+  expect(app, "scheduleAutomaticDataIntegrityAudit('boot'", 'app.js: automatická kontrola se naplánuje po spuštění aplikace.');
+  expect(app, "scheduleAutomaticDataIntegrityAudit('local-change'", 'app.js: kontrola se zopakuje po ustálení lokální změny.');
   expect(app, 'data-data-integrity-card', 'app.js: výsledek kontroly dat je viditelný v Nastavení > Data.');
   expect(app, "const PRE_REPAIR_STATE_IDB_KEY = 'pre-repair'", 'app.js: automatická oprava má vlastní trvalý bod návratu.');
   expect(app, 'function buildDataRepairPlan(', 'app.js: bezpečné opravy se nejdřív skládají do náhledu.');
