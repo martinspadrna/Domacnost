@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_515';
-  const APP_BUILD = 515;
+  const APP_VERSION = 'Domácnost+ v.0.1_516';
+  const APP_BUILD = 516;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2535,6 +2535,10 @@
   function cloudRecordConflicts(collection = '') {
     const conflicts = normalizeCloudRecordConflicts(state.cloud?.recordConflicts || []);
     return collection ? conflicts.filter((entry) => entry.collection === collection) : conflicts;
+  }
+
+  function cloudHasBlockingConflict() {
+    return Boolean(state.cloud?.householdUiConflict || cloudRecordConflicts().length);
   }
 
   function registerCloudRecordConflict(entry = {}) {
@@ -18266,7 +18270,8 @@
   function scheduleCloudAutosync(source = 'save', options = {}) {
     if (!cloudReady()) return;
     if (state.cloud?.autoSyncEnabled === false) return;
-    if (cloudRecordConflicts().length) {
+    healStaleHouseholdUiConflict();
+    if (cloudHasBlockingConflict()) {
       clearCloudAutosyncTimer();
       state.cloud.autosyncStatus = 'blocked';
       state.cloud.autosyncRetryAt = '';
@@ -18325,7 +18330,8 @@
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
       return false;
     }
-    if (cloudRecordConflicts().length) {
+    healStaleHouseholdUiConflict();
+    if (cloudHasBlockingConflict()) {
       state.cloud.autosyncStatus = 'blocked';
       state.cloud.autosyncRetryAt = '';
       persistStateSnapshot();
@@ -18378,7 +18384,7 @@
         await cloudSyncLocalPendingData(false);
       });
       const after = cloudLocalPendingCount();
-      const permanentFailure = cloudOutboxHasPermanentFailure();
+      const permanentFailure = cloudOutboxHasPermanentFailure() || cloudHasBlockingConflict();
       if (after) cloudAutosyncFailureCount += 1;
       else cloudAutosyncFailureCount = 0;
       retryDelay = after && !permanentFailure && cloudAutosyncFailureCount <= CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length ? cloudAutosyncRetryDelayMs() : 0;
@@ -18767,6 +18773,7 @@
       .select('id')
       .single();
     if (error) {
+      item.syncStatus = 'pending';
       showToast(error.message || 'Záznam se nepovedlo uložit do cloudu');
       return null;
     }
@@ -18791,9 +18798,11 @@
       .eq('id', item.cloudId)
       .eq('household_id', state.cloud.householdId);
     if (error) {
+      item.syncStatus = 'pending';
       showToast(error.message || 'Záznam se nepovedlo upravit v cloudu');
       return false;
     }
+    item.syncStatus = '';
     state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
@@ -18867,7 +18876,10 @@
     }
     let synced = 0;
     for (const collection of Object.keys(CLOUD_EXTRA_COLLECTIONS)) {
-      const items = state[collection] || [];
+      // Cloudové řádky bez syncStatus už jsou potvrzené. Dříve se při každém
+      // autosyncu znovu přepisovaly všechny záruky a slevové kódy, i když se
+      // změnilo jen nastavení domácnosti.
+      const items = (state[collection] || []).filter(cloudExtraItemNeedsSync);
       for (const item of items) {
         try {
           if (item.cloudId) {
@@ -18884,9 +18896,20 @@
     }
     touchState();
     saveState();
-    render();
+    if (showMessage) render();
+    else requestBackgroundRender();
     if (showMessage) showToast(synced ? `Odesláno drobných záznamů: ${synced}` : 'Žádné lokální drobné záznamy k odeslání');
     return synced;
+  }
+
+  function cloudExtraItemNeedsSync(item = {}) {
+    return Boolean(!item.cloudId || item.syncStatus);
+  }
+
+  function cloudExtraPendingCount() {
+    return Object.keys(CLOUD_EXTRA_COLLECTIONS).reduce((sum, collection) => (
+      sum + (state[collection] || []).filter(cloudExtraItemNeedsSync).length
+    ), 0);
   }
 
   async function cloudLoadUserVisualSettings(showMessage = false) {
@@ -18923,8 +18946,8 @@
         { moduleId: 'calendar', run: cloudSyncLocalCalendar },
         { moduleId: 'finance', run: cloudSyncLocalFinanceAccounts },
         { moduleId: 'finance', run: cloudSyncLocalFinance },
-        { run: () => cloudSaveHouseholdUiSettings(false) },
-        { run: () => cloudSyncLocalExtraCollections(false) }
+        { shouldRun: () => householdUiHasPendingChanges(), run: () => cloudSaveHouseholdUiSettings(false) },
+        { shouldRun: () => cloudExtraPendingCount() > 0, run: () => cloudSyncLocalExtraCollections(false) }
       ];
       await withMutedToasts(async () => {
         for (const syncer of syncers) {
@@ -18932,12 +18955,14 @@
           // pravidelnému autosyncu. Relevantní moduly připraví předem
           // ensurePendingCloudModuleCode().
           if (syncer.moduleId && !moduleCodeReady(syncer.moduleId)) continue;
+          if (syncer.shouldRun && !syncer.shouldRun()) continue;
           try {
             await yieldToMainThread();
             await syncer.run();
           } catch (error) {
             console.warn('Cloud pending sync failed', error);
           }
+          if (cloudHasBlockingConflict()) break;
         }
       });
       if (showMessage) await withMutedToasts(() => cloudLoadAllModules(false));
@@ -20845,6 +20870,47 @@
     return layout && typeof layout === 'object' && !Array.isArray(layout) ? layout : {};
   }
 
+  function householdUiOldestPendingAt() {
+    const candidates = [
+      state.cloud?.householdUiPendingAt,
+      state.subscriptionsCloud?.pendingAt,
+      state.readingsCloud?.pendingAt,
+      state.loyaltyCardsCloud?.pendingAt,
+      state.poolCloud?.pendingAt,
+      state.financeCloud?.templatesPendingAt
+    ].filter((value) => Number.isFinite(Date.parse(value || '')));
+    if (!candidates.length) return '';
+    return new Date(Math.min(...candidates.map((value) => Date.parse(value)))).toISOString();
+  }
+
+  function householdUiBaselineDecision(remoteRevision, pendingAt) {
+    const remoteTime = Date.parse(remoteRevision || '');
+    const pendingTime = Date.parse(pendingAt || '');
+    if (!Number.isFinite(remoteTime)) return 'missing';
+    if (!Number.isFinite(pendingTime)) return 'conflict';
+    // Pokud lokální změna vznikla až po poslední cloudové revizi, lze právě
+    // načtenou revizi bezpečně použít jako CAS základ. Samotný UPDATE ji ještě
+    // jednou ověří, takže souběžná změna mezi načtením a uložením se nepřepíše.
+    return remoteTime <= pendingTime ? 'adopt' : 'conflict';
+  }
+
+  function healStaleHouseholdUiConflict() {
+    const conflict = state.cloud?.householdUiConflict;
+    if (!conflict || normalizeText(state.cloud?.householdUiRevision)) return false;
+    const pendingAt = householdUiOldestPendingAt();
+    const remoteRevision = normalizeText(conflict.remoteUpdatedAt);
+    if (householdUiBaselineDecision(remoteRevision, pendingAt) !== 'adopt') return false;
+    state.cloud = {
+      ...(state.cloud || {}),
+      householdUiRevision: remoteRevision,
+      householdUiConflict: null,
+      autosyncStatus: 'pending',
+      autosyncRetryAt: '',
+      lastAutosyncError: ''
+    };
+    return true;
+  }
+
   function householdUiHasPendingChanges() {
     return Boolean(
       state.cloud?.householdUiPendingAt
@@ -20882,6 +20948,7 @@
       autosyncRetryAt: '',
       lastAutosyncError: 'Na jiném zařízení se změnilo nastavení domácnosti'
     };
+    clearCloudAutosyncTimer();
   }
 
   function clearHouseholdUiConflict(revision = '') {
@@ -21209,11 +21276,13 @@
     if (!cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
+    if (options.force !== true) healStaleHouseholdUiConflict();
     if (state.cloud?.householdUiConflict && options.force !== true) {
       if (showMessage) showToast('Nejdřív vyřeš změny ze dvou zařízení');
       return false;
     }
-    state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || new Date().toISOString();
+    const pendingSince = householdUiOldestPendingAt() || new Date().toISOString();
+    state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || pendingSince;
     let expectedRevision = normalizeText(state.cloud?.householdUiRevision);
     if (!expectedRevision && options.force !== true) {
       const { data: remote, error: baselineError } = await client
@@ -21226,17 +21295,25 @@
         persistStateSnapshot({ immediate: true });
         return false;
       }
-      if (remote?.updated_at) {
+      const remoteRevision = normalizeText(remote?.updated_at);
+      const baselineDecision = householdUiBaselineDecision(remoteRevision, pendingSince);
+      if (baselineDecision === 'adopt') {
+        expectedRevision = remoteRevision;
+        state.cloud.householdUiRevision = remoteRevision;
+      } else if (remoteRevision) {
         markHouseholdUiConflict(remote, { includeName });
         persistStateSnapshot({ immediate: true });
         requestBackgroundRender();
         if (showMessage) showToast('Cloudová verze se nejdřív musí potvrdit. Nic nebylo přepsáno.');
         return false;
+      } else {
+        state.cloud.lastAutosyncError = 'Cloudovou verzi domácnosti se nepodařilo ověřit';
+        state.cloud.autosyncStatus = 'blocked';
+        state.cloud.autosyncRetryAt = '';
+        persistStateSnapshot({ immediate: true });
+        if (showMessage) showToast('Uložení bylo zastaveno, protože cloudovou verzi nejde bezpečně ověřit');
+        return false;
       }
-      state.cloud.lastAutosyncError = 'Cloudovou verzi domácnosti se nepodařilo ověřit';
-      persistStateSnapshot({ immediate: true });
-      if (showMessage) showToast('Uložení bylo zastaveno, protože cloudovou verzi nejde bezpečně ověřit');
-      return false;
     }
     const nextRevision = new Date().toISOString();
     const updatePayload = includeName
@@ -23045,6 +23122,8 @@
       moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
       render();
     };
+    window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
+    window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__ = (items = null) => Array.isArray(items) ? items.filter(cloudExtraItemNeedsSync).length : cloudExtraPendingCount();
     window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__ = () => {
       clearHouseholdUiConflict(state.cloud?.householdUiRevision || 'e2e-revision');
       state.cloud.householdUiPendingAt = '';

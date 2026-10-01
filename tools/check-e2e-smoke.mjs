@@ -1862,6 +1862,22 @@ async function run() {
     else ok('Cloud: offline fronta ukazuje konkrétní položku, stáří čekání a samostatné upozornění.');
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_OFFLINE_QUEUE__?.()` });
 
+    const householdBaselineCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => ({
+        staleLocalRevision: window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__?.('2026-09-10T04:33:34.757Z', '2026-09-16T08:00:00.000Z'),
+        newerCloudRevision: window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__?.('2026-09-20T08:00:00.000Z', '2026-09-16T08:00:00.000Z'),
+        extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
+          { cloudId: 'confirmed', syncStatus: '' },
+          { cloudId: 'changed', syncStatus: 'pending' },
+          { cloudId: '', syncStatus: '' }
+        ])
+      }))()`
+    });
+    const householdBaselineValue = householdBaselineCheck.result?.value || {};
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení nebo chybně vybírá drobné moduly do fronty.');
+    else ok('Cloud: stará revize nastavení se bezpečně opraví a potvrzené drobné moduly se znovu neposílají.');
+
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
     const syncRecoveryCheck = await page.send('Runtime.evaluate', {

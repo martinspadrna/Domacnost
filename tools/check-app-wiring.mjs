@@ -299,6 +299,11 @@ if (app) {
   expect(app, /prepareSupabaseAuthStorage\(\);\s*render\(\);/, 'app.js: kontrola Supabase relace proběhne před prvním vykreslením.');
   expect(app, 'const CLOUD_AUTOSYNC_RETRY_DELAYS_MS = [15000, 30000, 60000, 120000];', 'app.js: autosync má omezené postupné opakování po výpadku.');
   expect(app, 'function ensurePendingCloudModuleCode', 'app.js: autosync připraví jen moduly s čekajícími změnami.');
+  expect(app, 'function householdUiBaselineDecision', 'app.js: chybějící revize nastavení se obnoví podle stáří lokální a cloudové změny.');
+  expect(app, 'function healStaleHouseholdUiConflict', 'app.js: starý falešný konflikt nastavení se umí sám bezpečně odblokovat.');
+  expect(app, '{ shouldRun: () => householdUiHasPendingChanges(), run: () => cloudSaveHouseholdUiSettings(false) }', 'app.js: household UI se při autosyncu neposílá bez čekající změny.');
+  expect(app, '{ shouldRun: () => cloudExtraPendingCount() > 0, run: () => cloudSyncLocalExtraCollections(false) }', 'app.js: drobné moduly se při autosyncu neposílají bez čekající změny.');
+  expect(app, 'const items = (state[collection] || []).filter(cloudExtraItemNeedsSync);', 'app.js: potvrzené záruky a slevové kódy se znovu nepřepisují.');
   expectAbsent(autosyncBody, 'cloudLoadAllModules(', 'app.js: běžný autosync po jedné změně už nenačítá všechny moduly.');
   expect(app, "window.addEventListener('online', () => {", 'app.js: návrat internetu obnoví cloudovou aktivitu.');
   expect(app, "window.addEventListener('offline', () => {", 'app.js: ztráta internetu přepne synchronizaci do čekajícího stavu.');
