@@ -553,7 +553,10 @@ if (app && index && moduleLoader) {
   expect(app, 'window.__DOMACNOST_E2E_PWA_UPDATE__', 'app.js: bezpečný PWA update lze ověřit v reálném prohlížeči.');
   expect(app, 'renderUpdateUi: renderOverlaysOnly', 'app.js: oznámení o nové verzi nepřekresluje rozepsaný modul.');
   expect(pwa, "const RELEASE_MARKER_URL = './release.json';", 'pwa.js: novou verzi ověřuje nezávislý síťový marker.');
-  expect(pwa, 'maybeApplyWaitingUpdateInBackground()', 'pwa.js: čekající verze se bezpečně aktivuje na pozadí jen bez rozepsané práce.');
+  expect(pwa, "register('./sw.js', { updateViaCache: 'none' })", 'pwa.js: kontrola service workeru vždy obchází HTTP cache.');
+  expect(pwa, 'refreshRegistrationUpdateState();', 'pwa.js: po kontrole zachytí i worker instalovaný před připojením listeneru.');
+  expect(pwa, "if (!pwaUpdateAvailable || !pendingServiceWorker) return false;", 'pwa.js: bezpečná klidná obrazovka může update aktivovat i bez skrytí karty.');
+  expect(app, /renderOnboarding\(\)[\s\S]*?\$\{renderPwaUpdateBanner\(\)\}/, 'app.js: update pruh je dostupný i na přihlášení.');
   expect(sw, "const isReleaseMarker = requestUrl.pathname.endsWith('/release.json');", 'sw.js: release marker obchází PWA cache.');
   expectAbsent(sw, '.then(() => self.skipWaiting())', 'sw.js: nový build nepřepíná běžící stránku uprostřed práce.');
 }

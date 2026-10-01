@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_517';
-  const APP_BUILD = 517;
+  const APP_VERSION = 'Domácnost+ v.0.1_518';
+  const APP_BUILD = 518;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -3215,6 +3215,8 @@
           <div class="boot-loading-line" aria-hidden="true"><span></span></div>
         </section>
       </div>
+      ${renderPwaUpdateBanner()}
+      <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
     `;
   }
 
@@ -5477,6 +5479,7 @@
             </section>
           </section>
         </div>
+        ${renderPwaUpdateBanner()}
         <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
       `;
       return;
@@ -5524,6 +5527,7 @@
             </div>
           </section>
         </div>
+        ${renderPwaUpdateBanner()}
         <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
       `;
       return;
@@ -5564,6 +5568,7 @@
           </div>
         </section>
       </div>
+      ${renderPwaUpdateBanner()}
       <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
     `;
   }
@@ -20876,14 +20881,35 @@
       subscriptions: (Array.isArray(services) ? services : [])
         .map(normalizeSubscriptionService)
         .map((service) => ({
-          ...service,
-          shares: [...(service.shares || [])].sort((a, b) => String(a?.personId || '').localeCompare(String(b?.personId || ''), 'cs'))
+          id: service.id,
+          serviceKey: service.serviceKey,
+          name: service.name,
+          price: service.price,
+          billingDay: service.billingDay,
+          maxMembers: service.maxMembers,
+          enabled: service.enabled,
+          note: service.note,
+          shares: [...(service.shares || [])]
+            .map((share) => ({ personId: share.personId, amount: share.amount }))
+            .sort((a, b) => String(a?.personId || '').localeCompare(String(b?.personId || ''), 'cs'))
         }))
         .sort(byId),
-      subscriptionPeople: (Array.isArray(people) ? people : []).map(normalizeSubscriptionPerson).sort(byId),
+      subscriptionPeople: (Array.isArray(people) ? people : [])
+        .map(normalizeSubscriptionPerson)
+        .map((person) => ({ id: person.id, name: person.name, note: person.note }))
+        .sort(byId),
       subscriptionPayments: (Array.isArray(payments) ? payments : [])
         .map(normalizeSubscriptionPayment)
         .filter((payment) => payment.subscriptionId && payment.personId && payment.amount > 0)
+        .map((payment) => ({
+          id: payment.id,
+          subscriptionId: payment.subscriptionId,
+          personId: payment.personId,
+          month: payment.month,
+          amount: payment.amount,
+          paidAt: payment.paidAt,
+          note: payment.note
+        }))
         .sort(byId)
     };
   }

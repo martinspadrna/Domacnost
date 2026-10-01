@@ -43,6 +43,7 @@
     let lastAutoUpdateCheckAt = 0;
     let latestReleaseBuild = APP_BUILD;
     let releaseCheckInFlight = null;
+    let trackedInstallingWorker = null;
     // Zachyceno co nejdřív po startu: vrácející se uživatel má aktivní SW z
     // minula, takže "controller" je nastavený hned (žádná změna, appka
     // je pořád ta samá běžící verze). Naproti tomu první instalace SW (po
@@ -394,6 +395,7 @@
           checkReleaseMarker(),
           serviceWorkerRegistration.update()
         ]);
+        refreshRegistrationUpdateState();
         const state = getState();
         state.pwa = { ...(state.pwa || {}), lastUpdateCheck: new Date().toISOString() };
         saveState();
@@ -408,11 +410,36 @@
     }
 
     function markUpdateAvailable(worker) {
+      const wasAlreadyAvailable = pwaUpdateAvailable && pendingServiceWorker === worker;
       pendingServiceWorker = worker || pendingServiceWorker;
       pwaUpdateAvailable = true;
       renderUpdateUi();
-      showToast('Je dostupná nová verze aplikace');
-      window.setTimeout(() => maybeApplyWaitingUpdateInBackground(), 800);
+      if (!wasAlreadyAvailable) showToast('Je dostupná nová verze aplikace');
+      window.setTimeout(() => maybeApplyWaitingUpdateInBackground(), 500);
+    }
+
+    function trackInstallingWorker(worker) {
+      if (!worker) return false;
+      if (worker.state === 'installed') {
+        if (navigator.serviceWorker.controller) markUpdateAvailable(worker);
+        return true;
+      }
+      if (trackedInstallingWorker === worker) return true;
+      trackedInstallingWorker = worker;
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) markUpdateAvailable(worker);
+        if (['installed', 'activated', 'redundant'].includes(worker.state)) trackedInstallingWorker = null;
+      });
+      return true;
+    }
+
+    function refreshRegistrationUpdateState() {
+      if (!serviceWorkerRegistration) return false;
+      if (serviceWorkerRegistration.waiting && navigator.serviceWorker.controller) {
+        markUpdateAvailable(serviceWorkerRegistration.waiting);
+        return true;
+      }
+      return trackInstallingWorker(serviceWorkerRegistration.installing);
     }
 
     function updateProtectionStatus() {
@@ -459,7 +486,10 @@
     }
 
     function maybeApplyWaitingUpdateInBackground() {
-      if (!pwaUpdateAvailable || !pendingServiceWorker || !document.hidden) return false;
+      if (!pwaUpdateAvailable || !pendingServiceWorker) return false;
+      // Nečekáme už jen na skrytí karty. Když nikdo nic nepíše a
+      // neběží odesílání formuláře, je bezpečné novou verzi
+      // aktivovat i na přihlášení nebo na klidné otevřené obrazovce.
       return applyAppUpdate({ automatic: true });
     }
 
@@ -504,16 +534,14 @@
     function registerServiceWorker() {
       if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').then((registration) => {
+        navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((registration) => {
           serviceWorkerRegistration = registration;
-          if (registration.waiting && navigator.serviceWorker.controller) markUpdateAvailable(registration.waiting);
           registration.addEventListener('updatefound', () => {
-            const worker = registration.installing;
-            if (!worker) return;
-            worker.addEventListener('statechange', () => {
-              if (worker.state === 'installed' && navigator.serviceWorker.controller) markUpdateAvailable(worker);
-            });
+            trackInstallingWorker(registration.installing);
           });
+          // updatefound mohl proběhnout ještě před připojením listeneru.
+          // Proto vždy zkontrolujeme i už existující waiting/installing worker.
+          refreshRegistrationUpdateState();
           checkForAppUpdate(false);
         }).catch(() => {});
       });
