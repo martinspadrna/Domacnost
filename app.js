@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_516';
-  const APP_BUILD = 516;
+  const APP_VERSION = 'Domácnost+ v.0.1_517';
+  const APP_BUILD = 517;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -20870,6 +20870,49 @@
     return layout && typeof layout === 'object' && !Array.isArray(layout) ? layout : {};
   }
 
+  function canonicalSubscriptionSnapshot(services = [], people = [], payments = []) {
+    const byId = (a, b) => String(a?.id || '').localeCompare(String(b?.id || ''), 'cs');
+    return {
+      subscriptions: (Array.isArray(services) ? services : [])
+        .map(normalizeSubscriptionService)
+        .map((service) => ({
+          ...service,
+          shares: [...(service.shares || [])].sort((a, b) => String(a?.personId || '').localeCompare(String(b?.personId || ''), 'cs'))
+        }))
+        .sort(byId),
+      subscriptionPeople: (Array.isArray(people) ? people : []).map(normalizeSubscriptionPerson).sort(byId),
+      subscriptionPayments: (Array.isArray(payments) ? payments : [])
+        .map(normalizeSubscriptionPayment)
+        .filter((payment) => payment.subscriptionId && payment.personId && payment.amount > 0)
+        .sort(byId)
+    };
+  }
+
+  function subscriptionSnapshotMatchesRemote(layout = {}) {
+    const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+    const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
+    return JSON.stringify(local) === JSON.stringify(remote);
+  }
+
+  function reconcileConfirmedSubscriptionPending(household) {
+    const pendingAt = normalizeText(state.subscriptionsCloud?.pendingAt);
+    if (!pendingAt) return false;
+    const pendingTime = Date.parse(pendingAt);
+    const remoteRevision = householdUiRemoteRevision(household);
+    const remoteTime = Date.parse(remoteRevision);
+    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime) || remoteTime < pendingTime) return false;
+    const layout = householdUiRemoteLayout(household);
+    if (!subscriptionSnapshotMatchesRemote(layout)) return false;
+    state.subscriptionsCloud = {
+      ...(state.subscriptionsCloud || {}),
+      loadedAt: new Date().toISOString(),
+      pendingAt: '',
+      errorAt: '',
+      error: ''
+    };
+    return true;
+  }
+
   function householdUiOldestPendingAt() {
     const candidates = [
       state.cloud?.householdUiPendingAt,
@@ -20969,6 +21012,11 @@
       clearHouseholdUiConflict(remoteRevision);
       return true;
     }
+    // Starší verze aplikace mohla po úspěšném zápisu ponechat lokální značku
+    // Předplatného ve frontě. Mažeme ji jen tehdy, když je cloudová revize
+    // novější než značka a normalizovaná data se přesně shodují. Skutečná
+    // odlišná změna dál skončí v bezpečném konfliktu a nic se nepřepíše.
+    reconcileConfirmedSubscriptionPending(household);
     if (state.cloud?.householdUiConflict) return false;
     const pending = householdUiHasPendingChanges();
     const knownRevision = normalizeText(state.cloud?.householdUiRevision);
@@ -23123,6 +23171,26 @@
       render();
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
+    window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__ = () => {
+      const previous = structuredCloneSafe(state.subscriptionsCloud || {});
+      const pendingAt = '2026-06-29T12:00:00.000Z';
+      const remoteRevision = '2026-10-01T06:00:00.000Z';
+      const layout = {
+        subscriptions: structuredCloneSafe(state.subscriptions || []),
+        subscriptionPeople: structuredCloneSafe(state.subscriptionPeople || []),
+        subscriptionPayments: structuredCloneSafe(state.subscriptionPayments || [])
+      };
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt };
+      const matchingCleared = reconcileConfirmedSubscriptionPending({ updated_at: remoteRevision, dashboard_layout: layout });
+      const pendingAfterMatch = normalizeText(state.subscriptionsCloud?.pendingAt);
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt };
+      const changedLayout = structuredCloneSafe(layout);
+      if (changedLayout.subscriptions[0]) changedLayout.subscriptions[0].name = `${changedLayout.subscriptions[0].name || 'Služba'} – jiná verze`;
+      const changedCleared = reconcileConfirmedSubscriptionPending({ updated_at: remoteRevision, dashboard_layout: changedLayout });
+      const pendingAfterDifference = normalizeText(state.subscriptionsCloud?.pendingAt);
+      state.subscriptionsCloud = previous;
+      return { matchingCleared, pendingAfterMatch, changedCleared, pendingAfterDifference };
+    };
     window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__ = (items = null) => Array.isArray(items) ? items.filter(cloudExtraItemNeedsSync).length : cloudExtraPendingCount();
     window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__ = () => {
       clearHouseholdUiConflict(state.cloud?.householdUiRevision || 'e2e-revision');

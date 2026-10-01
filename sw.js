@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-516`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-517`;
 const APP_ASSETS = [
   './',
   './index.html',
