@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_518';
-  const APP_BUILD = 518;
+  const APP_VERSION = 'Domácnost+ v.0.1_519';
+  const APP_BUILD = 519;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -20920,6 +20920,73 @@
     return JSON.stringify(local) === JSON.stringify(remote);
   }
 
+  function canonicalComparableJson(value) {
+    if (Array.isArray(value)) return value.map(canonicalComparableJson);
+    if (!value || typeof value !== 'object') return value;
+    return Object.keys(value).sort((a, b) => a.localeCompare(b, 'en')).reduce((result, key) => {
+      result[key] = canonicalComparableJson(value[key]);
+      return result;
+    }, {});
+  }
+
+  function householdUiComparableLayout(layout = {}) {
+    const comparable = structuredCloneSafe(layout || {});
+    // Tyto dvě hodnoty popisují pouze technickou verzi zápisu. Nemění obsah
+    // domácnosti a po aktualizaci aplikace se přirozeně liší.
+    delete comparable.updatedAt;
+    delete comparable.appBuild;
+    // Každé sestavení payloadu obnoví čas aktivního profilu, i když se jeho
+    // skutečné nastavení nezměnilo. Tento technický čas proto nesmí udržovat
+    // už potvrzený snapshot ve frontě donekonečna.
+    const profileMap = comparable.profileUiSettings;
+    if (profileMap && typeof profileMap === 'object' && !Array.isArray(profileMap)) {
+      Object.values(profileMap).forEach((profileSettings) => {
+        if (profileSettings && typeof profileSettings === 'object' && !Array.isArray(profileSettings)) delete profileSettings.updatedAt;
+      });
+    }
+    if (comparable.vape && typeof comparable.vape === 'object' && !Array.isArray(comparable.vape)) {
+      delete comparable.vape.updatedAt;
+      if (Array.isArray(comparable.vape.items)) comparable.vape.items.forEach((item) => { if (item && typeof item === 'object') delete item.createdAt; });
+    }
+    return comparable;
+  }
+
+  function householdUiSnapshotMatchesRemote(household) {
+    const localPayload = householdUiPayload();
+    const localLayout = householdUiComparableLayout(localPayload.dashboard_layout);
+    const remoteLayout = householdUiComparableLayout(householdUiRemoteLayout(household));
+    const localWeather = localPayload.weather_location || {};
+    const remoteWeather = household?.weatherLocation || household?.weather_location || {};
+    return JSON.stringify(canonicalComparableJson({ layout: localLayout, weather: localWeather }))
+      === JSON.stringify(canonicalComparableJson({ layout: remoteLayout, weather: remoteWeather }));
+  }
+
+  function reconcileConfirmedHouseholdUiPending(household) {
+    const pendingAt = householdUiOldestPendingAt();
+    if (!pendingAt) return false;
+    const pendingTime = Date.parse(pendingAt);
+    const remoteRevision = householdUiRemoteRevision(household);
+    const remoteTime = Date.parse(remoteRevision);
+    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime) || remoteTime < pendingTime) return false;
+    if (!householdUiSnapshotMatchesRemote(household)) return false;
+    const confirmedAt = new Date().toISOString();
+    clearHouseholdUiPendingState();
+    state.cloud = {
+      ...(state.cloud || {}),
+      lastSyncAt: confirmedAt,
+      householdUiRevision: remoteRevision,
+      householdUiConflict: null,
+      lastAutosyncError: '',
+      autosyncRetryAt: ''
+    };
+    state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: confirmedAt };
+    state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: confirmedAt };
+    state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: confirmedAt };
+    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: confirmedAt };
+    state.poolCloud = { ...(state.poolCloud || {}), loadedAt: confirmedAt };
+    return true;
+  }
+
   function reconcileConfirmedSubscriptionPending(household) {
     const pendingAt = normalizeText(state.subscriptionsCloud?.pendingAt);
     if (!pendingAt) return false;
@@ -21038,6 +21105,9 @@
       clearHouseholdUiConflict(remoteRevision);
       return true;
     }
+    // Nejdřív porovnáme celý snapshot. Když je obsah totožný, jde pouze o
+    // zapomenutou lokální značku a není důvod vytvářet konflikt ani další zápis.
+    reconcileConfirmedHouseholdUiPending(household);
     // Starší verze aplikace mohla po úspěšném zápisu ponechat lokální značku
     // Předplatného ve frontě. Mažeme ji jen tehdy, když je cloudová revize
     // novější než značka a normalizovaná data se přesně shodují. Skutečná
@@ -21356,31 +21426,53 @@
       return false;
     }
     const pendingSince = householdUiOldestPendingAt() || new Date().toISOString();
-    state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || pendingSince;
     let expectedRevision = normalizeText(state.cloud?.householdUiRevision);
-    if (!expectedRevision && options.force !== true) {
+    if (options.force !== true && (householdUiHasPendingChanges() || !expectedRevision)) {
       const { data: remote, error: baselineError } = await client
         .from('households')
         .select('updated_at, dashboard_layout')
         .eq('id', state.cloud.householdId)
         .maybeSingle();
       if (baselineError) {
-        state.cloud.lastAutosyncError = baselineError.message || 'Nepodařilo se ověřit cloudovou verzi';
+        state.cloud.lastAutosyncError = cloudErrorFriendlyMessage(baselineError) || 'Nepodařilo se ověřit cloudovou verzi';
         persistStateSnapshot({ immediate: true });
         return false;
       }
       const remoteRevision = normalizeText(remote?.updated_at);
-      const baselineDecision = householdUiBaselineDecision(remoteRevision, pendingSince);
-      if (baselineDecision === 'adopt') {
-        expectedRevision = remoteRevision;
-        state.cloud.householdUiRevision = remoteRevision;
-      } else if (remoteRevision) {
+      if (reconcileConfirmedHouseholdUiPending(remote)) {
+        persistStateSnapshot({ immediate: true });
+        requestBackgroundRender();
+        if (showMessage) showToast('Cloud už stejná data obsahuje. Čekající značka byla odstraněna.');
+        return true;
+      }
+      reconcileConfirmedSubscriptionPending(remote);
+      if (expectedRevision && remoteRevision && expectedRevision !== remoteRevision) {
         markHouseholdUiConflict(remote, { includeName });
         persistStateSnapshot({ immediate: true });
         requestBackgroundRender();
         if (showMessage) showToast('Cloudová verze se nejdřív musí potvrdit. Nic nebylo přepsáno.');
         return false;
-      } else {
+      }
+      if (!expectedRevision) {
+        const baselineDecision = householdUiBaselineDecision(remoteRevision, pendingSince);
+        if (baselineDecision === 'adopt') {
+          expectedRevision = remoteRevision;
+          state.cloud.householdUiRevision = remoteRevision;
+        } else if (remoteRevision) {
+          markHouseholdUiConflict(remote, { includeName });
+          persistStateSnapshot({ immediate: true });
+          requestBackgroundRender();
+          if (showMessage) showToast('Cloudová verze se nejdřív musí potvrdit. Nic nebylo přepsáno.');
+          return false;
+        } else {
+          state.cloud.lastAutosyncError = 'Cloudovou verzi domácnosti se nepodařilo ověřit';
+          state.cloud.autosyncStatus = 'blocked';
+          state.cloud.autosyncRetryAt = '';
+          persistStateSnapshot({ immediate: true });
+          if (showMessage) showToast('Uložení bylo zastaveno, protože cloudovou verzi nejde bezpečně ověřit');
+          return false;
+        }
+      } else if (!remoteRevision) {
         state.cloud.lastAutosyncError = 'Cloudovou verzi domácnosti se nepodařilo ověřit';
         state.cloud.autosyncStatus = 'blocked';
         state.cloud.autosyncRetryAt = '';
@@ -21389,6 +21481,7 @@
         return false;
       }
     }
+    state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || pendingSince;
     const nextRevision = new Date().toISOString();
     const updatePayload = includeName
       ? { ...householdUiPayload(), name: householdName(), updated_at: nextRevision }
@@ -23216,6 +23309,44 @@
       const pendingAfterDifference = normalizeText(state.subscriptionsCloud?.pendingAt);
       state.subscriptionsCloud = previous;
       return { matchingCleared, pendingAfterMatch, changedCleared, pendingAfterDifference };
+    };
+    window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__ = () => {
+      const previous = {
+        cloud: structuredCloneSafe(state.cloud || {}),
+        subscriptionsCloud: structuredCloneSafe(state.subscriptionsCloud || {}),
+        readingsCloud: structuredCloneSafe(state.readingsCloud || {}),
+        loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || {}),
+        financeCloud: structuredCloneSafe(state.financeCloud || {}),
+        poolCloud: structuredCloneSafe(state.poolCloud || {})
+      };
+      const pendingAt = '2026-06-29T12:00:00.000Z';
+      const remoteRevision = '2026-10-01T06:00:00.000Z';
+      const payload = householdUiPayload();
+      const household = {
+        updated_at: remoteRevision,
+        dashboard_layout: structuredCloneSafe(payload.dashboard_layout),
+        weather_location: structuredCloneSafe(payload.weather_location)
+      };
+      household.dashboard_layout.appBuild = Math.max(1, APP_BUILD - 2);
+      household.dashboard_layout.updatedAt = '2026-10-01T05:59:59.000Z';
+      state.cloud = { ...(state.cloud || {}), householdUiPendingAt: pendingAt, lastAutosyncError: 'stará chyba' };
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt };
+      const matchingCleared = reconcileConfirmedHouseholdUiPending(household);
+      const noPendingAfterMatch = !householdUiHasPendingChanges();
+      const errorAfterMatch = normalizeText(state.cloud?.lastAutosyncError);
+      const changedHousehold = structuredCloneSafe(household);
+      changedHousehold.dashboard_layout.widgets = [...(changedHousehold.dashboard_layout.widgets || []), 'different-e2e-widget'];
+      state.cloud = { ...(state.cloud || {}), householdUiPendingAt: pendingAt };
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt };
+      const changedCleared = reconcileConfirmedHouseholdUiPending(changedHousehold);
+      const pendingAfterDifference = householdUiHasPendingChanges();
+      state.cloud = previous.cloud;
+      state.subscriptionsCloud = previous.subscriptionsCloud;
+      state.readingsCloud = previous.readingsCloud;
+      state.loyaltyCardsCloud = previous.loyaltyCardsCloud;
+      state.financeCloud = previous.financeCloud;
+      state.poolCloud = previous.poolCloud;
+      return { matchingCleared, noPendingAfterMatch, errorAfterMatch, changedCleared, pendingAfterDifference };
     };
     window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__ = (items = null) => Array.isArray(items) ? items.filter(cloudExtraItemNeedsSync).length : cloudExtraPendingCount();
     window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__ = () => {
