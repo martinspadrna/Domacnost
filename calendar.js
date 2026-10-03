@@ -263,6 +263,16 @@
       return Boolean(sourceId && sourceIds.has(sourceId));
     }
 
+    function calendarEventIsProviderManaged(event = {}, remoteRow = null) {
+      // Události z ICS/Google zdroje jsou jen zrcadlo zdrojového kalendáře.
+      // Domácnost+ je nesmí považovat za vlastní editovatelné záznamy.
+      if (normalizeText(event.externalId || remoteRow?.provider_event_id)) return true;
+      const sourceId = normalizeText(event.sourceId || remoteRow?.source_id);
+      if (!sourceId) return false;
+      const source = getCalendarSource(sourceId);
+      return normalizeCalendarSourceProvider(source?.provider) === 'ical';
+    }
+
     function calendarSourceOptions(selected = '') {
       const sources = getCalendarSources().filter((source) => source.isEnabled !== false);
       const options = [['manual', 'Sdílený kalendář domácnosti']];
@@ -422,7 +432,7 @@
             ${event.note ? `<div class="inline-note"><strong>Poznámka:</strong> ${escapeHtml(event.note)}</div>` : ''}
             <div class="form-actions modal-actions">
               <button class="ghost-btn" type="button" data-action="close-modal">Zavřít</button>
-              ${!event.cloudId ? `<button class="danger-btn" type="button" data-action="delete-calendar" data-id="${escapeHtml(event.id || '')}">Smazat událost</button>` : ''}
+              ${!event.cloudId && !calendarEventIsProviderManaged(event) ? `<button class="danger-btn" type="button" data-action="delete-calendar" data-id="${escapeHtml(event.id || '')}">Smazat událost</button>` : ''}
             </div>
           </section>
         </div>
@@ -755,7 +765,7 @@
             <span class="badge ${event.cloudId ? 'good' : ''}">${event.cloudId ? 'cloud' : 'lokálně'}</span>
           </div>
           <div class="item-meta">${escapeHtml(calendarEventMetaLabel(event, getNow()))} · ${escapeHtml(calendarSourceName(event.sourceId))}</div>
-          ${withDelete ? `<div class="item-actions"><button class="danger-btn" type="button" data-action="delete-calendar" data-id="${event.id}">Smazat</button></div>` : ''}
+          ${withDelete && !calendarEventIsProviderManaged(event) ? `<div class="item-actions"><button class="danger-btn" type="button" data-action="delete-calendar" data-id="${event.id}">Smazat</button></div>` : ''}
         </div>
       `).join('')}</div>`;
     }
@@ -1047,7 +1057,7 @@
       };
       getState().calendar = (getState().calendar || []).filter((event) => !sourceKeys.includes(String(event.sourceId || '')));
       touchState();
-      saveState();
+      saveState({ immediate: true, skipTrashTracking: true });
       render();
       offerUndo('Kalendář odebraný', async () => {
         getState().calendarCloud = {
@@ -1129,6 +1139,10 @@
       const client = getSupabaseClient();
       if (!client || !event?.cloudId || !getState().cloud?.householdId) return true;
       const current = options.expectedRevision ? null : (!event.cloudUpdatedAt ? await cloudCalendarRow(event.cloudId) : null);
+      if (calendarEventIsProviderManaged(event, current)) {
+        if (options.showMessage !== false) showToast('Událost řídí zdrojový kalendář. Změň ji přímo v Google Kalendáři.');
+        return false;
+      }
       const expectedRevision = options.expectedRevision || event.cloudUpdatedAt || current?.updated_at || '';
       let query = client.from('calendar_events').delete().eq('id', event.cloudId).eq('household_id', getState().cloud.householdId);
       if (expectedRevision) query = query.eq('updated_at', expectedRevision);
@@ -1202,7 +1216,7 @@
       getState().calendar = [...cloudItems.filter((item) => !conflictingDeletes.has(item.cloudId)), ...localOnly];
       getState().calendarCloud = { ...(getState().calendarCloud || {}), loadedAt: new Date().toISOString(), sourcesLoadedAt: getState().calendarCloud?.sourcesLoadedAt || new Date().toISOString() };
       touchState();
-      saveState();
+      saveState({ immediate: true, skipTrashTracking: true });
       render();
       if (showMessage) showToast('Cloud kalendář načten');
       return true;
@@ -1246,6 +1260,7 @@
     async function cloudSyncCalendarById(id) {
       const event = getState().calendar.find((entry) => entry.id === id);
       if (!event) return;
+      if (calendarEventIsProviderManaged(event)) return;
       await cloudAddCalendarEvent(event);
       touchState();
       saveState();
@@ -1254,7 +1269,7 @@
     }
 
     async function cloudSyncLocalCalendar() {
-      const local = getState().calendar.filter((event) => !event.cloudId);
+      const local = getState().calendar.filter((event) => !event.cloudId && !calendarEventIsProviderManaged(event));
       if (!local.length) return showToast('Žádné lokální události k odeslání');
       let count = 0;
       for (const event of local) {
@@ -1298,6 +1313,10 @@
     async function deleteCalendarEvent(id) {
       const event = getState().calendar.find((entry) => entry.id === id);
       if (!event) return;
+      if (calendarEventIsProviderManaged(event)) {
+        showToast('Událost řídí zdrojový kalendář. Změň ji přímo v Google Kalendáři.');
+        return;
+      }
       const eventIndex = getState().calendar.findIndex((entry) => entry.id === id);
       getState().calendar = getState().calendar.filter((entry) => entry.id !== id);
       if (calendarDetailEventId === id || calendarDetailEventId === event.cloudId) calendarDetailEventId = '';
@@ -1635,7 +1654,7 @@
       if (sourceIds.size) {
         getState().calendarCloud = { ...(getState().calendarCloud || {}), sources: mergeCalendarSources(getCalendarSources(), sources), calendarLastSyncAt: syncedAt };
         touchState();
-        saveState({ immediate: true });
+        saveState({ immediate: true, skipTrashTracking: true });
         requestRender();
       }
       return attempted && !succeeded ? { ok: false, total: -1, removed: 0 } : { ok: true, total, removed, attempted, succeeded };
@@ -1670,7 +1689,7 @@
             });
         getState().calendarCloud = { ...(getState().calendarCloud || {}), calendarLastSyncAt: new Date().toISOString() };
         touchState();
-        saveState({ immediate: true });
+        saveState({ immediate: true, skipTrashTracking: true });
         requestRender();
         if (showMessage) {
           const count = Number(data.eventsUpserted || 0);
@@ -1747,6 +1766,7 @@
       getCalendarSources,
       normalizeCalendarSourceProvider,
       getCalendarSource,
+      calendarEventIsProviderManaged,
       mapCalendarSource,
       mergeCalendarSources,
       // render

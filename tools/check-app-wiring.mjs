@@ -336,6 +336,12 @@ if (app) {
   expect(app, 'odometer < lastOdometer', 'app.js: tankování blokuje menší nájezd než poslední známý.');
   expect(calendar, 'function parseIcsEvents', 'calendar.js: ICS/iCal ma frontend fallback parser.');
   expect(calendar, 'function syncIcsSourcesInBrowser', 'calendar.js: ICS/iCal umi nacist udalosti i bez edge funkce.');
+  expect(calendar, 'function calendarEventIsProviderManaged', 'calendar.js: importovana ICS/Google udalost je rozpoznana jako providerem rizena kopie.');
+  expect(calendar, '!event.cloudId && !calendarEventIsProviderManaged(event)', 'calendar.js: browser ICS fallback se neposila zpet do cloudu jako rucni udalost.');
+  expect(calendar, "saveState({ immediate: true, skipTrashTracking: true })", 'calendar.js: obnoveni externiho kalendare nevytvari lokalni Kos.');
+  expect(app, 'function cleanupProviderManagedCalendarSyncArtifacts', 'app.js: stare falesne delete/conflict zaznamy externiho kalendare se umeji automaticky uklidit.');
+  expect(app, "collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)", 'app.js: trvale smazani stareho provider calendar zaznamu nevytvori delete outbox.');
+  expect(app, "cleanupProviderManagedCalendarSyncArtifacts({ persist: false })", 'app.js: legacy provider calendar fronta se uklidi uz pri startu pred zalozenim trash baseline.');
   expect(calendar, "filter((event) => !keys.includes(String(event.sourceId || '')))", 'calendar.js: browser ICS sync maze lokalni udalosti, ktere uz ve zdroji nejsou.');
   expect(calendar, "parsed.name === 'RECURRENCE-ID'", 'calendar.js: browser ICS parser cte RECURRENCE-ID pro zrusene vyskyty opakovanych udalosti.');
   expect(calendar, "String(raw.status || '').toUpperCase() === 'CANCELLED'", 'calendar.js: browser ICS parser vyrazuje zrusene vyskyty opakovanych udalosti.');
