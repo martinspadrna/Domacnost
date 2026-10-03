@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_520';
-  const APP_BUILD = 520;
+  const APP_VERSION = 'Domácnost+ v.0.1_521';
+  const APP_BUILD = 521;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -1151,6 +1151,15 @@
     const loader = window.DomacnostModuleLoader;
     if (!loader?.ensure) return true;
     return loader.ensure(moduleId);
+  }
+
+  async function ensureHouseholdUiSyncDependencies() {
+    // householdUiPayload() i bezpečné porovnání starého household snapshotu
+    // používají normalizaci Předplatného, která žije v lazy subscriptions.js.
+    // Cloud sync proto musí tento malý datový modul připravit i tehdy, když
+    // uživatel Předplatné v aktuální relaci vůbec neotevřel.
+    if (!moduleCodeReady('subscriptions')) await ensureModuleCode('subscriptions');
+    return true;
   }
 
   async function ensureModuleCodeForInteraction(moduleId) {
@@ -18261,7 +18270,7 @@
   }
 
   function pendingCloudModuleIds(items = null) {
-    const lazySyncModules = new Set(['shopping', 'tasks', 'contracts', 'warranties', 'garage', 'hdo', 'waste', 'calendar', 'finance', 'pool']);
+    const lazySyncModules = new Set(['shopping', 'tasks', 'contracts', 'warranties', 'garage', 'hdo', 'waste', 'calendar', 'finance', 'pool', 'subscriptions']);
     const rows = items || getCloudSyncOverviewItems();
     return [...new Set(rows.filter((item) => Number(item.local || 0) > 0).map((item) => item.nav).filter((id) => lazySyncModules.has(id)))];
   }
@@ -21216,18 +21225,21 @@
       clearHouseholdUiConflict(remoteRevision);
       return true;
     }
-    // Nejdřív porovnáme celý snapshot. Když je obsah totožný, jde pouze o
-    // zapomenutou lokální značku a není důvod vytvářet konflikt ani další zápis.
-    reconcileConfirmedHouseholdUiPending(household);
-    // Starší verze aplikace mohla po úspěšném zápisu ponechat lokální značku
-    // Předplatného ve frontě. Mažeme ji jen tehdy, když je cloudová revize
-    // novější než značka a normalizovaná data se přesně shodují. Skutečná
-    // odlišná změna dál skončí v bezpečném konfliktu a nic se nepřepíše.
-    reconcileConfirmedSubscriptionPending(household);
+    const pendingBeforeReconcile = householdUiHasPendingChanges();
+    const canReconcileSnapshot = !pendingBeforeReconcile || moduleCodeReady('subscriptions');
+    if (canReconcileSnapshot) {
+      // Nejdřív porovnáme celý snapshot. Když je obsah totožný, jde pouze o
+      // zapomenutou lokální značku a není důvod vytvářet konflikt ani další zápis.
+      reconcileConfirmedHouseholdUiPending(household);
+      // Starší verze aplikace mohla po úspěšném zápisu ponechat lokální značku
+      // Předplatného ve frontě. Odlišná změna se automaticky nemaže.
+      reconcileConfirmedSubscriptionPending(household);
+    }
     if (state.cloud?.householdUiConflict) return false;
     const pending = householdUiHasPendingChanges();
     const knownRevision = normalizeText(state.cloud?.householdUiRevision);
     if (pending) {
+      if (!canReconcileSnapshot) return false;
       if (!knownRevision || (remoteRevision && remoteRevision !== knownRevision)) {
         markHouseholdUiConflict(household);
       }
@@ -21340,6 +21352,7 @@
     }
     const activeHousehold = households.find((item) => item.id === state.cloud.householdId);
     if (activeHousehold) {
+      if (householdUiHasPendingChanges()) await ensureHouseholdUiSyncDependencies();
       const applyRemote = shouldApplyRemoteHouseholdUi(activeHousehold);
       state.household = { ...(state.household || {}), id: activeHousehold.id, isConfigured: true };
       if (applyRemote) {
@@ -21531,6 +21544,7 @@
     if (!cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
+    await ensureHouseholdUiSyncDependencies();
     if (options.force !== true) healStaleHouseholdUiConflict();
     if (state.cloud?.householdUiConflict && options.force !== true) {
       if (showMessage) showToast('Nejdřív vyřeš změny ze dvou zařízení');
@@ -21675,6 +21689,7 @@
       return false;
     }
     if (data) {
+      if (options.acceptConflict !== true && householdUiHasPendingChanges()) await ensureHouseholdUiSyncDependencies();
       const applyRemote = shouldApplyRemoteHouseholdUi(data, { acceptConflict: options.acceptConflict === true });
       if (!applyRemote) {
         touchState();
@@ -21871,6 +21886,7 @@
     if (!client) return showToast('Supabase knihovna není načtená');
     const user = await refreshCloudSession(false);
     if (!user) return showToast('Nejdřív se přihlas');
+    await ensureHouseholdUiSyncDependencies();
     saveHouseholdWorkspace();
     const { data: household, error: householdError } = await client
       .from('households')
@@ -22089,6 +22105,7 @@
     }
 
     if (!cloudHouseholdId) {
+      await ensureHouseholdUiSyncDependencies();
       const { data: household, error: householdError } = await client
         .from('households')
         .insert({
@@ -23401,6 +23418,7 @@
       render();
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
+    window.__DOMACNOST_E2E_PENDING_MODULE_IDS__ = (items = null) => pendingCloudModuleIds(items);
     window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__ = () => {
       const local = canonicalSubscriptionSemanticSnapshot(
         [{ id: 'local-service', serviceKey: 'netflix', name: 'Netflix 1', price: 509, billingDay: 8, maxMembers: 4, enabled: true, note: '', shares: [{ personId: 'local-person', amount: 300 }] }],
