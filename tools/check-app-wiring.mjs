@@ -303,6 +303,10 @@ if (app) {
   expect(app, 'function healStaleHouseholdUiConflict', 'app.js: starý falešný konflikt nastavení se umí sám bezpečně odblokovat.');
   expect(app, 'function reconcileConfirmedSubscriptionPending', 'app.js: stará značka Předplatného se odstraní po bezpečně potvrzené shodě s cloudovou kopií.');
   expect(app, 'function canonicalSubscriptionSemanticSnapshot', 'app.js: embedded Předplatné umí bezpečně porovnat význam dat i po změně interních ID.');
+  expect(app, 'async function ensureHouseholdUiSyncDependencies', 'app.js: household snapshot sync umí připravit lazy datovou závislost Předplatného.');
+  expect(app, "lazySyncModules = new Set(['shopping', 'tasks', 'contracts', 'warranties', 'garage', 'hdo', 'waste', 'calendar', 'finance', 'pool', 'subscriptions'])", 'app.js: čekající Předplatné je zahrnuté do přípravy lazy modulů před autosyncem.');
+  expect(app, /async function cloudSaveHouseholdUiSettings[\s\S]*?await ensureHouseholdUiSyncDependencies\(\);/, 'app.js: každý household zápis připraví Předplatné ještě před serializací payloadu.');
+  expect(app, /const activeHousehold = households\.find[\s\S]*?householdUiHasPendingChanges\(\)\) await ensureHouseholdUiSyncDependencies\(\);[\s\S]*?shouldApplyRemoteHouseholdUi/, 'app.js: warm start připraví lazy Předplatné před reconciliací staré fronty.');
   expect(app, 'reconcileConfirmedSubscriptionPending(household);', 'app.js: načtení domácnosti ověřuje a odblokuje potvrzené Předplatné před vyhodnocením konfliktu.');
   expect(app, ".select('updated_at, dashboard_layout, weather_location')", 'app.js: ověření celého household snapshotu načítá i weather_location.');
   expectAbsent(app, 'remoteTime < pendingTime', 'app.js: shodný aktuální cloudový obsah se nepotvrzuje podle pořadí technických časových značek.');
