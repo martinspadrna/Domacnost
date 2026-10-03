@@ -1872,6 +1872,7 @@ async function run() {
         pendingSubscriptionModules: window.__DOMACNOST_E2E_PENDING_MODULE_IDS__?.([{ nav: 'subscriptions', local: 1 }]),
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
         providerCalendarPending: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__?.(),
+        financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
           { cloudId: 'confirmed', syncStatus: '' },
@@ -1886,6 +1887,7 @@ async function run() {
     const pendingSubscriptionModules = householdBaselineValue.pendingSubscriptionModules || [];
     const providerCalendarRecovery = householdBaselineValue.providerCalendarRecovery || {};
     const providerCalendarPending = householdBaselineValue.providerCalendarPending || {};
+    const financeLoanPending = householdBaselineValue.financeLoanPending || {};
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
     const changedSubscriptionProtected = subscriptionPending.changedCleared === false && Boolean(subscriptionPending.pendingAfterDifference);
@@ -1902,10 +1904,15 @@ async function run() {
       && providerCalendarPending.local === 1
       && JSON.stringify(providerCalendarPending.localIds || []) === JSON.stringify(['manual-pending-e2e'])
       && providerCalendarPending.percent === 50;
+    const financeLoanPendingDurable = financeLoanPending.householdPending === true
+      && financeLoanPending.count === 1
+      && financeLoanPending.pendingAt === '2026-10-03T20:00:00.000Z'
+      && financeLoanPending.rowLocal === 1
+      && financeLoanPending.rowPendingAt === '2026-10-03T20:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, externí kalendář nebo lazy Předplatné.');
-    else ok('Cloud: externí kalendář zůstává zdrojem pravdy, jeho zrcadlené události nejsou falešně pending a staré falešné mazání se samo uklidí.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !financeLoanPendingDurable || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, externí kalendář, půjčky nebo lazy Předplatné.');
+    else ok('Cloud: externí kalendář nezůstává falešně pending a změny půjček mají trvalou frontu pro automatické opakování.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
