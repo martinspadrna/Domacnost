@@ -340,6 +340,8 @@ if (app) {
   expect(calendar, '!event.cloudId && !calendarEventIsProviderManaged(event)', 'calendar.js: browser ICS fallback se neposila zpet do cloudu jako rucni udalost.');
   expect(calendar, "saveState({ immediate: true, skipTrashTracking: true })", 'calendar.js: obnoveni externiho kalendare nevytvari lokalni Kos.');
   expect(app, 'function cleanupProviderManagedCalendarSyncArtifacts', 'app.js: stare falesne delete/conflict zaznamy externiho kalendare se umeji automaticky uklidit.');
+  expect(app, "localPendingFilter: (item) => !calendarSyncRecordIsProviderManaged(item)", 'app.js: providerem rizene kalendarove kopie se nepocitaji jako lokalni pending zmeny.');
+  expect(app, "typeof entry.localPendingFilter !== 'function' || entry.localPendingFilter(item)", 'app.js: cloud overview umi modulove vyloucit zdrojove kopie z pending poctu.');
   expect(app, "collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)", 'app.js: trvale smazani stareho provider calendar zaznamu nevytvori delete outbox.');
   expect(app, "cleanupProviderManagedCalendarSyncArtifacts({ persist: false })", 'app.js: legacy provider calendar fronta se uklidi uz pri startu pred zalozenim trash baseline.');
   expect(calendar, "filter((event) => !keys.includes(String(event.sourceId || '')))", 'calendar.js: browser ICS sync maze lokalni udalosti, ktere uz ve zdroji nejsou.');
