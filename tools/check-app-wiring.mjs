@@ -79,6 +79,10 @@ if (app && finance) {
   expect(finance, "loansPendingAt: ''", 'finance.js: potvrzená půjčka vyčistí vlastní pending marker.');
   expect(app, 'state.financeCloud?.loansPendingAt', 'app.js: household autosync započítává čekající půjčky.');
   expect(app, 'function financeSettingsPendingCount()', 'app.js: Finance nastavení umí rozlišit čekající šablony a půjčky.');
+  expect(app, 'function householdUiLayoutSectionsMatchRemote', 'app.js: embedded household sekce mají bezpečné samostatné porovnání s cloudem.');
+  expect(app, 'function reconcileConfirmedSnapshotSectionPendings', 'app.js: potvrzené snapshot sekce umí samostatně odblokovat stale pending marker.');
+  expect(app, "reconcile('financeLoans'", 'app.js: section-level recovery zahrnuje i půjčky.');
+  expect(app, 'reconcileConfirmedSnapshotSectionPendings(household);', 'app.js: household load spouští section-level recovery před konfliktem.');
 }
 
 if (app && pool && index && sw) {

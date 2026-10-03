@@ -1873,6 +1873,7 @@ async function run() {
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
         providerCalendarPending: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__?.(),
         financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
+        snapshotSections: window.__DOMACNOST_E2E_RECONCILE_SNAPSHOT_SECTIONS__?.(),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
           { cloudId: 'confirmed', syncStatus: '' },
@@ -1888,6 +1889,7 @@ async function run() {
     const providerCalendarRecovery = householdBaselineValue.providerCalendarRecovery || {};
     const providerCalendarPending = householdBaselineValue.providerCalendarPending || {};
     const financeLoanPending = householdBaselineValue.financeLoanPending || {};
+    const snapshotSections = householdBaselineValue.snapshotSections || {};
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
     const changedSubscriptionProtected = subscriptionPending.changedCleared === false && Boolean(subscriptionPending.pendingAfterDifference);
@@ -1909,10 +1911,18 @@ async function run() {
       && financeLoanPending.pendingAt === '2026-10-03T20:00:00.000Z'
       && financeLoanPending.rowLocal === 1
       && financeLoanPending.rowPendingAt === '2026-10-03T20:00:00.000Z';
+    const snapshotSectionsReconciled = JSON.stringify(snapshotSections.matching?.cleared || []) === JSON.stringify(['readings', 'loyaltyCards', 'pools', 'financeTemplates', 'financeLoans'])
+      && !snapshotSections.matching?.readings
+      && !snapshotSections.matching?.loyalty
+      && !snapshotSections.matching?.pools
+      && !snapshotSections.matching?.templates
+      && !snapshotSections.matching?.loans
+      && !(snapshotSections.changedCleared || []).includes('readings')
+      && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !financeLoanPendingDurable || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, externí kalendář, půjčky nebo lazy Předplatné.');
-    else ok('Cloud: externí kalendář nezůstává falešně pending a změny půjček mají trvalou frontu pro automatické opakování.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !financeLoanPendingDurable || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, potvrzené snapshot sekce, externí kalendář nebo půjčky.');
+    else ok('Cloud: potvrzené Odečty, karty, bazény, finanční šablony a půjčky se odblokují po sekcích bez přepsání skutečně odlišných dat.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));

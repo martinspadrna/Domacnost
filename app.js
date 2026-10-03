@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_524';
-  const APP_BUILD = 524;
+  const APP_VERSION = 'Domácnost+ v.0.1_525';
+  const APP_BUILD = 525;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -21207,6 +21207,45 @@
     return true;
   }
 
+  function householdUiLayoutSectionsMatchRemote(household, keys = []) {
+    if (!Array.isArray(keys) || !keys.length) return false;
+    const localLayout = householdUiComparableLayout(householdUiPayload().dashboard_layout);
+    const remoteLayout = householdUiComparableLayout(householdUiRemoteLayout(household));
+    if (!keys.every((key) => Object.prototype.hasOwnProperty.call(remoteLayout, key))) return false;
+    const pick = (layout) => keys.reduce((result, key) => {
+      result[key] = layout[key];
+      return result;
+    }, {});
+    return JSON.stringify(canonicalComparableJson(pick(localLayout)))
+      === JSON.stringify(canonicalComparableJson(pick(remoteLayout)));
+  }
+
+  function reconcileConfirmedSnapshotSectionPendings(household) {
+    const remoteTime = Date.parse(householdUiRemoteRevision(household));
+    if (!Number.isFinite(remoteTime)) return [];
+    const confirmedAt = new Date().toISOString();
+    const cleared = [];
+    const reconcile = (name, pendingAt, keys, applyClear) => {
+      if (!Number.isFinite(Date.parse(pendingAt || ''))) return;
+      if (!householdUiLayoutSectionsMatchRemote(household, keys)) return;
+      applyClear();
+      cleared.push(name);
+    };
+    reconcile('readings', state.readingsCloud?.pendingAt,
+      ['readingGroups', 'readingMeters', 'readings', 'readingPrices', 'readingDeposits', 'readingBilling'],
+      () => { state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: confirmedAt, pendingAt: '' }; });
+    reconcile('loyaltyCards', state.loyaltyCardsCloud?.pendingAt, ['loyaltyCards'],
+      () => { state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: confirmedAt, pendingAt: '', errorAt: '', error: '' }; });
+    reconcile('pools', state.poolCloud?.pendingAt, ['pools'],
+      () => { state.poolCloud = { ...(state.poolCloud || {}), loadedAt: confirmedAt, pendingAt: '' }; });
+    reconcile('financeTemplates', state.financeCloud?.templatesPendingAt, ['financeTemplates'],
+      () => { state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: confirmedAt, templatesPendingAt: '' }; });
+    reconcile('financeLoans', state.financeCloud?.loansPendingAt, ['financeLoans'],
+      () => { state.financeCloud = { ...(state.financeCloud || {}), loansLoadedAt: confirmedAt, loansPendingAt: '' }; });
+    if (cleared.length) settleRecoveredCloudSyncState(confirmedAt);
+    return cleared;
+  }
+
   function householdUiOldestPendingAt() {
     const candidates = [
       state.cloud?.householdUiPendingAt,
@@ -21332,8 +21371,10 @@
       // zapomenutou lokální značku a není důvod vytvářet konflikt ani další zápis.
       reconcileConfirmedHouseholdUiPending(household);
       // Starší verze aplikace mohla po úspěšném zápisu ponechat lokální značku
-      // Předplatného ve frontě. Odlišná změna se automaticky nemaže.
+      // konkrétní snapshot sekce ve frontě. Shodnou sekci bezpečně potvrdíme
+      // samostatně, i když se mezitím změnila jiná část domácnosti.
       reconcileConfirmedSubscriptionPending(household);
+      reconcileConfirmedSnapshotSectionPendings(household);
     }
     if (state.cloud?.householdUiConflict) return false;
     const pending = householdUiHasPendingChanges();
@@ -23639,6 +23680,52 @@
       const pendingAfterDifference = normalizeText(state.subscriptionsCloud?.pendingAt);
       state.subscriptionsCloud = previous;
       return { matchingCleared, pendingAfterMatch, changedCleared, pendingAfterDifference };
+    };
+    window.__DOMACNOST_E2E_RECONCILE_SNAPSHOT_SECTIONS__ = () => {
+      const previous = {
+        readingsCloud: structuredCloneSafe(state.readingsCloud || {}),
+        loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || {}),
+        financeCloud: structuredCloneSafe(state.financeCloud || {}),
+        poolCloud: structuredCloneSafe(state.poolCloud || {})
+      };
+      const pendingAt = '2026-06-29T12:00:00.000Z';
+      const payload = householdUiPayload();
+      const household = {
+        updated_at: '2026-06-28T06:00:00.000Z',
+        dashboard_layout: structuredCloneSafe(payload.dashboard_layout)
+      };
+      household.dashboard_layout.widgets = [...(household.dashboard_layout.widgets || []), 'unrelated-remote-e2e'];
+      state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt };
+      state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt };
+      state.poolCloud = { ...(state.poolCloud || {}), pendingAt };
+      state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: pendingAt, loansPendingAt: pendingAt };
+      const cleared = reconcileConfirmedSnapshotSectionPendings(household);
+      const matching = {
+        cleared,
+        readings: normalizeText(state.readingsCloud?.pendingAt),
+        loyalty: normalizeText(state.loyaltyCardsCloud?.pendingAt),
+        pools: normalizeText(state.poolCloud?.pendingAt),
+        templates: normalizeText(state.financeCloud?.templatesPendingAt),
+        loans: normalizeText(state.financeCloud?.loansPendingAt)
+      };
+
+      state.readingsCloud = { ...previous.readingsCloud, pendingAt };
+      state.loyaltyCardsCloud = previous.loyaltyCardsCloud;
+      state.poolCloud = previous.poolCloud;
+      state.financeCloud = previous.financeCloud;
+      const changedHousehold = structuredCloneSafe(household);
+      changedHousehold.dashboard_layout.readingPrices = {
+        ...(changedHousehold.dashboard_layout.readingPrices || {}),
+        electricityT1: 987654.321
+      };
+      const changedCleared = reconcileConfirmedSnapshotSectionPendings(changedHousehold);
+      const changedReadingsPending = normalizeText(state.readingsCloud?.pendingAt);
+
+      state.readingsCloud = previous.readingsCloud;
+      state.loyaltyCardsCloud = previous.loyaltyCardsCloud;
+      state.financeCloud = previous.financeCloud;
+      state.poolCloud = previous.poolCloud;
+      return { matching, changedCleared, changedReadingsPending };
     };
     window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__ = () => {
       const previous = {
