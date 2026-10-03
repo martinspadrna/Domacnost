@@ -317,7 +317,7 @@ if (app) {
   expect(app, "window.addEventListener('online', () => {", 'app.js: návrat internetu obnoví cloudovou aktivitu.');
   expect(app, "window.addEventListener('offline', () => {", 'app.js: ztráta internetu přepne synchronizaci do čekajícího stavu.');
   expect(app, 'householdUiPendingAt', 'app.js: neodeslané společné nastavení domácnosti je trvale evidované.');
-  expect(app, 'entry.items.filter((item) => !item.cloudId || item.syncStatus)', 'app.js: přehled cloudu počítá i neodeslané úpravy existujících záznamů.');
+  expect(app, "entry.items.filter((item) => (!item.cloudId || item.syncStatus) &&", 'app.js: přehled cloudu počítá i neodeslané úpravy existujících záznamů.');
   expect(app, 'function requestBackgroundRender()', 'app.js: background/cloud render ma tichy vstup.');
   expect(app, "document.documentElement.classList.add('app-quiet-render')", 'app.js: tiche rendery umi vypnout rusivou animaci obsahu.');
   expect(app, 'function markModuleTransition()', 'app.js: rucni prepnuti modulu ma explicitni prechod.');
@@ -340,6 +340,8 @@ if (app) {
   expect(calendar, '!event.cloudId && !calendarEventIsProviderManaged(event)', 'calendar.js: browser ICS fallback se neposila zpet do cloudu jako rucni udalost.');
   expect(calendar, "saveState({ immediate: true, skipTrashTracking: true })", 'calendar.js: obnoveni externiho kalendare nevytvari lokalni Kos.');
   expect(app, 'function cleanupProviderManagedCalendarSyncArtifacts', 'app.js: stare falesne delete/conflict zaznamy externiho kalendare se umeji automaticky uklidit.');
+  expect(app, "localPendingFilter: (item) => !calendarSyncRecordIsProviderManaged(item)", 'app.js: providerem rizene kalendarove kopie se nepocitaji jako lokalni pending zmeny.');
+  expect(app, "typeof entry.localPendingFilter !== 'function' || entry.localPendingFilter(item)", 'app.js: cloud overview umi modulove vyloucit zdrojove kopie z pending poctu.');
   expect(app, "collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)", 'app.js: trvale smazani stareho provider calendar zaznamu nevytvori delete outbox.');
   expect(app, "cleanupProviderManagedCalendarSyncArtifacts({ persist: false })", 'app.js: legacy provider calendar fronta se uklidi uz pri startu pred zalozenim trash baseline.');
   expect(calendar, "filter((event) => !keys.includes(String(event.sourceId || '')))", 'calendar.js: browser ICS sync maze lokalni udalosti, ktere uz ve zdroji nejsou.');
