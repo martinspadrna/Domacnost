@@ -23687,6 +23687,26 @@
         staleMarkerVisible: staleMarkerRow?.local || 0
       };
     };
+    window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__ = () => {
+      const previous = {
+        finance: structuredCloneSafe(state.finance || []),
+        financeAccounts: structuredCloneSafe(state.financeAccounts || []),
+        financeCloud: structuredCloneSafe(state.financeCloud || {})
+      };
+      state.finance = [{ id: 'finance-synced-e2e', cloudId: 'finance-cloud-e2e', syncStatus: '' }];
+      state.financeAccounts = [{ id: 'finance-account-synced-e2e', cloudId: 'finance-account-cloud-e2e', syncStatus: '' }];
+      state.financeCloud = { ...(state.financeCloud || {}), pendingAt: '2026-06-29T12:00:00.000Z', pendingReason: 'legacy-account-failure' };
+      const cleared = moduleCodeReady('finance') ? getFinanceModule().reconcileFinanceCloudPendingState() : false;
+      const result = {
+        cleared,
+        pendingAt: state.financeCloud?.pendingAt || '',
+        pendingReason: state.financeCloud?.pendingReason || ''
+      };
+      state.finance = previous.finance;
+      state.financeAccounts = previous.financeAccounts;
+      state.financeCloud = previous.financeCloud;
+      return result;
+    };
     window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__ = () => {
       const local = canonicalSubscriptionSemanticSnapshot(
         [{ id: 'local-service', serviceKey: 'netflix', name: 'Netflix 1', price: 509, billingDay: 8, maxMembers: 4, enabled: true, note: '', shares: [{ personId: 'local-person', amount: 300 }] }],
