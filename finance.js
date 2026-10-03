@@ -870,7 +870,16 @@
     }
 
     function clearFinanceCloudPendingIfClean() {
-      if (!financeCloudPendingCount()) getState().financeCloud = { ...(getState().financeCloud || {}), pendingAt: '', pendingReason: '' };
+      if (financeCloudPendingCount()) return false;
+      const hadPending = Boolean(getState().financeCloud?.pendingAt || getState().financeCloud?.pendingReason);
+      if (hadPending) {
+        getState().financeCloud = { ...(getState().financeCloud || {}), pendingAt: '', pendingReason: '' };
+      }
+      return hadPending;
+    }
+
+    function reconcileFinanceCloudPendingState() {
+      return clearFinanceCloudPendingIfClean();
     }
 
     function financeSelectedMonth() {
@@ -1295,15 +1304,38 @@
         note: normalizeText(data.note)
       };
       if (!account.name) return showToast('Doplň název účtu');
+      if (cloudReady()) {
+        account.syncStatus = 'pending_add';
+        markFinanceCloudPending('add-finance-account');
+      }
       getState().financeAccounts.push(account);
       touchState();
       saveState();
       form.reset();
       render();
-      showToast('Účet uložen');
+      showToast(cloudReady() ? 'Účet uložen, cloud se doposílá na pozadí' : 'Účet uložen');
+      if (!cloudReady()) return;
       cloudAddFinanceAccount(account).then((saved) => {
-        if (saved?.id) { account.cloudId = saved.id; saveState(); requestRender(); }
-      }).catch((error) => console.warn('Cloud sync (účet) na pozadí selhal', error));
+        if (saved?.id) {
+          account.cloudId = saved.id;
+          account.syncStatus = '';
+          clearFinanceCloudPendingIfClean();
+          touchState();
+          saveState();
+          requestRender();
+          return;
+        }
+        account.syncStatus = 'pending_add';
+        markFinanceCloudPending('add-finance-account-failed');
+        persistStateSnapshot();
+        requestRender();
+      }).catch((error) => {
+        console.warn('Cloud sync (účet) na pozadí selhal', error);
+        account.syncStatus = 'pending_add';
+        markFinanceCloudPending('add-finance-account-failed');
+        persistStateSnapshot();
+        requestRender();
+      });
     }
 
     async function addManagedFinanceSetFromForm(data, form) {
@@ -1328,20 +1360,37 @@
         ownerLabel: ownerName,
         openingBalance: draft.openingBalance,
         includeInTotal,
-        note: draft.note
+        note: draft.note,
+        syncStatus: cloudReady() ? 'pending_add' : ''
       }));
+      if (cloudReady()) markFinanceCloudPending('add-managed-finance-accounts');
       accounts.forEach((account) => getState().financeAccounts.push(account));
       touchState();
       saveState();
       form.reset();
       render();
       showToast(`Založeno účtů: ${drafts.length}`);
-      Promise.all(accounts.map((account) => cloudAddFinanceAccount(account).then((saved) => {
-        if (saved?.id) account.cloudId = saved.id;
-        return Boolean(saved?.id);
-      }))).then((results) => {
-        if (results.some(Boolean)) { saveState(); requestRender(); }
-      }).catch((error) => console.warn('Cloud sync (spravované účty) na pozadí selhal', error));
+      if (!cloudReady()) return;
+      Promise.all(accounts.map(async (account) => {
+        try {
+          const saved = await cloudAddFinanceAccount(account);
+          if (saved?.id) {
+            account.cloudId = saved.id;
+            account.syncStatus = '';
+            return true;
+          }
+        } catch (error) {
+          console.warn('Cloud sync (spravovaný účet) na pozadí selhal', error);
+        }
+        account.syncStatus = 'pending_add';
+        return false;
+      })).then((results) => {
+        if (results.some((ok) => !ok)) markFinanceCloudPending('add-managed-finance-accounts-failed');
+        clearFinanceCloudPendingIfClean();
+        touchState();
+        saveState();
+        requestRender();
+      });
     }
 
     function fillFinanceTemplate(templateId) {
@@ -1772,14 +1821,40 @@
         note: normalizeText(data.note)
       };
       if (!next.name) return showToast('Doplň název účtu');
+      if (cloudReady()) {
+        next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
+        markFinanceCloudPending('update-finance-account');
+      }
       getState().financeAccounts[index] = next;
       setFinanceAccountEditId('');
       touchState();
       saveState();
       form?.reset?.();
       render();
-      showToast('Účet upraven');
-      cloudUpdateFinanceAccount(next).catch((error) => console.warn('Cloud sync (úprava účtu) na pozadí selhal', error));
+      if (!cloudReady()) {
+        showToast('Účet upraven');
+        return;
+      }
+      let ok = false;
+      try {
+        ok = next.cloudId ? await cloudUpdateFinanceAccount(next) : await cloudAddFinanceAccount(next);
+      } catch (error) {
+        console.warn('Cloud sync (úprava účtu) na pozadí selhal', error);
+      }
+      if (ok?.id || ok === true) {
+        next.syncStatus = '';
+        clearFinanceCloudPendingIfClean();
+        touchState();
+        saveState();
+        requestRender();
+        showToast('Účet upraven v cloudu');
+        return;
+      }
+      next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
+      markFinanceCloudPending('update-finance-account-failed');
+      persistStateSnapshot();
+      requestRender();
+      showToast('Účet upraven lokálně, čeká na cloud');
     }
 
     function persistFinanceLoans(toast = '') {
@@ -1922,8 +1997,15 @@
     async function cloudSyncFinanceAccountById(id) {
       const account = getState().financeAccounts.find((entry) => entry.id === id);
       if (!account) return;
-      const saved = await cloudAddFinanceAccount(account);
-      if (!saved?.id) return;
+      const saved = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
+      if (!saved?.id && saved !== true) {
+        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
+        markFinanceCloudPending('sync-finance-account-failed');
+        persistStateSnapshot();
+        return;
+      }
+      account.syncStatus = '';
+      clearFinanceCloudPendingIfClean();
       touchState();
       saveState();
       render();
@@ -1932,16 +2014,32 @@
 
     async function cloudSyncLocalFinanceAccounts() {
       const local = (getState().financeAccounts || []).filter((item) => !item.cloudId || item.syncStatus);
-      if (!local.length) return showToast('Žádné lokální účty k odeslání');
+      if (!local.length) {
+        if (clearFinanceCloudPendingIfClean()) {
+          touchState();
+          persistStateSnapshot();
+          requestRender();
+        }
+        return 0;
+      }
       let count = 0;
       for (const account of local) {
         const ok = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
-        if (ok?.id || ok === true) { account.syncStatus = ''; count += 1; }
+        if (ok?.id || ok === true) {
+          account.syncStatus = '';
+          count += 1;
+        } else {
+          account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
+          markFinanceCloudPending('sync-finance-account-failed');
+        }
+        await yieldToMainThread();
       }
+      clearFinanceCloudPendingIfClean();
       touchState();
       saveState();
       render();
       showToast(`Odesláno finančních účtů: ${count}`);
+      return count;
     }
 
     async function cloudSyncFinanceById(id) {
@@ -1959,13 +2057,23 @@
 
     async function cloudSyncLocalFinance() {
       const local = (getState().finance || []).filter((item) => (!item.cloudId || item.syncStatus) && item.syncStatus !== 'conflict');
-      if (!local.length) return showToast('Žádné lokální finance k odeslání');
+      if (!local.length) {
+        if (clearFinanceCloudPendingIfClean()) {
+          touchState();
+          persistStateSnapshot();
+          requestRender();
+        }
+        return 0;
+      }
       let count = 0;
       for (const item of local) {
         const ok = item.cloudId ? await cloudUpdateFinance(item) : await cloudAddFinance(item);
         if (ok?.id || ok === true) {
           item.syncStatus = '';
           count += 1;
+        } else if (ok !== 'conflict') {
+          item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
+          markFinanceCloudPending('sync-finance-failed');
         }
         await yieldToMainThread();
       }
@@ -1974,11 +2082,18 @@
       saveState();
       render();
       showToast(`Odesláno finančních záznamů: ${count}`);
+      return count;
     }
 
     async function cloudSyncAllFinance() {
-      await cloudSyncLocalFinanceAccounts();
-      await cloudSyncLocalFinance();
+      const accounts = await cloudSyncLocalFinanceAccounts();
+      const transactions = await cloudSyncLocalFinance();
+      if (clearFinanceCloudPendingIfClean()) {
+        touchState();
+        persistStateSnapshot();
+        requestRender();
+      }
+      return Number(accounts || 0) + Number(transactions || 0);
     }
 
     async function deleteFinanceTransaction(id) {
@@ -2039,9 +2154,12 @@
         render();
         const archivedInCloud = await deleteSync;
         if (archivedInCloud && account.cloudId) {
-          account.syncStatus = 'pending';
+          account.syncStatus = 'pending_update';
+          markFinanceCloudPending('undo-delete-account');
           const restored = await cloudUpdateFinanceAccount(account);
           if (restored === true) account.syncStatus = '';
+          else markFinanceCloudPending('undo-delete-account-failed');
+          clearFinanceCloudPendingIfClean();
         }
         touchState();
         saveState();
@@ -2060,6 +2178,7 @@
       financeMonthLabel,
       financeTypeFilter,
       financeCloudPendingCount,
+      reconcileFinanceCloudPendingState,
       mergeFinanceTemplates,
       normalizeFinanceTemplates,
       mergeFinanceLoans,
