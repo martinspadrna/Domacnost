@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_523';
-  const APP_BUILD = 523;
+  const APP_VERSION = 'Domácnost+ v.0.1_524';
+  const APP_BUILD = 524;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -891,7 +891,7 @@
     subscriptionPeople: [],
     subscriptionPayments: [],
     trash: [],
-    financeCloud: { categories: [], accountsLoadedAt: '', loadedAt: '', monthFilter: '', typeFilter: 'all' },
+    financeCloud: { categories: [], accountsLoadedAt: '', loadedAt: '', monthFilter: '', typeFilter: 'all', templatesLoadedAt: '', templatesPendingAt: '', loansLoadedAt: '', loansPendingAt: '' },
     subscriptionsCloud: { loadedAt: '' },
     householdExtrasCloud: { loadedAt: '' },
     weather: {
@@ -7461,6 +7461,17 @@
   }
 
 
+  function financeSettingsPendingCount() {
+    return Number(Boolean(state.financeCloud?.templatesPendingAt)) + Number(Boolean(state.financeCloud?.loansPendingAt));
+  }
+
+  function financeSettingsPendingAt() {
+    const values = [state.financeCloud?.templatesPendingAt, state.financeCloud?.loansPendingAt]
+      .filter((value) => Number.isFinite(Date.parse(value || '')))
+      .sort((a, b) => Date.parse(a) - Date.parse(b));
+    return values[0] || '';
+  }
+
   function getCloudSyncOverviewItems() {
     const snapshotSectionPending = Boolean(
       state.subscriptionsCloud?.pendingAt
@@ -7468,6 +7479,7 @@
       || state.loyaltyCardsCloud?.pendingAt
       || state.poolCloud?.pendingAt
       || state.financeCloud?.templatesPendingAt
+      || state.financeCloud?.loansPendingAt
     );
     const householdUiFallbackPending = state.cloud?.householdUiPendingAt && !snapshotSectionPending ? 1 : 0;
     const counters = [
@@ -7489,7 +7501,7 @@
       { nav: 'shopping', tab: 'coupons', icon: '🏷️', label: 'Slevové kódy', items: state.coupons || [], loadedAt: state.householdExtrasCloud?.loadedAt },
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0, pendingAt: state.loyaltyCardsCloud?.pendingAt },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0, pendingAt: state.poolCloud?.pendingAt },
-      { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: state.financeCloud?.templatesPendingAt ? 1 : 0, pendingAt: state.financeCloud?.templatesPendingAt },
+      { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: financeSettingsPendingCount(), pendingAt: financeSettingsPendingAt() },
       { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending, pendingAt: state.cloud?.householdUiPendingAt }
     ];
@@ -21168,7 +21180,7 @@
     state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: confirmedAt };
     state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: confirmedAt };
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: confirmedAt };
-    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: confirmedAt };
+    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: confirmedAt, loansLoadedAt: confirmedAt };
     state.poolCloud = { ...(state.poolCloud || {}), loadedAt: confirmedAt };
     settleRecoveredCloudSyncState(confirmedAt);
     return true;
@@ -21202,7 +21214,8 @@
       state.readingsCloud?.pendingAt,
       state.loyaltyCardsCloud?.pendingAt,
       state.poolCloud?.pendingAt,
-      state.financeCloud?.templatesPendingAt
+      state.financeCloud?.templatesPendingAt,
+      state.financeCloud?.loansPendingAt
     ].filter((value) => Number.isFinite(Date.parse(value || '')));
     if (!candidates.length) return '';
     return new Date(Math.min(...candidates.map((value) => Date.parse(value)))).toISOString();
@@ -21244,6 +21257,7 @@
       || state.loyaltyCardsCloud?.pendingAt
       || state.poolCloud?.pendingAt
       || state.financeCloud?.templatesPendingAt
+      || state.financeCloud?.loansPendingAt
     );
   }
 
@@ -21252,7 +21266,7 @@
     state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: '' };
     state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt: '' };
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: '' };
-    state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: '' };
+    state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: '', loansPendingAt: '' };
     state.poolCloud = { ...(state.poolCloud || {}), pendingAt: '' };
   }
 
@@ -21750,7 +21764,7 @@
     state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
     state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
-    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: syncedAt, templatesPendingAt: '' };
+    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: syncedAt, templatesPendingAt: '', loansLoadedAt: syncedAt, loansPendingAt: '' };
     // householdUiPayload() posílá i state.pools při KAŽDÉM volání téhle funkce,
     // ne jen když ho vyvolal pool.js - bez tohohle zůstal poolCloud.pendingAt
     // uvízlý po úspěšném uložení z jiné funkce (předplatné, věrnostní karty...),
@@ -23502,6 +23516,24 @@
       activeModule = 'settings';
       moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
       render();
+    };
+    window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__ = () => {
+      const previousCloud = structuredCloneSafe(state.financeCloud || {});
+      const previousLoans = structuredCloneSafe(state.financeLoans || []);
+      const pendingAt = '2026-10-03T20:00:00.000Z';
+      state.financeLoans = [{ id: 'loan-pending-e2e', name: 'E2E půjčka', currentBalance: 100000, monthlyPayment: 5000, remainingMonths: 20, createdAt: pendingAt, updatedAt: pendingAt }];
+      state.financeCloud = { ...(state.financeCloud || {}), loansPendingAt: pendingAt, templatesPendingAt: '' };
+      const row = getCloudSyncOverviewItems().find((item) => item.label === 'Finance nastavení') || {};
+      const result = {
+        householdPending: householdUiHasPendingChanges(),
+        count: financeSettingsPendingCount(),
+        pendingAt: financeSettingsPendingAt(),
+        rowLocal: Number(row.local || 0),
+        rowPendingAt: row.pendingAt || ''
+      };
+      state.financeCloud = previousCloud;
+      state.financeLoans = previousLoans;
+      return result;
     };
     window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__ = () => {
       const previous = {
