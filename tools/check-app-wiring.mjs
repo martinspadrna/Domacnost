@@ -75,6 +75,10 @@ if (app && finance) {
   expect(finance, 'function renderFinanceRefinancePanel', 'finance.js: refinance panel existuje.');
   expect(finance, "data-form=\"finance-refinance\"", 'finance.js: refinance formulář se renderuje.');
   expect(finance, "{ id: 'loans'", 'finance.js: Půjčky jsou samostatný tab.');
+  expect(finance, 'loansPendingAt: now', 'finance.js: změna půjčky se před síťovým zápisem trvale označí jako čekající.');
+  expect(finance, "loansPendingAt: ''", 'finance.js: potvrzená půjčka vyčistí vlastní pending marker.');
+  expect(app, 'state.financeCloud?.loansPendingAt', 'app.js: household autosync započítává čekající půjčky.');
+  expect(app, 'function financeSettingsPendingCount()', 'app.js: Finance nastavení umí rozlišit čekající šablony a půjčky.');
 }
 
 if (app && pool && index && sw) {
