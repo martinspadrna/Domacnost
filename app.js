@@ -1245,6 +1245,7 @@
   const lazyDataCore = createLazyDataCore();
   let state = loadState();
   runtimeStateRef = state;
+  cleanupProviderManagedCalendarSyncArtifacts({ persist: false });
   let trashCollectionBaseline = new Map();
   const pendingUndoTrashIds = new Set();
   let trashTrackingSuppressed = false;
@@ -2541,6 +2542,65 @@
     return [...unique.values()].sort((a, b) => String(a.detectedAt).localeCompare(String(b.detectedAt)));
   }
 
+  function calendarSyncSourceIsProviderManaged(sourceId = '') {
+    const key = normalizeText(sourceId);
+    if (!key) return false;
+    return (state.calendarCloud?.sources || []).some((source) => {
+      const provider = normalizeText(source?.provider).toLowerCase();
+      if (provider !== 'ical') return false;
+      return [source?.id, source?.cloudId].filter(Boolean).map(String).includes(key);
+    });
+  }
+
+  function calendarSyncRecordIsProviderManaged(localRecord = null, remoteRow = null) {
+    if (normalizeText(localRecord?.externalId || remoteRow?.provider_event_id)) return true;
+    const sourceId = normalizeText(localRecord?.sourceId || remoteRow?.source_id);
+    return calendarSyncSourceIsProviderManaged(sourceId);
+  }
+
+  function cleanupProviderManagedCalendarSyncArtifacts(options = {}) {
+    if (!state?.cloud) return { changed: false, outboxRemoved: 0, conflictsRemoved: 0, trashRemoved: 0 };
+    const beforeOutbox = normalizeCloudOutbox(state.cloud.outbox || []);
+    const nextOutbox = beforeOutbox.filter((entry) => !(
+      entry.collection === 'calendar'
+      && entry.operation === 'delete'
+      && calendarSyncRecordIsProviderManaged(entry.localRecord)
+    ));
+    const beforeConflicts = normalizeCloudRecordConflicts(state.cloud.recordConflicts || []);
+    const nextConflicts = beforeConflicts.filter((entry) => !(
+      entry.collection === 'calendar'
+      && entry.operation === 'delete'
+      && calendarSyncRecordIsProviderManaged(entry.localRecord, entry.remoteRow)
+    ));
+    let trashRemoved = 0;
+    const nextTrash = normalizeTrashEntries((state.trash || []).map((entry) => {
+      const records = (entry.records || []).filter((item) => {
+        const remove = item.collection === 'calendar' && calendarSyncRecordIsProviderManaged(item.record);
+        if (remove) trashRemoved += 1;
+        return !remove;
+      });
+      return { ...entry, records };
+    }).filter((entry) => entry.records.length));
+    const outboxRemoved = beforeOutbox.length - nextOutbox.length;
+    const conflictsRemoved = beforeConflicts.length - nextConflicts.length;
+    const changed = Boolean(outboxRemoved || conflictsRemoved || trashRemoved);
+    if (!changed) return { changed: false, outboxRemoved: 0, conflictsRemoved: 0, trashRemoved: 0 };
+    state.cloud.outbox = nextOutbox;
+    state.cloud.recordConflicts = nextConflicts;
+    state.trash = nextTrash;
+    if (!nextConflicts.length && !state.cloud?.householdUiConflict) {
+      const staleConflictMessage = normalizeText(state.cloud?.lastAutosyncError) === 'Záznam byl mezitím změněn na jiném zařízení';
+      state.cloud = {
+        ...(state.cloud || {}),
+        autosyncStatus: state.cloud?.autoSyncEnabled === false ? 'disabled' : nextOutbox.length ? 'pending' : 'idle',
+        autosyncRetryAt: '',
+        lastAutosyncError: staleConflictMessage ? '' : state.cloud?.lastAutosyncError || ''
+      };
+    }
+    if (options.persist !== false) persistStateSnapshot({ immediate: true });
+    return { changed: true, outboxRemoved, conflictsRemoved, trashRemoved };
+  }
+
   function cloudRecordConflicts(collection = '') {
     const conflicts = normalizeCloudRecordConflicts(state.cloud?.recordConflicts || []);
     return collection ? conflicts.filter((entry) => entry.collection === collection) : conflicts;
@@ -2590,6 +2650,7 @@
       entry.records.forEach(({ collection, record }) => {
         const table = CLOUD_DELETE_TABLES[collection];
         if (!table || !record?.cloudId) return;
+        if (collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)) return;
         if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(record.cloudId))) return;
         additions.push({
           id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection,
@@ -2635,6 +2696,7 @@
   }
 
   async function replayCloudOutbox() {
+    cleanupProviderManagedCalendarSyncArtifacts();
     let queue = normalizeCloudOutbox(state.cloud?.outbox || []);
     state.cloud.outbox = queue;
     if (!queue.length || !cloudReady() || !browserAppearsOnline()) return queue.length === 0;
@@ -2642,6 +2704,22 @@
     if (!client) return false;
     while (queue.length) {
       const entry = queue[0];
+      if (entry.collection === 'calendar' && entry.operation === 'delete' && !calendarSyncRecordIsProviderManaged(entry.localRecord)) {
+        const { data: calendarRemote, error: calendarRemoteError } = await client
+          .from(entry.table)
+          .select('id,source_id,provider_event_id,updated_at')
+          .eq('id', entry.cloudId)
+          .eq('household_id', state.cloud.householdId)
+          .maybeSingle();
+        if (!calendarRemoteError && calendarSyncRecordIsProviderManaged(entry.localRecord, calendarRemote)) {
+          queue = queue.slice(1);
+          state.cloud.outbox = queue;
+          state.cloud.recordConflicts = cloudRecordConflicts().filter((conflict) => !(conflict.table === entry.table && conflict.cloudId === entry.cloudId));
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
+      }
       let deleteQuery = client.from(entry.table).delete().eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
       if (entry.expectedRevision) deleteQuery = deleteQuery.eq('updated_at', entry.expectedRevision);
       const { data, error } = await deleteQuery.select('id').maybeSingle();
@@ -2681,6 +2759,12 @@
         if (remoteRow) {
           queue = queue.slice(1);
           state.cloud.outbox = queue;
+          if (entry.collection === 'calendar' && calendarSyncRecordIsProviderManaged(entry.localRecord, remoteRow)) {
+            state.cloud.recordConflicts = cloudRecordConflicts().filter((conflict) => !(conflict.table === entry.table && conflict.cloudId === entry.cloudId));
+            persistStateSnapshot({ immediate: true });
+            await yieldToMainThread();
+            continue;
+          }
           registerCloudRecordConflict({
             collection: entry.collection, table: entry.table, cloudId: entry.cloudId,
             localId: entry.localRecord?.id || '', operation: 'delete', label: entry.label,
@@ -18284,6 +18368,7 @@
   function scheduleCloudAutosync(source = 'save', options = {}) {
     if (!cloudReady()) return;
     if (state.cloud?.autoSyncEnabled === false) return;
+    cleanupProviderManagedCalendarSyncArtifacts();
     healStaleHouseholdUiConflict();
     if (cloudHasBlockingConflict()) {
       clearCloudAutosyncTimer();
@@ -18340,6 +18425,7 @@
   }
 
   async function runCloudAutosyncNow(showMessage = true) {
+    cleanupProviderManagedCalendarSyncArtifacts();
     if (!cloudReady()) {
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
       return false;
@@ -23416,6 +23502,47 @@
       activeModule = 'settings';
       moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
       render();
+    };
+    window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__ = () => {
+      const previous = {
+        sources: structuredCloneSafe(state.calendarCloud?.sources || []),
+        outbox: structuredCloneSafe(state.cloud?.outbox || []),
+        conflicts: structuredCloneSafe(state.cloud?.recordConflicts || []),
+        trash: structuredCloneSafe(state.trash || []),
+        autosyncStatus: state.cloud?.autosyncStatus || 'idle',
+        lastAutosyncError: state.cloud?.lastAutosyncError || ''
+      };
+      state.calendarCloud = { ...(state.calendarCloud || {}), sources: [{ id: 'ics-source-e2e', cloudId: 'ics-source-e2e', provider: 'ical', name: 'Google směny' }] };
+      state.cloud.outbox = [
+        { id: 'outbox-provider', operation: 'delete', table: 'calendar_events', cloudId: 'provider-event', collection: 'calendar', localRecord: { id: 'provider-local', cloudId: 'provider-event', externalId: 'google-uid-1', sourceId: 'ics-source-e2e' }, createdAt: '2026-10-01T00:00:00.000Z' },
+        { id: 'outbox-manual', operation: 'delete', table: 'calendar_events', cloudId: 'manual-event', collection: 'calendar', localRecord: { id: 'manual-local', cloudId: 'manual-event', sourceId: 'manual' }, createdAt: '2026-10-01T00:00:00.000Z' }
+      ];
+      state.cloud.recordConflicts = [
+        { id: 'conf-provider', operation: 'delete', table: 'calendar_events', cloudId: 'provider-event', collection: 'calendar', localRecord: { id: 'provider-local', externalId: 'google-uid-1', sourceId: 'ics-source-e2e' }, remoteRow: { id: 'provider-event', source_id: 'ics-source-e2e', provider_event_id: 'google-uid-1', updated_at: '2026-10-02T00:00:00.000Z' } },
+        { id: 'conf-manual', operation: 'delete', table: 'calendar_events', cloudId: 'manual-event', collection: 'calendar', localRecord: { id: 'manual-local', sourceId: 'manual' }, remoteRow: { id: 'manual-event', source_id: 'manual', provider_event_id: null, updated_at: '2026-10-02T00:00:00.000Z' } }
+      ];
+      state.trash = [{ id: 'trash-calendar-e2e', label: 'Kalendář', deletedAt: '2026-10-01T00:00:00.000Z', expiresAt: '2026-10-31T00:00:00.000Z', records: [
+        { collection: 'calendar', index: 0, record: { id: 'provider-local', cloudId: 'provider-event', externalId: 'google-uid-1', sourceId: 'ics-source-e2e' } },
+        { collection: 'calendar', index: 1, record: { id: 'manual-local', cloudId: 'manual-event', sourceId: 'manual' } }
+      ] }];
+      state.cloud.autosyncStatus = 'blocked';
+      state.cloud.lastAutosyncError = 'Záznam byl mezitím změněn na jiném zařízení';
+      const cleaned = cleanupProviderManagedCalendarSyncArtifacts({ persist: false });
+      const result = {
+        cleaned,
+        outboxCloudIds: normalizeCloudOutbox(state.cloud.outbox || []).map((entry) => entry.cloudId),
+        conflictCloudIds: cloudRecordConflicts().map((entry) => entry.cloudId),
+        trashRecordIds: (state.trash || []).flatMap((entry) => (entry.records || []).map((item) => item.record?.id)),
+        status: state.cloud.autosyncStatus,
+        error: state.cloud.lastAutosyncError
+      };
+      state.calendarCloud = { ...(state.calendarCloud || {}), sources: previous.sources };
+      state.cloud.outbox = previous.outbox;
+      state.cloud.recordConflicts = previous.conflicts;
+      state.trash = previous.trash;
+      state.cloud.autosyncStatus = previous.autosyncStatus;
+      state.cloud.lastAutosyncError = previous.lastAutosyncError;
+      return result;
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
     window.__DOMACNOST_E2E_PENDING_MODULE_IDS__ = (items = null) => pendingCloudModuleIds(items);
