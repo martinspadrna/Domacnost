@@ -79,6 +79,13 @@ if (app && finance) {
   expect(finance, "loansPendingAt: ''", 'finance.js: potvrzená půjčka vyčistí vlastní pending marker.');
   expect(app, 'state.financeCloud?.loansPendingAt', 'app.js: household autosync započítává čekající půjčky.');
   expect(app, 'function financeSettingsPendingCount()', 'app.js: Finance nastavení umí rozlišit čekající šablony a půjčky.');
+  expect(app, 'function financeRecordsPendingItems()', 'app.js: hlavní Finance pending stav zahrnuje pohyby i finanční účty.');
+  expect(app, "items: [...(state.finance || []), ...(state.financeAccounts || [])]", 'app.js: cloud přehled Finance neztrácí čekající účet.');
+  expect(app, 'pendingCount: financeRecordsPendingCount()', 'app.js: Finance cloud řádek používá jednotný pending počet včetně legacy markeru.');
+  expect(finance, "syncStatus = 'pending_add'", 'finance.js: nový finanční účet se před cloud zápisem trvale označí jako čekající.');
+  expect(finance, "syncStatus = next.cloudId ? 'pending_update' : 'pending_add'", 'finance.js: úprava finančního účtu zůstane ve frontě i při selhání cloudu.');
+  expect(finance, 'function reconcileFinanceCloudPendingState()', 'finance.js: starý financeCloud.pendingAt lze bezpečně odblokovat, když už žádný záznam nečeká.');
+  expect(finance, "markFinanceCloudPending('sync-finance-account-failed')", 'finance.js: neúspěšný autosync účtu zachová trvalý pending marker.');
   expect(app, 'function householdUiLayoutSectionsMatchRemote', 'app.js: embedded household sekce mají bezpečné samostatné porovnání s cloudem.');
   expect(app, 'function reconcileConfirmedSnapshotSectionPendings', 'app.js: potvrzené snapshot sekce umí samostatně odblokovat stale pending marker.');
   expect(app, "reconcile('financeLoans'", 'app.js: section-level recovery zahrnuje i půjčky.');
