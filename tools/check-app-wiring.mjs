@@ -301,8 +301,11 @@ if (app) {
   expect(app, 'function ensurePendingCloudModuleCode', 'app.js: autosync připraví jen moduly s čekajícími změnami.');
   expect(app, 'function householdUiBaselineDecision', 'app.js: chybějící revize nastavení se obnoví podle stáří lokální a cloudové změny.');
   expect(app, 'function healStaleHouseholdUiConflict', 'app.js: starý falešný konflikt nastavení se umí sám bezpečně odblokovat.');
-  expect(app, 'function reconcileConfirmedSubscriptionPending', 'app.js: stará značka Předplatného se odstraní jen po přesné shodě s novější cloudovou kopií.');
+  expect(app, 'function reconcileConfirmedSubscriptionPending', 'app.js: stará značka Předplatného se odstraní po bezpečně potvrzené shodě s cloudovou kopií.');
+  expect(app, 'function canonicalSubscriptionSemanticSnapshot', 'app.js: embedded Předplatné umí bezpečně porovnat význam dat i po změně interních ID.');
   expect(app, 'reconcileConfirmedSubscriptionPending(household);', 'app.js: načtení domácnosti ověřuje a odblokuje potvrzené Předplatné před vyhodnocením konfliktu.');
+  expect(app, ".select('updated_at, dashboard_layout, weather_location')", 'app.js: ověření celého household snapshotu načítá i weather_location.');
+  expectAbsent(app, 'remoteTime < pendingTime', 'app.js: shodný aktuální cloudový obsah se nepotvrzuje podle pořadí technických časových značek.');
   expect(app, '{ shouldRun: () => householdUiHasPendingChanges(), run: () => cloudSaveHouseholdUiSettings(false) }', 'app.js: household UI se při autosyncu neposílá bez čekající změny.');
   expect(app, '{ shouldRun: () => cloudExtraPendingCount() > 0, run: () => cloudSyncLocalExtraCollections(false) }', 'app.js: drobné moduly se při autosyncu neposílají bez čekající změny.');
   expect(app, 'const items = (state[collection] || []).filter(cloudExtraItemNeedsSync);', 'app.js: potvrzené záruky a slevové kódy se znovu nepřepisují.');

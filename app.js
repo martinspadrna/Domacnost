@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_519';
-  const APP_BUILD = 519;
+  const APP_VERSION = 'Domácnost+ v.0.1_520';
+  const APP_BUILD = 520;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -20914,10 +20914,91 @@
     };
   }
 
+  function subscriptionSemanticIdentityKey(parts = []) {
+    return JSON.stringify(parts.map((value) => typeof value === 'string' ? normalizeText(value) : value));
+  }
+
+  function canonicalSubscriptionSemanticSnapshot(services = [], people = [], payments = []) {
+    const normalizedPeople = (Array.isArray(people) ? people : []).map(normalizeSubscriptionPerson);
+    const personKeyById = new Map();
+    const personKeys = new Set();
+    const semanticPeople = [];
+    for (const person of normalizedPeople) {
+      const id = String(person.id || '');
+      const key = subscriptionSemanticIdentityKey([person.name, person.note]);
+      if (!id || personKeys.has(key)) return null;
+      personKeys.add(key);
+      personKeyById.set(id, key);
+      semanticPeople.push({ key });
+    }
+
+    const normalizedServices = (Array.isArray(services) ? services : []).map(normalizeSubscriptionService);
+    const serviceKeyById = new Map();
+    const serviceKeys = new Set();
+    const semanticServices = [];
+    for (const service of normalizedServices) {
+      const id = String(service.id || '');
+      const key = subscriptionSemanticIdentityKey([
+        service.serviceKey,
+        service.name,
+        service.price,
+        service.billingDay,
+        service.maxMembers,
+        service.enabled,
+        service.note
+      ]);
+      if (!id || serviceKeys.has(key)) return null;
+      serviceKeys.add(key);
+      serviceKeyById.set(id, key);
+      const shares = [];
+      for (const share of service.shares || []) {
+        const personKey = personKeyById.get(String(share.personId || ''));
+        if (!personKey) return null;
+        shares.push({ person: personKey, amount: Number(share.amount || 0) });
+      }
+      shares.sort((a, b) => a.person.localeCompare(b.person, 'cs') || a.amount - b.amount);
+      semanticServices.push({ key, shares });
+    }
+
+    const semanticPayments = [];
+    const normalizedPayments = (Array.isArray(payments) ? payments : [])
+      .map(normalizeSubscriptionPayment)
+      .filter((payment) => payment.subscriptionId && payment.personId && payment.amount > 0);
+    for (const payment of normalizedPayments) {
+      const serviceKey = serviceKeyById.get(String(payment.subscriptionId || ''));
+      const personKey = personKeyById.get(String(payment.personId || ''));
+      if (!serviceKey || !personKey) return null;
+      semanticPayments.push({
+        service: serviceKey,
+        person: personKey,
+        month: payment.month,
+        amount: payment.amount,
+        paidAt: payment.paidAt,
+        note: payment.note
+      });
+    }
+
+    semanticPeople.sort((a, b) => a.key.localeCompare(b.key, 'cs'));
+    semanticServices.sort((a, b) => a.key.localeCompare(b.key, 'cs'));
+    semanticPayments.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), 'cs'));
+    return {
+      subscriptions: semanticServices,
+      subscriptionPeople: semanticPeople,
+      subscriptionPayments: semanticPayments
+    };
+  }
+
   function subscriptionSnapshotMatchesRemote(layout = {}) {
     const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
     const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
-    return JSON.stringify(local) === JSON.stringify(remote);
+    if (JSON.stringify(local) === JSON.stringify(remote)) return true;
+    // Staré embedded snapshoty mohly mít po migraci jiné interní ID, i když
+    // uživatelská data a všechny vazby byly stejné. V takovém případě je
+    // bezpečné porovnat jejich význam; při nejednoznačných duplicitách fallback
+    // vrátí null a nic se automaticky nemaže.
+    const localSemantic = canonicalSubscriptionSemanticSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+    const remoteSemantic = canonicalSubscriptionSemanticSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
+    return Boolean(localSemantic && remoteSemantic && JSON.stringify(localSemantic) === JSON.stringify(remoteSemantic));
   }
 
   function canonicalComparableJson(value) {
@@ -20948,6 +21029,16 @@
       delete comparable.vape.updatedAt;
       if (Array.isArray(comparable.vape.items)) comparable.vape.items.forEach((item) => { if (item && typeof item === 'object') delete item.createdAt; });
     }
+    const semanticSubscriptions = canonicalSubscriptionSemanticSnapshot(
+      comparable.subscriptions,
+      comparable.subscriptionPeople,
+      comparable.subscriptionPayments
+    );
+    if (semanticSubscriptions) {
+      comparable.subscriptions = semanticSubscriptions.subscriptions;
+      comparable.subscriptionPeople = semanticSubscriptions.subscriptionPeople;
+      comparable.subscriptionPayments = semanticSubscriptions.subscriptionPayments;
+    }
     return comparable;
   }
 
@@ -20967,7 +21058,7 @@
     const pendingTime = Date.parse(pendingAt);
     const remoteRevision = householdUiRemoteRevision(household);
     const remoteTime = Date.parse(remoteRevision);
-    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime) || remoteTime < pendingTime) return false;
+    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime)) return false;
     if (!householdUiSnapshotMatchesRemote(household)) return false;
     const confirmedAt = new Date().toISOString();
     clearHouseholdUiPendingState();
@@ -20984,6 +21075,7 @@
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: confirmedAt };
     state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: confirmedAt };
     state.poolCloud = { ...(state.poolCloud || {}), loadedAt: confirmedAt };
+    settleRecoveredCloudSyncState(confirmedAt);
     return true;
   }
 
@@ -20993,16 +21085,18 @@
     const pendingTime = Date.parse(pendingAt);
     const remoteRevision = householdUiRemoteRevision(household);
     const remoteTime = Date.parse(remoteRevision);
-    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime) || remoteTime < pendingTime) return false;
+    if (!Number.isFinite(pendingTime) || !Number.isFinite(remoteTime)) return false;
     const layout = householdUiRemoteLayout(household);
     if (!subscriptionSnapshotMatchesRemote(layout)) return false;
+    const confirmedAt = new Date().toISOString();
     state.subscriptionsCloud = {
       ...(state.subscriptionsCloud || {}),
-      loadedAt: new Date().toISOString(),
+      loadedAt: confirmedAt,
       pendingAt: '',
       errorAt: '',
       error: ''
     };
+    settleRecoveredCloudSyncState(confirmedAt);
     return true;
   }
 
@@ -21065,6 +21159,23 @@
     state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: '' };
     state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: '' };
     state.poolCloud = { ...(state.poolCloud || {}), pendingAt: '' };
+  }
+
+  function settleRecoveredCloudSyncState(recoveredAt = new Date().toISOString()) {
+    const remaining = cloudLocalPendingCount();
+    state.cloud = { ...(state.cloud || {}), localPendingCount: remaining };
+    if (remaining || cloudHasBlockingConflict()) return false;
+    clearCloudAutosyncTimer();
+    cloudAutosyncFailureCount = 0;
+    state.cloud = {
+      ...(state.cloud || {}),
+      autosyncStatus: 'idle',
+      autosyncRetryAt: '',
+      autosyncFailureCount: 0,
+      lastAutosyncError: '',
+      lastAutosyncAt: recoveredAt
+    };
+    return true;
   }
 
   function markHouseholdUiConflict(household, options = {}) {
@@ -21430,7 +21541,7 @@
     if (options.force !== true && (householdUiHasPendingChanges() || !expectedRevision)) {
       const { data: remote, error: baselineError } = await client
         .from('households')
-        .select('updated_at, dashboard_layout')
+        .select('updated_at, dashboard_layout, weather_location')
         .eq('id', state.cloud.householdId)
         .maybeSingle();
       if (baselineError) {
@@ -21513,7 +21624,7 @@
     if (!data) {
       const { data: remote, error: remoteError } = await client
         .from('households')
-        .select('updated_at, dashboard_layout')
+        .select('updated_at, dashboard_layout, weather_location')
         .eq('id', state.cloud.householdId)
         .maybeSingle();
       if (remoteError) {
@@ -23290,10 +23401,28 @@
       render();
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
+    window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__ = () => {
+      const local = canonicalSubscriptionSemanticSnapshot(
+        [{ id: 'local-service', serviceKey: 'netflix', name: 'Netflix 1', price: 509, billingDay: 8, maxMembers: 4, enabled: true, note: '', shares: [{ personId: 'local-person', amount: 300 }] }],
+        [{ id: 'local-person', name: 'Mamka', note: '' }],
+        [{ id: 'local-payment', subscriptionId: 'local-service', personId: 'local-person', month: '2026-09', amount: 300, paidAt: '2026-09-01', note: '' }]
+      );
+      const remote = canonicalSubscriptionSemanticSnapshot(
+        [{ id: 'cloud-service', serviceKey: 'netflix', name: 'Netflix 1', price: 509, billingDay: 8, maxMembers: 4, enabled: true, note: '', shares: [{ personId: 'cloud-person', amount: 300 }] }],
+        [{ id: 'cloud-person', name: 'Mamka', note: '' }],
+        [{ id: 'cloud-payment', subscriptionId: 'cloud-service', personId: 'cloud-person', month: '2026-09', amount: 300, paidAt: '2026-09-01', note: '' }]
+      );
+      const changed = structuredCloneSafe(remote);
+      if (changed?.subscriptions?.[0]?.shares?.[0]) changed.subscriptions[0].shares[0].amount = 301;
+      return {
+        same: Boolean(local && remote && JSON.stringify(local) === JSON.stringify(remote)),
+        changed: Boolean(local && changed && JSON.stringify(local) === JSON.stringify(changed))
+      };
+    };
     window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__ = () => {
       const previous = structuredCloneSafe(state.subscriptionsCloud || {});
       const pendingAt = '2026-06-29T12:00:00.000Z';
-      const remoteRevision = '2026-10-01T06:00:00.000Z';
+      const remoteRevision = '2026-06-28T06:00:00.000Z';
       const layout = {
         subscriptions: structuredCloneSafe(state.subscriptions || []),
         subscriptionPeople: structuredCloneSafe(state.subscriptionPeople || []),
@@ -23320,7 +23449,7 @@
         poolCloud: structuredCloneSafe(state.poolCloud || {})
       };
       const pendingAt = '2026-06-29T12:00:00.000Z';
-      const remoteRevision = '2026-10-01T06:00:00.000Z';
+      const remoteRevision = '2026-06-28T06:00:00.000Z';
       const payload = householdUiPayload();
       const household = {
         updated_at: remoteRevision,
