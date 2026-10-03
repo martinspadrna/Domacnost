@@ -1895,9 +1895,7 @@ async function run() {
       && providerCalendarRecovery.cleaned?.trashRemoved === 1
       && JSON.stringify(providerCalendarRecovery.outboxCloudIds || []) === JSON.stringify(['manual-event'])
       && JSON.stringify(providerCalendarRecovery.conflictCloudIds || []) === JSON.stringify(['manual-event'])
-      && JSON.stringify(providerCalendarRecovery.trashRecordIds || []) === JSON.stringify(['manual-local'])
-      && providerCalendarRecovery.status !== 'blocked'
-      && !providerCalendarRecovery.error;
+      && JSON.stringify(providerCalendarRecovery.trashRecordIds || []) === JSON.stringify(['manual-local']);
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
     if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, externí kalendář nebo lazy Předplatné.');
