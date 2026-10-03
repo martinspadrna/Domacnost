@@ -317,7 +317,7 @@ if (app) {
   expect(app, "window.addEventListener('online', () => {", 'app.js: návrat internetu obnoví cloudovou aktivitu.');
   expect(app, "window.addEventListener('offline', () => {", 'app.js: ztráta internetu přepne synchronizaci do čekajícího stavu.');
   expect(app, 'householdUiPendingAt', 'app.js: neodeslané společné nastavení domácnosti je trvale evidované.');
-  expect(app, 'entry.items.filter((item) => !item.cloudId || item.syncStatus)', 'app.js: přehled cloudu počítá i neodeslané úpravy existujících záznamů.');
+  expect(app, "entry.items.filter((item) => (!item.cloudId || item.syncStatus) &&", 'app.js: přehled cloudu počítá i neodeslané úpravy existujících záznamů.');
   expect(app, 'function requestBackgroundRender()', 'app.js: background/cloud render ma tichy vstup.');
   expect(app, "document.documentElement.classList.add('app-quiet-render')", 'app.js: tiche rendery umi vypnout rusivou animaci obsahu.');
   expect(app, 'function markModuleTransition()', 'app.js: rucni prepnuti modulu ma explicitni prechod.');
