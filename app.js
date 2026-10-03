@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_522';
-  const APP_BUILD = 522;
+  const APP_VERSION = 'Domácnost+ v.0.1_523';
+  const APP_BUILD = 523;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -7481,7 +7481,7 @@
       { nav: 'waste', tab: '', icon: '♻️', label: 'Odpad', items: state.waste || [], loadedAt: state.wasteCloud?.loadedAt },
       { nav: 'readings', tab: 'overview', icon: '📊', label: 'Odečty', items: [...(state.readingMeters || []), ...(state.readings || [])], loadedAt: state.readingsCloud?.loadedAt || state.householdExtrasCloud?.loadedAt, cloudSynced: Boolean(state.readingsCloud?.loadedAt && cloudReady()), pendingCount: state.readingsCloud?.pendingAt ? 1 : 0, pendingAt: state.readingsCloud?.pendingAt },
       { nav: 'tasks', tab: '', icon: '🗒️', label: 'Zápisník a úkoly', items: [...(state.homeTasks || []), ...(state.notes || [])], loadedAt: state.tasksCloud?.loadedAt || state.householdExtrasCloud?.loadedAt },
-      { nav: 'calendar', tab: 'overview', icon: '📅', label: 'Kalendář', items: state.calendar || [], loadedAt: state.calendarCloud?.loadedAt },
+      { nav: 'calendar', tab: 'overview', icon: '📅', label: 'Kalendář', items: state.calendar || [], loadedAt: state.calendarCloud?.loadedAt, localPendingFilter: (item) => !calendarSyncRecordIsProviderManaged(item) },
       { nav: 'calendar', tab: 'sources', icon: '🧩', label: 'Zdroje kalendáře', items: getCalendarSources(), loadedAt: state.calendarCloud?.sourcesLoadedAt },
       { nav: 'finance', tab: 'summary', icon: '💰', label: 'Finance', items: state.finance || [], loadedAt: state.financeCloud?.loadedAt },
       { nav: 'subscriptions', tab: 'overview', icon: '🎬', label: 'Předplatné', items: [...(state.subscriptions || []), ...(state.subscriptionPeople || []), ...(state.subscriptionPayments || [])], loadedAt: state.subscriptionsCloud?.loadedAt, cloudSynced: Boolean(state.subscriptionsCloud?.loadedAt && cloudReady()), pendingCount: state.subscriptionsCloud?.pendingAt ? 1 : 0, pendingAt: state.subscriptionsCloud?.pendingAt },
@@ -7495,7 +7495,7 @@
     ];
     return counters.map((entry) => {
       const total = entry.items.length;
-      const localItems = entry.items.filter((item) => !item.cloudId || item.syncStatus);
+      const localItems = entry.items.filter((item) => (!item.cloudId || item.syncStatus) && (typeof entry.localPendingFilter !== 'function' || entry.localPendingFilter(item)));
       const itemLocal = localItems.length;
       const hasSnapshotStatus = Number.isFinite(entry.pendingCount) && (entry.cloudSynced || entry.pendingCount > 0);
       const local = hasSnapshotStatus ? Math.max(0, Number(entry.pendingCount || 0)) : entry.cloudSynced ? 0 : itemLocal;
@@ -23502,6 +23502,30 @@
       activeModule = 'settings';
       moduleTabs = { ...(moduleTabs || {}), settings: 'cloud' };
       render();
+    };
+    window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__ = () => {
+      const previous = {
+        calendar: structuredCloneSafe(state.calendar || []),
+        sources: structuredCloneSafe(state.calendarCloud?.sources || [])
+      };
+      state.calendarCloud = {
+        ...(state.calendarCloud || {}),
+        sources: [{ id: 'ics-source-pending-e2e', cloudId: 'ics-source-pending-e2e', provider: 'ical', name: 'Google směny' }]
+      };
+      state.calendar = [
+        { id: 'provider-pending-e2e', cloudId: '', externalId: 'google-uid-pending', sourceId: 'ics-source-pending-e2e', title: 'Směna Google', date: '2026-10-04', createdAt: '2026-10-01T00:00:00.000Z' },
+        { id: 'manual-pending-e2e', cloudId: '', sourceId: 'manual', title: 'Ruční událost', date: '2026-10-05', createdAt: '2026-10-01T00:00:00.000Z' }
+      ];
+      const row = getCloudSyncOverviewItems().find((item) => item.nav === 'calendar' && item.label === 'Kalendář') || {};
+      const result = {
+        total: Number(row.total || 0),
+        local: Number(row.local || 0),
+        localIds: (row.localItems || []).map((item) => item.id),
+        percent: Number(row.percent || 0)
+      };
+      state.calendar = previous.calendar;
+      state.calendarCloud = { ...(state.calendarCloud || {}), sources: previous.sources };
+      return result;
     };
     window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__ = () => {
       const previous = {
