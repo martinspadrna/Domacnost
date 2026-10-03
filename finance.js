@@ -1783,16 +1783,33 @@
     }
 
     function persistFinanceLoans(toast = '') {
+      const now = new Date().toISOString();
+      if (cloudReady()) {
+        getState().financeCloud = {
+          ...(getState().financeCloud || {}),
+          loansPendingAt: now
+        };
+      }
       touchState();
       saveState({ immediate: true });
       render();
       if (toast) showToast(toast);
       if (!cloudReady()) return Promise.resolve(true);
       return cloudSaveHouseholdUiSettings(false)
-          .then((ok) => Boolean(ok))
+          .then((ok) => {
+            if (ok) {
+              getState().financeCloud = {
+                ...(getState().financeCloud || {}),
+                loansPendingAt: '',
+                loansLoadedAt: new Date().toISOString()
+              };
+              persistStateSnapshot();
+            }
+            return Boolean(ok);
+          })
           .catch((error) => {
-            console.warn('Finance loans autosync failed', error);
             persistStateSnapshot();
+            console.warn('Finance loans autosync failed', error);
             showToast('Půjčky jsou uložené lokálně, cloud se zkusí později');
             return false;
           });
