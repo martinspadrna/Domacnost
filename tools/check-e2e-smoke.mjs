@@ -1869,6 +1869,7 @@ async function run() {
         newerCloudRevision: window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__?.('2026-09-20T08:00:00.000Z', '2026-09-16T08:00:00.000Z'),
         subscriptionPending: window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__?.(),
         subscriptionSemantic: window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__?.(),
+        pendingSubscriptionModules: window.__DOMACNOST_E2E_PENDING_MODULE_IDS__?.([{ nav: 'subscriptions', local: 1 }]),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
           { cloudId: 'confirmed', syncStatus: '' },
@@ -1880,14 +1881,16 @@ async function run() {
     const householdBaselineValue = householdBaselineCheck.result?.value || {};
     const subscriptionPending = householdBaselineValue.subscriptionPending || {};
     const subscriptionSemantic = householdBaselineValue.subscriptionSemantic || {};
+    const pendingSubscriptionModules = householdBaselineValue.pendingSubscriptionModules || [];
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
     const changedSubscriptionProtected = subscriptionPending.changedCleared === false && Boolean(subscriptionPending.pendingAfterDifference);
     const semanticSubscriptionIdsReconciled = subscriptionSemantic.same === true && subscriptionSemantic.changed === false;
+    const subscriptionModulePrepared = Array.isArray(pendingSubscriptionModules) && pendingSubscriptionModules.includes('subscriptions');
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, potvrdit staré Předplatné po migraci ID nebo chybně vybírá drobné moduly do fronty.');
-    else ok('Cloud: shodný starý snapshot i Předplatné po migraci ID se odblokují, odlišná verze zůstane chráněná a potvrzené drobné moduly se znovu neposílají.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, připravit lazy Předplatné nebo potvrdit staré Předplatné po migraci ID.');
+    else ok('Cloud: lazy Předplatné se připraví před autosyncem, shodný starý snapshot se odblokuje a odlišná verze zůstane chráněná.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
