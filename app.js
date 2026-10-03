@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_525';
-  const APP_BUILD = 525;
+  const APP_VERSION = 'Domácnost+ v.0.1_526';
+  const APP_BUILD = 526;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -891,7 +891,7 @@
     subscriptionPeople: [],
     subscriptionPayments: [],
     trash: [],
-    financeCloud: { categories: [], accountsLoadedAt: '', loadedAt: '', monthFilter: '', typeFilter: 'all', templatesLoadedAt: '', templatesPendingAt: '', loansLoadedAt: '', loansPendingAt: '' },
+    financeCloud: { categories: [], accountsLoadedAt: '', loadedAt: '', pendingAt: '', pendingReason: '', monthFilter: '', typeFilter: 'all', templatesLoadedAt: '', templatesPendingAt: '', loansLoadedAt: '', loansPendingAt: '' },
     subscriptionsCloud: { loadedAt: '' },
     householdExtrasCloud: { loadedAt: '' },
     weather: {
@@ -7461,6 +7461,26 @@
   }
 
 
+  function financeRecordsPendingItems() {
+    return [...(state.finance || []), ...(state.financeAccounts || [])]
+      .filter((item) => !item.cloudId || item.syncStatus);
+  }
+
+  function financeRecordsPendingCount() {
+    const itemCount = financeRecordsPendingItems().length;
+    return itemCount || state.financeCloud?.pendingAt ? Math.max(1, itemCount) : 0;
+  }
+
+  function financeRecordsPendingAt() {
+    const values = [
+      state.financeCloud?.pendingAt,
+      ...financeRecordsPendingItems().flatMap((item) => [item.pendingAt, item.updatedAt, item.createdAt])
+    ]
+      .filter((value) => Number.isFinite(Date.parse(value || '')))
+      .sort((a, b) => Date.parse(a) - Date.parse(b));
+    return values[0] || '';
+  }
+
   function financeSettingsPendingCount() {
     return Number(Boolean(state.financeCloud?.templatesPendingAt)) + Number(Boolean(state.financeCloud?.loansPendingAt));
   }
@@ -7495,7 +7515,7 @@
       { nav: 'tasks', tab: '', icon: '🗒️', label: 'Zápisník a úkoly', items: [...(state.homeTasks || []), ...(state.notes || [])], loadedAt: state.tasksCloud?.loadedAt || state.householdExtrasCloud?.loadedAt },
       { nav: 'calendar', tab: 'overview', icon: '📅', label: 'Kalendář', items: state.calendar || [], loadedAt: state.calendarCloud?.loadedAt, localPendingFilter: (item) => !calendarSyncRecordIsProviderManaged(item) },
       { nav: 'calendar', tab: 'sources', icon: '🧩', label: 'Zdroje kalendáře', items: getCalendarSources(), loadedAt: state.calendarCloud?.sourcesLoadedAt },
-      { nav: 'finance', tab: 'summary', icon: '💰', label: 'Finance', items: state.finance || [], loadedAt: state.financeCloud?.loadedAt },
+      { nav: 'finance', tab: 'summary', icon: '💰', label: 'Finance', items: [...(state.finance || []), ...(state.financeAccounts || [])], loadedAt: state.financeCloud?.loadedAt || state.financeCloud?.accountsLoadedAt, cloudSynced: Boolean((state.financeCloud?.loadedAt || state.financeCloud?.accountsLoadedAt) && cloudReady()), pendingCount: financeRecordsPendingCount(), pendingAt: financeRecordsPendingAt() },
       { nav: 'subscriptions', tab: 'overview', icon: '🎬', label: 'Předplatné', items: [...(state.subscriptions || []), ...(state.subscriptionPeople || []), ...(state.subscriptionPayments || [])], loadedAt: state.subscriptionsCloud?.loadedAt, cloudSynced: Boolean(state.subscriptionsCloud?.loadedAt && cloudReady()), pendingCount: state.subscriptionsCloud?.pendingAt ? 1 : 0, pendingAt: state.subscriptionsCloud?.pendingAt },
       { nav: 'warranties', tab: '', icon: '🧾', label: 'Záruky', items: state.warranties || [], loadedAt: state.householdExtrasCloud?.loadedAt },
       { nav: 'shopping', tab: 'coupons', icon: '🏷️', label: 'Slevové kódy', items: state.coupons || [], loadedAt: state.householdExtrasCloud?.loadedAt },
@@ -23643,6 +23663,50 @@
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
     window.__DOMACNOST_E2E_PENDING_MODULE_IDS__ = (items = null) => pendingCloudModuleIds(items);
+    window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__ = () => {
+      const previous = {
+        finance: structuredCloneSafe(state.finance || []),
+        financeAccounts: structuredCloneSafe(state.financeAccounts || []),
+        financeCloud: structuredCloneSafe(state.financeCloud || {})
+      };
+      state.finance = [{ id: 'finance-cloud-e2e', cloudId: 'finance-cloud-e2e', title: 'Hotovo', createdAt: '2026-10-01T08:00:00.000Z' }];
+      state.financeAccounts = [{ id: 'finance-account-pending-e2e', name: 'Čekající účet', cloudId: '', syncStatus: 'pending_add', createdAt: '2026-10-01T07:00:00.000Z' }];
+      state.financeCloud = { ...(state.financeCloud || {}), loadedAt: '2026-10-01T09:00:00.000Z', accountsLoadedAt: '2026-10-01T09:00:00.000Z', pendingAt: '2026-10-01T07:00:00.000Z' };
+      const pendingRow = getCloudSyncOverviewItems().find((item) => item.label === 'Finance');
+      const pendingModules = pendingCloudModuleIds();
+      state.financeAccounts = [{ id: 'finance-account-synced-e2e', name: 'Cloud účet', cloudId: 'finance-account-cloud-e2e', syncStatus: '', createdAt: '2026-10-01T07:00:00.000Z' }];
+      state.financeCloud = { ...(state.financeCloud || {}), pendingAt: '2026-09-30T07:00:00.000Z' };
+      const staleMarkerRow = getCloudSyncOverviewItems().find((item) => item.label === 'Finance');
+      state.finance = previous.finance;
+      state.financeAccounts = previous.financeAccounts;
+      state.financeCloud = previous.financeCloud;
+      return {
+        accountPending: pendingRow?.local || 0,
+        pendingSince: pendingRow?.pendingSince || '',
+        modulePrepared: pendingModules.includes('finance'),
+        staleMarkerVisible: staleMarkerRow?.local || 0
+      };
+    };
+    window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__ = () => {
+      const previous = {
+        finance: structuredCloneSafe(state.finance || []),
+        financeAccounts: structuredCloneSafe(state.financeAccounts || []),
+        financeCloud: structuredCloneSafe(state.financeCloud || {})
+      };
+      state.finance = [{ id: 'finance-synced-e2e', cloudId: 'finance-cloud-e2e', syncStatus: '' }];
+      state.financeAccounts = [{ id: 'finance-account-synced-e2e', cloudId: 'finance-account-cloud-e2e', syncStatus: '' }];
+      state.financeCloud = { ...(state.financeCloud || {}), pendingAt: '2026-06-29T12:00:00.000Z', pendingReason: 'legacy-account-failure' };
+      const cleared = moduleCodeReady('finance') ? getFinanceModule().reconcileFinanceCloudPendingState() : false;
+      const result = {
+        cleared,
+        pendingAt: state.financeCloud?.pendingAt || '',
+        pendingReason: state.financeCloud?.pendingReason || ''
+      };
+      state.finance = previous.finance;
+      state.financeAccounts = previous.financeAccounts;
+      state.financeCloud = previous.financeCloud;
+      return result;
+    };
     window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__ = () => {
       const local = canonicalSubscriptionSemanticSnapshot(
         [{ id: 'local-service', serviceKey: 'netflix', name: 'Netflix 1', price: 509, billingDay: 8, maxMembers: 4, enabled: true, note: '', shares: [{ personId: 'local-person', amount: 300 }] }],

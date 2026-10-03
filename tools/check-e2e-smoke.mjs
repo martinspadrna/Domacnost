@@ -1873,6 +1873,8 @@ async function run() {
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
         providerCalendarPending: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__?.(),
         financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
+        financePendingOverview: window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__?.(),
+        financePendingCleanup: window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__?.(),
         snapshotSections: window.__DOMACNOST_E2E_RECONCILE_SNAPSHOT_SECTIONS__?.(),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
@@ -1889,6 +1891,8 @@ async function run() {
     const providerCalendarRecovery = householdBaselineValue.providerCalendarRecovery || {};
     const providerCalendarPending = householdBaselineValue.providerCalendarPending || {};
     const financeLoanPending = householdBaselineValue.financeLoanPending || {};
+    const financePendingOverview = householdBaselineValue.financePendingOverview || {};
+    const financePendingCleanup = householdBaselineValue.financePendingCleanup || {};
     const snapshotSections = householdBaselineValue.snapshotSections || {};
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
@@ -1911,6 +1915,13 @@ async function run() {
       && financeLoanPending.pendingAt === '2026-10-03T20:00:00.000Z'
       && financeLoanPending.rowLocal === 1
       && financeLoanPending.rowPendingAt === '2026-10-03T20:00:00.000Z';
+    const financeAccountPendingDurable = financePendingOverview.accountPending === 1
+      && financePendingOverview.pendingSince === '2026-10-01T07:00:00.000Z'
+      && financePendingOverview.modulePrepared === true
+      && financePendingOverview.staleMarkerVisible === 1;
+    const financeStaleMarkerRecovered = financePendingCleanup.cleared === true
+      && !financePendingCleanup.pendingAt
+      && !financePendingCleanup.pendingReason;
     const snapshotSectionsReconciled = JSON.stringify(snapshotSections.matching?.cleared || []) === JSON.stringify(['readings', 'loyaltyCards', 'pools', 'financeTemplates', 'financeLoans'])
       && !snapshotSections.matching?.readings
       && !snapshotSections.matching?.loyalty
@@ -1921,8 +1932,8 @@ async function run() {
       && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !financeLoanPendingDurable || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, potvrzené snapshot sekce, externí kalendář nebo půjčky.');
-    else ok('Cloud: potvrzené Odečty, karty, bazény, finanční šablony a půjčky se odblokují po sekcích bez přepsání skutečně odlišných dat.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, Finance účty, externí kalendář nebo snapshot sekce.');
+    else ok('Cloud: Finance účty zůstávají ve frontě do potvrzení, stale marker se odblokuje a snapshot sekce se obnovují bez přepsání odlišných dat.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
