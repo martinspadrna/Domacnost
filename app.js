@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_530';
-  const APP_BUILD = 530;
+  const APP_VERSION = 'Domácnost+ v.0.1_531';
+  const APP_BUILD = 531;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -16345,6 +16345,28 @@
     }, Math.max(0, delay));
   }
 
+  function mergeShoppingCloudItemsPreservingPending(cloudItems = []) {
+    const localItems = Array.isArray(state.shopping) ? state.shopping : [];
+    const pendingByCloudId = new Map(
+      localItems
+        .filter((item) => item?.cloudId && item.syncStatus)
+        .map((item) => [String(item.cloudId), item])
+    );
+    const usedPendingIds = new Set();
+    const mergedCloud = (Array.isArray(cloudItems) ? cloudItems : []).map((item) => {
+      const cloudId = String(item?.cloudId || '');
+      const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+      if (!pending) return item;
+      usedPendingIds.add(cloudId);
+      return pending;
+    });
+    const pendingMissingFromCloud = [...pendingByCloudId.entries()]
+      .filter(([cloudId]) => !usedPendingIds.has(cloudId))
+      .map(([, item]) => item);
+    const localOnly = localItems.filter((item) => !item?.cloudId);
+    return [...localOnly, ...mergedCloud, ...pendingMissingFromCloud];
+  }
+
   async function cloudLoadShoppingData(showMessage = true) {
     const client = getSupabaseClient();
     if (!client) { if (showMessage) showToast('Supabase knihovna není načtená'); return null; }
@@ -16407,7 +16429,7 @@
     markShoppingCatalogDirty();
 
     if (!cloudLists.length) {
-      state.shopping = (state.shopping || []).filter((item) => !item.cloudId);
+      state.shopping = mergeShoppingCloudItemsPreservingPending([]);
       markShoppingRuntimeDirty();
       state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
@@ -16441,13 +16463,13 @@
         doneAt: item.done_at || '',
         catalogItemId: item.catalog_item_id || '',
         category: catalogItem?.kind || catalogItem?.category || 'Ostatní',
-        kind: catalogItem?.kind || catalogItem?.category || 'Ostatní'
+        kind: catalogItem?.kind || catalogItem?.category || 'Ostatní',
+        syncStatus: ''
       };
     });
-    const localOnly = state.shopping.filter((item) => !item.cloudId || item.syncStatus === 'conflict');
     const conflictingIds = new Set(cloudRecordConflicts('shopping').map((entry) => entry.cloudId));
     const safeCloudItems = cloudItems.filter((item) => !conflictingIds.has(item.cloudId));
-    state.shopping = [...localOnly, ...safeCloudItems];
+    state.shopping = mergeShoppingCloudItemsPreservingPending(safeCloudItems);
     dedupeShoppingData(state);
     if (!state.shoppingLists.some((list) => list.id === state.activeShoppingListId)) state.activeShoppingListId = state.shoppingLists[0]?.id || '';
 
@@ -16635,7 +16657,10 @@
 
   async function cloudUpdateShoppingItem(item, options = {}) {
     const client = getSupabaseClient();
-    if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
+    if (!client || !item?.cloudId || !state.cloud?.householdId) {
+      if (item?.cloudId && item.syncStatus !== 'conflict') item.syncStatus = 'pending_update';
+      return false;
+    }
     const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudShoppingRow(item.cloudId) : null);
     const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
     const nextRevision = new Date().toISOString();
@@ -16654,6 +16679,7 @@
     if (expectedRevision) query = query.eq('updated_at', expectedRevision);
     const { data, error } = await query.select('id,updated_at').maybeSingle();
     if (error) {
+      if (item.syncStatus !== 'conflict') item.syncStatus = 'pending_update';
       showToast(error.message || 'Cloud nákup se nepovedlo aktualizovat');
       return false;
     }
@@ -23879,6 +23905,79 @@
       ]);
       state.hdoWindows = previous;
       return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', label: item.label || '', enabled: item.enabled !== false, syncStatus: item.syncStatus || '' }));
+    };
+    window.__DOMACNOST_E2E_SHOPPING_PENDING_MERGE__ = () => {
+      const previousShopping = structuredCloneSafe(state.shopping || []);
+      const previousShoppingLists = structuredCloneSafe(state.shoppingLists || []);
+      state.shoppingLists = [{
+        id: 'shopping-list-e2e',
+        cloudId: 'shopping-list-cloud-e2e',
+        cloudListId: 'shopping-list-cloud-e2e',
+        name: 'E2E seznam',
+        createdAt: '2026-10-01T06:00:00.000Z'
+      }];
+      state.shopping = [
+        {
+          id: 'shopping-local-pending',
+          cloudId: 'shopping-cloud-1',
+          name: 'Lokální mléko',
+          quantity: 3,
+          unit: 'ks',
+          done: true,
+          syncStatus: 'pending_update',
+          cloudUpdatedAt: '2026-10-01T08:00:00.000Z',
+          createdAt: '2026-10-01T07:00:00.000Z'
+        },
+        {
+          id: 'shopping-local-only',
+          cloudId: '',
+          name: 'Offline rohlíky',
+          quantity: 6,
+          unit: 'ks',
+          done: false,
+          syncStatus: 'pending_add',
+          createdAt: '2026-10-06T18:00:00.000Z'
+        }
+      ];
+      const merged = mergeShoppingCloudItemsPreservingPending([
+        {
+          id: 'shopping-cloud-copy',
+          cloudId: 'shopping-cloud-1',
+          name: 'Stará cloud verze',
+          quantity: 1,
+          unit: 'ks',
+          done: false,
+          syncStatus: '',
+          cloudUpdatedAt: '2026-10-01T09:00:00.000Z'
+        },
+        {
+          id: 'shopping-cloud-2',
+          cloudId: 'shopping-cloud-2',
+          name: 'Cloud máslo',
+          quantity: 1,
+          unit: 'ks',
+          done: false,
+          syncStatus: '',
+          cloudUpdatedAt: '2026-10-01T09:30:00.000Z'
+        }
+      ]);
+      state.shopping = merged;
+      const row = getCloudSyncOverviewItems().find((item) => item.nav === 'shopping' && item.label === 'Nákupy') || {};
+      const result = {
+        items: merged.map((item) => ({
+          id: item.id,
+          cloudId: item.cloudId || '',
+          name: item.name || '',
+          quantity: Number(item.quantity || 0),
+          done: Boolean(item.done),
+          syncStatus: item.syncStatus || ''
+        })),
+        rowLocal: Number(row.local || 0),
+        localIds: (row.localItems || []).map((item) => item.id)
+      };
+      state.shopping = previousShopping;
+      state.shoppingLists = previousShoppingLists;
+      return result;
     };
     window.__DOMACNOST_E2E_TASK_PENDING_MERGE__ = () => {
       const previousTasks = structuredCloneSafe(state.homeTasks || []);
