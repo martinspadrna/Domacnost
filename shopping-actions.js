@@ -112,7 +112,7 @@
           void Promise.resolve().then(async () => {
             const ok = await deps.cloudUpdateShoppingItem(existingItem);
             if (ok === true) existingItem.syncStatus = '';
-            else if (ok !== 'conflict') existingItem.syncStatus = 'pending_update';
+            else if (ok !== 'conflict') existingItem.syncStatus = existingItem.cloudId ? 'pending_update' : 'pending_add';
             persist('request');
           });
         }
