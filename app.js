@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_529';
-  const APP_BUILD = 529;
+  const APP_VERSION = 'Domácnost+ v.0.1_530';
+  const APP_BUILD = 530;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -23866,6 +23866,19 @@
       ]);
       state.contracts = previous;
       return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', name: item.name || '', note: item.note || '', syncStatus: item.syncStatus || '' }));
+    };
+    window.__DOMACNOST_E2E_TASK_PENDING_MERGE__ = () => {
+      const previous = structuredCloneSafe(state.homeTasks || []);
+      state.homeTasks = [
+        { id: 'task-local-pending', cloudId: 'task-cloud-1', title: 'Lokální úkol', done: true, syncStatus: 'pending' },
+        { id: 'task-local-only', cloudId: '', title: 'Offline úkol', done: false, syncStatus: 'pending' }
+      ];
+      const merged = getNotesModule().mergeCloudTasksPreservingPending([
+        { id: 'task-cloud-copy', cloudId: 'task-cloud-1', title: 'Stará cloud verze', done: false, syncStatus: '' },
+        { id: 'task-cloud-2', cloudId: 'task-cloud-2', title: 'Cloud úkol', done: false, syncStatus: '' }
+      ]);
+      state.homeTasks = previous;
+      return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', title: item.title || '', done: Boolean(item.done), syncStatus: item.syncStatus || '' }));
     };
     window.__DOMACNOST_E2E_HDO_PENDING_MERGE__ = () => {
       const previous = structuredCloneSafe(state.hdoWindows || []);
