@@ -23908,6 +23908,14 @@
     };
     window.__DOMACNOST_E2E_SHOPPING_PENDING_MERGE__ = () => {
       const previousShopping = structuredCloneSafe(state.shopping || []);
+      const previousShoppingLists = structuredCloneSafe(state.shoppingLists || []);
+      state.shoppingLists = [{
+        id: 'shopping-list-e2e',
+        cloudId: 'shopping-list-cloud-e2e',
+        cloudListId: 'shopping-list-cloud-e2e',
+        name: 'E2E seznam',
+        createdAt: '2026-10-01T06:00:00.000Z'
+      }];
       state.shopping = [
         {
           id: 'shopping-local-pending',
@@ -23968,6 +23976,7 @@
         localIds: (row.localItems || []).map((item) => item.id)
       };
       state.shopping = previousShopping;
+      state.shoppingLists = previousShoppingLists;
       return result;
     };
     window.__DOMACNOST_E2E_TASK_PENDING_MERGE__ = () => {
