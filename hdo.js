@@ -340,9 +340,12 @@
       const payload = cloudHdoPayload(item, settingId, user.id);
       const { data, error } = await client.from('hdo_windows').insert(payload).select('id').single();
       if (error) {
+        item.syncStatus = 'pending';
         showToast(error.message || 'HDO okno se nepovedlo uložit do cloudu');
         return null;
       }
+      item.cloudId = data.id;
+      item.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
@@ -358,9 +361,11 @@
       delete payload.created_by;
       const { error } = await client.from('hdo_windows').update(payload).eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
       if (error) {
+        item.syncStatus = 'pending';
         showToast(error.message || 'HDO okno se nepovedlo aktualizovat v cloudu');
         return false;
       }
+      item.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
@@ -375,6 +380,28 @@
       }
       getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
+    }
+
+    function mergeHdoCloudItemsPreservingPending(cloudItems = []) {
+      const localItems = Array.isArray(getState().hdoWindows) ? getState().hdoWindows : [];
+      const pendingByCloudId = new Map(
+        localItems
+          .filter((item) => item?.cloudId && item.syncStatus)
+          .map((item) => [String(item.cloudId), item])
+      );
+      const used = new Set();
+      const merged = (Array.isArray(cloudItems) ? cloudItems : []).map((item) => {
+        const cloudId = String(item?.cloudId || '');
+        const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+        if (!pending) return item;
+        used.add(cloudId);
+        return pending;
+      });
+      const missingPending = [...pendingByCloudId.entries()]
+        .filter(([cloudId]) => !used.has(cloudId))
+        .map(([, item]) => item);
+      const localOnly = localItems.filter((item) => !item?.cloudId);
+      return [...merged, ...missingPending, ...localOnly];
     }
 
     async function cloudLoadHdoData(showMessage = true) {
@@ -408,7 +435,6 @@
         showToast(error.message || 'HDO okna se nepovedlo načíst');
         return;
       }
-      const localOnly = getState().hdoWindows.filter((item) => !item.cloudId);
       const cloudItems = (data || []).map((item) => ({
         id: `hdo-cloud-${item.id}`,
         cloudId: item.id,
@@ -421,7 +447,7 @@
         enabled: item.is_enabled !== false,
         createdAt: new Date().toISOString()
       }));
-      getState().hdoWindows = [...cloudItems, ...localOnly];
+      getState().hdoWindows = mergeHdoCloudItemsPreservingPending(cloudItems);
       getState().cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
@@ -441,13 +467,15 @@
     }
 
     async function cloudSyncLocalHdo() {
-      const local = getState().hdoWindows.filter((item) => !item.cloudId);
+      const pending = getState().hdoWindows.filter((item) => !item.cloudId || item.syncStatus);
       let synced = 0;
-      for (const item of local) {
-        const saved = await cloudAddHdoWindow(item);
-        if (saved?.id) {
-          item.cloudId = saved.id;
-          synced += 1;
+      for (const item of pending) {
+        if (item.cloudId) {
+          const ok = await cloudUpdateHdoWindow(item);
+          if (ok) synced += 1;
+        } else {
+          const saved = await cloudAddHdoWindow(item);
+          if (saved?.id) synced += 1;
         }
       }
       touchState();
@@ -539,17 +567,21 @@
       const item = getState().hdoWindows.find((entry) => entry.id === id);
       if (!item) return;
       item.enabled = !item.enabled;
+      if (item.cloudId) item.syncStatus = 'pending';
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      cloudUpdateHdoWindow(item).then((ok) => {
-        if (!ok) {
-          item.enabled = !item.enabled;
-          touchState();
-          saveState();
-          requestRender();
-        }
-      }).catch((error) => console.warn('Cloud sync (HDO toggle) na pozadí selhal', error));
+      if (!item.cloudId) return;
+      cloudUpdateHdoWindow(item).then(() => {
+        touchState();
+        saveState({ immediate: true });
+        requestRender();
+      }).catch((error) => {
+        item.syncStatus = 'pending';
+        touchState();
+        saveState({ immediate: true });
+        console.warn('Cloud sync (HDO toggle) na pozadí selhal', error);
+      });
     }
 
     async function deleteHdoWindow(id) {
@@ -628,6 +660,7 @@
       cloudLoadHdoData,
       cloudSyncHdoById,
       cloudSyncLocalHdo,
+      mergeHdoCloudItemsPreservingPending,
       // handlery
       addHdoWindowFromForm,
       toggleHdoWindow,

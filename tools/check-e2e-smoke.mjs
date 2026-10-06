@@ -1255,6 +1255,23 @@ async function run() {
     });
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('hdo')`, awaitPromise: true });
+    const hdoPendingMergeCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `window.__DOMACNOST_E2E_HDO_PENDING_MERGE__?.()`
+    });
+    const hdoPendingMerge = hdoPendingMergeCheck.result?.value || [];
+    if (!(Array.isArray(hdoPendingMerge)
+      && hdoPendingMerge.length === 3
+      && hdoPendingMerge[0]?.cloudId === 'hdo-cloud-1'
+      && hdoPendingMerge[0]?.label === 'Lokální HDO'
+      && hdoPendingMerge[0]?.enabled === false
+      && hdoPendingMerge[0]?.syncStatus === 'pending'
+      && hdoPendingMerge[1]?.cloudId === 'hdo-cloud-2'
+      && hdoPendingMerge[2]?.id === 'hdo-local-only')) {
+      fail(`HDO: cloud reload neponechal čekající lokální změnu (${JSON.stringify(hdoPendingMerge)}).`);
+    } else {
+      ok('HDO: čekající lokální změna přežije cloud reload a zůstane ve frontě.');
+    }
     await waitForExpression(page, `Boolean(document.querySelector('[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]'))`, 1800, 50);
     await page.send('Runtime.evaluate', { expression: `document.querySelector('[data-action="delete-hdo"][data-id="hdo-e2e-smoke"]')?.click()` });
     await waitForExpression(page, `Boolean(document.querySelector('#undo-toast.show'))`, 1200, 40);
