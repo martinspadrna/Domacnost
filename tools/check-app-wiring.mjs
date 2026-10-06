@@ -328,6 +328,9 @@ if (app) {
   expect(app, '{ shouldRun: () => householdUiHasPendingChanges(), run: () => cloudSaveHouseholdUiSettings(false) }', 'app.js: household UI se při autosyncu neposílá bez čekající změny.');
   expect(app, '{ shouldRun: () => cloudExtraPendingCount() > 0, run: () => cloudSyncLocalExtraCollections(false) }', 'app.js: drobné moduly se při autosyncu neposílají bez čekající změny.');
   expect(app, 'const items = (state[collection] || []).filter(cloudExtraItemNeedsSync);', 'app.js: potvrzené záruky a slevové kódy se znovu nepřepisují.');
+  expect(app, 'function mergeCloudExtraCollectionPreservingPending', 'app.js: cloud načtení drobných kolekcí má merge, který chrání neodeslané lokální úpravy.');
+  expect(app, 'state[collection] = mergeCloudExtraCollectionPreservingPending(collection, cloudItems);', 'app.js: notes/coupons/warranties nepřepisují čekající lokální edit čerstvou cloud kopií.');
+  expect(app, '.filter((item) => item?.cloudId && item.syncStatus)', 'app.js: pending cloud-backed extra záznam je při reloadu rozpoznaný a zachovaný.');
   expectAbsent(autosyncBody, 'cloudLoadAllModules(', 'app.js: běžný autosync po jedné změně už nenačítá všechny moduly.');
   expect(app, "window.addEventListener('online', () => {", 'app.js: návrat internetu obnoví cloudovou aktivitu.');
   expect(app, "window.addEventListener('offline', () => {", 'app.js: ztráta internetu přepne synchronizaci do čekajícího stavu.');

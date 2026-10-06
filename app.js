@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_526';
-  const APP_BUILD = 526;
+  const APP_VERSION = 'Domácnost+ v.0.1_527';
+  const APP_BUILD = 527;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18957,6 +18957,28 @@
     return true;
   }
 
+  function mergeCloudExtraCollectionPreservingPending(collection, cloudItems = []) {
+    const localItems = Array.isArray(state[collection]) ? state[collection] : [];
+    const pendingByCloudId = new Map(
+      localItems
+        .filter((item) => item?.cloudId && item.syncStatus)
+        .map((item) => [String(item.cloudId), item])
+    );
+    const usedPendingIds = new Set();
+    const mergedCloud = (Array.isArray(cloudItems) ? cloudItems : []).map((item) => {
+      const cloudId = String(item?.cloudId || '');
+      const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+      if (!pending) return item;
+      usedPendingIds.add(cloudId);
+      return pending;
+    });
+    const pendingMissingFromCloud = [...pendingByCloudId.entries()]
+      .filter(([cloudId]) => !usedPendingIds.has(cloudId))
+      .map(([, item]) => item);
+    const localOnly = localItems.filter((item) => !item?.cloudId);
+    return [...mergedCloud, ...pendingMissingFromCloud, ...localOnly];
+  }
+
   async function cloudLoadExtraCollection(collection, showMessage = false) {
     const config = extraCloudConfig(collection);
     if (!config || !cloudReady()) return false;
@@ -18972,9 +18994,11 @@
       if (showMessage) showToast(error.message || 'Cloud data se nepovedlo načíst');
       return false;
     }
-    const localOnly = (state[collection] || []).filter((item) => !item.cloudId);
     const cloudItems = (data || []).map((item) => config.map(item));
-    state[collection] = [...cloudItems, ...localOnly];
+    // Offline/čekající lokální edit nesmí přepsat čerstvé cloud načtení.
+    // Potvrzené cloud řádky se obnoví, ale položky se syncStatus zůstávají
+    // lokálně zdrojem pravdy do chvíle, než je autosync skutečně odešle.
+    state[collection] = mergeCloudExtraCollectionPreservingPending(collection, cloudItems);
     state.householdExtrasCloud = { ...(state.householdExtrasCloud || {}), loadedAt: new Date().toISOString() };
     state.cloud.lastSyncAt = new Date().toISOString();
     touchState();
@@ -23830,6 +23854,19 @@
       return { matchingCleared, noPendingAfterMatch, errorAfterMatch, changedCleared, pendingAfterDifference };
     };
     window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__ = (items = null) => Array.isArray(items) ? items.filter(cloudExtraItemNeedsSync).length : cloudExtraPendingCount();
+    window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__ = () => {
+      const previousCoupons = structuredCloneSafe(state.coupons || []);
+      state.coupons = [
+        { id: 'coupon-local-pending', cloudId: 'coupon-cloud-1', store: 'Lokální změna', code: 'LOCAL', syncStatus: 'pending' },
+        { id: 'coupon-local-only', cloudId: '', store: 'Nový offline', code: 'OFFLINE', syncStatus: 'pending' }
+      ];
+      const merged = mergeCloudExtraCollectionPreservingPending('coupons', [
+        { id: 'coupon-cloud-copy', cloudId: 'coupon-cloud-1', store: 'Stará cloud verze', code: 'REMOTE', syncStatus: '' },
+        { id: 'coupon-cloud-2', cloudId: 'coupon-cloud-2', store: 'Cloud položka', code: 'CLOUD', syncStatus: '' }
+      ]);
+      state.coupons = previousCoupons;
+      return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', store: item.store || '', code: item.code || '', syncStatus: item.syncStatus || '' }));
+    };
     window.__DOMACNOST_E2E_CLEAR_HOUSEHOLD_CONFLICT__ = () => {
       clearHouseholdUiConflict(state.cloud?.householdUiRevision || 'e2e-revision');
       state.cloud.householdUiPendingAt = '';
