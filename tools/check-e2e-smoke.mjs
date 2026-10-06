@@ -911,11 +911,17 @@ async function run() {
     await page.send('Runtime.evaluate', {
       expression: `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }))`
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    const globalSearchFocusedReady = await waitForExpression(
+      page,
+      `Boolean(document.querySelector('[data-global-search-input]')) && document.activeElement?.matches?.('[data-global-search-input]')`,
+      2200,
+      40
+    );
+    if (!globalSearchFocusedReady) fail('Klávesová zkratka Ctrl/⌘ + K neotevřela hledání s fokusem v poli.');
     await page.send('Runtime.evaluate', {
       expression: `(() => { const input = document.querySelector('[data-global-search-input]'); if (input) { input.value = 'Smoke nákup'; input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Smoke nákup', inputType: 'insertText' })); } })()`
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 120));
+    await waitForExpression(page, `Boolean(document.querySelector('.global-search-result'))`, 2200, 40);
     const globalToolsCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
@@ -946,7 +952,7 @@ async function run() {
     let globalToolsOk = true;
     if (!globalToolsValue.searchModal || globalToolsValue.searchResults < 1) { fail('Globální hledání nevrátilo seed data.'); globalToolsOk = false; }
     if (!globalToolsValue.shoppingResult) { fail('Globální hledání neprohledává nákupní položky.'); globalToolsOk = false; }
-    if (!globalToolsValue.searchFocused) { fail('Klávesová zkratka Ctrl/⌘ + K neotevřela hledání s fokusem v poli.'); globalToolsOk = false; }
+    if (!globalToolsValue.searchFocused && globalSearchFocusedReady) { fail('Globální hledání po zadání dotazu neudrželo fokus v poli.'); globalToolsOk = false; }
     if (![globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].every((surface) => surface === 'overlay')) { fail(`Globální nástroje nepoužily ve všech krocích samostatný overlay render (${[globalToolsValue.searchSurface, globalToolsValue.closeSearchSurface, globalToolsValue.directSearchSurface, globalToolsValue.quickAddSurface, globalToolsValue.alertsSurface].join(', ')}).`); globalToolsOk = false; }
     if (globalToolsValue.quickItems < 6) { fail('Rychlé přidání nenabízí všechny hlavní typy záznamů.'); globalToolsOk = false; }
     if (!globalToolsValue.alertsModal || !globalToolsValue.alertsSettings) { fail('Centrum upozornění nebo jeho nastavení se nevykreslilo.'); globalToolsOk = false; }
@@ -2285,7 +2291,13 @@ async function run() {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('subscriptions', 'overview') : document.querySelector('[data-nav="subscriptions"]')?.click()`,
       awaitPromise: true
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+    const subscriptionFilterReady = await waitForExpression(
+      page,
+      `Boolean(document.querySelector('[data-action="subscription-filter"][data-filter="debtors"]'))`,
+      3200,
+      50
+    );
+    if (!subscriptionFilterReady) fail('Předplatné: filtr Dlužníci se po otevření modulu vůbec nevykreslil.');
     await page.send('Runtime.evaluate', {
       expression: `(() => {
         window.__DOMACNOST_E2E_SHELL_NODES__ = {
@@ -2294,10 +2306,19 @@ async function run() {
           frame: document.querySelector('.app-frame'),
           overlays: document.querySelector('[data-app-overlays]')
         };
-        document.querySelector('[data-action="subscription-filter"][data-filter="debtors"]')?.click();
       })()`
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    if (subscriptionFilterReady) {
+      await clickWhenAvailable(page, '[data-action="subscription-filter"][data-filter="debtors"]');
+      await waitForExpression(
+        page,
+        `document.querySelector('#app')?.dataset?.lastRenderScope === 'module-only'
+          && document.querySelector('#app')?.dataset?.lastRenderSurface === 'module'
+          && Boolean(document.querySelector('[data-action="subscription-filter"][data-filter="debtors"].active'))`,
+        3200,
+        50
+      );
+    }
     const moduleOnlyRenderCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
