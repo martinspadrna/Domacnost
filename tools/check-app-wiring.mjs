@@ -536,6 +536,12 @@ if (app && shoppingRender && shoppingActions) {
   expect(shoppingRender, 'function renderShoppingDoneOverlay()', 'shopping-render.js: Hotovo modal ma samostatny overlay renderer.');
   expectAbsent(shoppingRender, "${viewState.doneModalOpen ? renderShoppingDoneModal", 'shopping-render.js: Hotovo modal uz neni soucasti HTML modulu.');
   expect(shoppingActions, 'deps.renderOverlays?.();', 'shopping-actions.js: otevreni a zavreni Hotovo meni jen overlay.');
+  expect(app, 'function mergeShoppingCloudItemsPreservingPending', 'app.js: cloud reload Nákupů zachová čekající lokální edit cloudové položky.');
+  expect(app, 'state.shopping = mergeShoppingCloudItemsPreservingPending(safeCloudItems);', 'app.js: Nákupy přebírají cloud přes pending-aware merge.');
+  expect(app, "if (item?.cloudId && item.syncStatus !== 'conflict') item.syncStatus = 'pending_update';", 'app.js: nedostupný cloud neoznačí edit Nákupu jako potvrzený.');
+  expect(shoppingActions, "filter((item) => !item.cloudId || (item.syncStatus && item.syncStatus !== 'conflict'))", 'shopping-actions.js: autosync opakuje nové i změněné nákupní položky.');
+  expect(shoppingActions, "item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';", 'shopping-actions.js: změna nákupní položky se před sítí drží ve frontě.');
+  expectAbsent(shoppingActions, 'Cloud úprava se nepovedla, změnu jsem vrátil', 'shopping-actions.js: výpadek cloudu už nevrací uživateli lokální změnu nákupu.');
 }
 
 if (notesModule) {
