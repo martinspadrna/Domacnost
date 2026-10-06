@@ -538,6 +538,14 @@ if (app && shoppingRender && shoppingActions) {
   expect(shoppingActions, 'deps.renderOverlays?.();', 'shopping-actions.js: otevreni a zavreni Hotovo meni jen overlay.');
 }
 
+if (hdoModule) {
+  expect(hdoModule, 'function mergeHdoCloudItemsPreservingPending', 'hdo.js: cloud reload zachová čekající změnu existujícího HDO okna.');
+  expect(hdoModule, "filter((item) => !item.cloudId || item.syncStatus)", 'hdo.js: autosync znovu odešle nové i změněné HDO okno.');
+  expect(hdoModule, "if (item.cloudId) item.syncStatus = 'pending';", 'hdo.js: toggle HDO se před sítí trvale označí jako pending.');
+  expect(hdoModule, "item.syncStatus = '';", 'hdo.js: potvrzený HDO zápis pending stav vyčistí.');
+  expectAbsent(hdoModule, 'item.enabled = !item.enabled;\n          touchState();\n          saveState();\n          requestRender();', 'hdo.js: neúspěšný cloud už nevrací lokální toggle HDO zpět.');
+}
+
 if (pkg) {
   expect(pkg, '"check:wiring"', 'package.json: check:wiring je v npm skriptech.');
   expect(pkg, 'npm run check:wiring', 'package.json: hlavní check spouští wiring smoke.');
