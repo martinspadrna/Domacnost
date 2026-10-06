@@ -148,9 +148,12 @@
         .select('id')
         .single();
       if (error) {
+        contract.syncStatus = 'pending';
         showToast(error.message || 'Smlouvu se nepovedlo uložit do cloudu');
         return null;
       }
+      contract.cloudId = data.id;
+      contract.syncStatus = '';
       state.cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
@@ -171,11 +174,35 @@
         .eq('id', contract.cloudId)
         .eq('household_id', state.cloud.householdId);
       if (error) {
+        contract.syncStatus = 'pending';
         showToast(error.message || 'Smlouvu se nepovedlo upravit v cloudu');
         return false;
       }
+      contract.syncStatus = '';
       state.cloud.lastSyncAt = new Date().toISOString();
       return true;
+    }
+
+    function mergeCloudContractsPreservingPending(cloudContracts = []) {
+      const localContracts = Array.isArray(getState().contracts) ? getState().contracts : [];
+      const pendingByCloudId = new Map(
+        localContracts
+          .filter((contract) => contract?.cloudId && contract.syncStatus)
+          .map((contract) => [String(contract.cloudId), contract])
+      );
+      const used = new Set();
+      const merged = (Array.isArray(cloudContracts) ? cloudContracts : []).map((contract) => {
+        const cloudId = String(contract?.cloudId || '');
+        const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+        if (!pending) return contract;
+        used.add(cloudId);
+        return pending;
+      });
+      const missingPending = [...pendingByCloudId.entries()]
+        .filter(([cloudId]) => !used.has(cloudId))
+        .map(([, contract]) => contract);
+      const localOnly = localContracts.filter((contract) => !contract?.cloudId);
+      return [...localOnly, ...merged, ...missingPending];
     }
 
     async function cloudLoadContracts(showMessage = true) {
@@ -221,8 +248,7 @@
           note: item.note || ''
         };
       });
-      const localOnly = (state.contracts || []).filter((contract) => !contract.cloudId);
-      state.contracts = [...localOnly, ...cloudContracts];
+      state.contracts = mergeCloudContractsPreservingPending(cloudContracts);
       if (!getActiveContractId() && state.contracts.length) setActiveContractId(state.contracts[0].id);
       state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
@@ -255,21 +281,23 @@
 
     async function cloudSyncLocalContracts() {
       const state = getState();
-      const localContracts = (state.contracts || []).filter((contract) => !contract.cloudId);
+      const pendingContracts = (state.contracts || []).filter((contract) => !contract.cloudId || contract.syncStatus);
       if (!state.cloud?.householdId) {
         showToast('Nejdřív napoj domácnost na cloud');
         return 0;
       }
-      if (!localContracts.length) {
+      if (!pendingContracts.length) {
         showToast('Není co odeslat');
         return 0;
       }
       let synced = 0;
-      for (const contract of localContracts) {
-        const cloudContract = await cloudAddContract(contract);
-        if (cloudContract?.id) {
-          contract.cloudId = cloudContract.id;
-          synced += 1;
+      for (const contract of pendingContracts) {
+        if (contract.cloudId) {
+          const ok = await cloudUpdateContract(contract);
+          if (ok) synced += 1;
+        } else {
+          const cloudContract = await cloudAddContract(contract);
+          if (cloudContract?.id) synced += 1;
         }
       }
       touchState();
@@ -355,11 +383,21 @@
       contract.changeDeadlineDays = contractDeadlineDaysValue(data.changeDeadlineDays);
       contract.note = normalizeText(data.note);
       contract.updatedAt = new Date().toISOString();
+      if (contract.cloudId) contract.syncStatus = 'pending';
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
       showToast('Smlouva upravena');
-      cloudUpdateContract(contract).catch((error) => console.warn('Cloud sync (úprava smlouvy) na pozadí selhal', error));
+      cloudUpdateContract(contract).then(() => {
+        touchState();
+        saveState({ immediate: true });
+        requestRender();
+      }).catch((error) => {
+        contract.syncStatus = 'pending';
+        touchState();
+        saveState({ immediate: true });
+        console.warn('Cloud sync (úprava smlouvy) na pozadí selhal', error);
+      });
       return true;
     }
 
@@ -882,6 +920,7 @@
       cloudSyncLocalContracts,
       cloudSyncLocalContractFiles,
       cloudDeleteContract,
+      mergeCloudContractsPreservingPending,
       deleteCloudContractFile,
       contractFileCount,
       deleteContractFile,
