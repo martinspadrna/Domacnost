@@ -1895,6 +1895,7 @@ async function run() {
     if (!offlineQueueValue.panel || !offlineQueueValue.detail || !offlineQueueValue.age || !offlineQueueValue.connection || !offlineQueueValue.alert || offlineQueueValue.notificationType !== 'cloudSync' || offlineQueueValue.notificationNav !== 'settings' || offlineQueueValue.notificationTab !== 'cloud') fail('Dlouho čekající offline změna nemá konkrétní detail a upozornění na obnovu synchronizace.');
     else ok('Cloud: offline fronta ukazuje konkrétní položku, stáří čekání a samostatné upozornění.');
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_OFFLINE_QUEUE__?.()` });
+    await page.send('Runtime.evaluate', { expression: `window.DomacnostModuleLoader?.ensure?.('tasks')`, awaitPromise: true });
 
     const householdBaselineCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
@@ -1907,6 +1908,7 @@ async function run() {
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
         providerCalendarPending: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__?.(),
         extraPendingMerge: window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__?.(),
+        taskPendingMerge: window.__DOMACNOST_E2E_TASK_PENDING_MERGE__?.(),
         financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
         financePendingOverview: window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__?.(),
         financePendingCleanup: window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__?.(),
@@ -1926,6 +1928,7 @@ async function run() {
     const providerCalendarRecovery = householdBaselineValue.providerCalendarRecovery || {};
     const providerCalendarPending = householdBaselineValue.providerCalendarPending || {};
     const extraPendingMerge = householdBaselineValue.extraPendingMerge || [];
+    const taskPendingMerge = householdBaselineValue.taskPendingMerge || {};
     const financeLoanPending = householdBaselineValue.financeLoanPending || {};
     const financePendingOverview = householdBaselineValue.financePendingOverview || {};
     const financePendingCleanup = householdBaselineValue.financePendingCleanup || {};
@@ -1955,6 +1958,19 @@ async function run() {
       && extraPendingMerge[1]?.code === 'CLOUD'
       && extraPendingMerge[2]?.id === 'coupon-local-only'
       && extraPendingMerge[2]?.code === 'OFFLINE';
+    const taskPendingPreserved = Array.isArray(taskPendingMerge.items)
+      && taskPendingMerge.items.length === 3
+      && taskPendingMerge.items[0]?.cloudId === 'task-cloud-1'
+      && taskPendingMerge.items[0]?.title === 'Lokální dokončený úkol'
+      && taskPendingMerge.items[0]?.done === true
+      && taskPendingMerge.items[0]?.syncStatus === 'pending_update'
+      && taskPendingMerge.items[1]?.cloudId === 'task-cloud-2'
+      && taskPendingMerge.items[1]?.title === 'Potvrzený cloud úkol'
+      && taskPendingMerge.items[2]?.id === 'task-local-only'
+      && taskPendingMerge.items[2]?.syncStatus === 'pending_add'
+      && taskPendingMerge.rowLocal === 2
+      && taskPendingMerge.rowCloud === 1
+      && JSON.stringify(taskPendingMerge.localIds || []) === JSON.stringify(['task-local-pending', 'task-local-only']);
     const financeLoanPendingDurable = financeLoanPending.householdPending === true
       && financeLoanPending.count === 1
       && financeLoanPending.pendingAt === '2026-10-03T20:00:00.000Z'
@@ -1977,8 +1993,8 @@ async function run() {
       && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně obnovit starou revizi nastavení, Finance účty, externí kalendář nebo snapshot sekce.');
-    else ok('Cloud: Finance účty zůstávají ve frontě do potvrzení, stale marker se odblokuje a snapshot sekce se obnovují bez přepsání odlišných dat.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !taskPendingPreserved || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající úkol, Finance účty, externí kalendář nebo snapshot sekce.');
+    else ok('Cloud: čekající změny úkolů a Finance zůstávají local-first do potvrzení a cloud reload je nepřepíše.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
