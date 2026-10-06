@@ -111,14 +111,9 @@
         if (cloudReady && deps.cloudUpdateShoppingItem) {
           void Promise.resolve().then(async () => {
             const ok = await deps.cloudUpdateShoppingItem(existingItem);
-            if (ok === false) {
-              existingItem.quantity = previousQuantity;
-              existingItem.syncStatus = '';
-              persist('request');
-            } else {
-              if (ok === true) existingItem.syncStatus = '';
-              persist('request');
-            }
+            if (ok === true) existingItem.syncStatus = '';
+            else if (ok !== 'conflict') existingItem.syncStatus = 'pending_update';
+            persist('request');
           });
         }
         return;
@@ -335,27 +330,21 @@
       const store = state();
       const item = store.shopping?.find((entry) => entry.id === id);
       if (!item) return;
-      const previousQuantity = item.quantity || item.amount || 1;
       const unit = item.unit || 'ks';
-      const current = sanitizeShoppingQuantity(previousQuantity, unit);
+      const current = sanitizeShoppingQuantity(item.quantity || item.amount || 1, unit);
       const step = isWholePieceUnit(unit) ? 1 : 0.25;
       const direction = delta < 0 ? -1 : 1;
       const next = current + (direction * step);
       item.quantity = sanitizeShoppingQuantity(next, unit);
       item.updatedAt = new Date().toISOString();
-      if (item.cloudId) item.syncStatus = 'pending_update';
+      item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
       deps.setQuantityEditId?.(id);
       persist('request');
-      if (deps.cloudUpdateShoppingItem) {
+      if (item.cloudId && deps.cloudUpdateShoppingItem) {
         const ok = await deps.cloudUpdateShoppingItem(item);
-        if (ok === false) {
-          item.quantity = sanitizeShoppingQuantity(previousQuantity, unit);
-          item.syncStatus = '';
-          persist('request');
-        } else if (ok === true) {
-          item.syncStatus = '';
-          persist('request');
-        }
+        if (ok === true) item.syncStatus = '';
+        else if (ok !== 'conflict') item.syncStatus = 'pending_update';
+        persist('request');
       }
     }
 
@@ -378,8 +367,8 @@
       deps.ensureShoppingListsReady?.();
       const store = state();
       const localLists = (store.shoppingLists || []).filter((list) => !(list.cloudId || list.cloudListId));
-      const localItems = (store.shopping || []).filter((item) => !item.cloudId);
-      if (!localLists.length && !localItems.length) return showToast('Žádné lokální nákupy k odeslání');
+      const pendingItems = (store.shopping || []).filter((item) => !item.cloudId || (item.syncStatus && item.syncStatus !== 'conflict'));
+      if (!localLists.length && !pendingItems.length) return 0;
       let syncedLists = 0;
       let syncedItems = 0;
 
@@ -388,7 +377,18 @@
         if (cloudList?.id) syncedLists += 1;
       }
 
-      for (const item of localItems) {
+      for (const item of pendingItems) {
+        if (item.cloudId) {
+          const ok = await deps.cloudUpdateShoppingItem?.(item);
+          if (ok === true) {
+            item.syncStatus = '';
+            syncedItems += 1;
+          } else if (ok !== 'conflict') {
+            item.syncStatus = 'pending_update';
+          }
+          continue;
+        }
+
         const catalogItem = deps.findShoppingCatalogItem?.(item.name) || null;
         const list = (store.shoppingLists || []).find((entry) => entry.id === item.listId) || activeList();
         if (list && !(list.cloudId || list.cloudListId)) await deps.cloudEnsureShoppingList?.(list);
@@ -406,36 +406,32 @@
           item.cloudListId = cloudItem.list_id;
           item.catalogItemId = cloudItem.catalog_item_id || item.catalogItemId || '';
           item.cloudUpdatedAt = cloudItem.updated_at || '';
+          item.syncStatus = '';
           syncedItems += 1;
+        } else {
+          item.syncStatus = 'pending_add';
         }
       }
       deps.dedupeShoppingData?.(store);
       persist('full');
-      showToast((syncedLists || syncedItems) ? `Cloud nákupy: ${syncedLists} seznamů, ${syncedItems} položek` : 'Nic se nepovedlo odeslat');
+      showToast((syncedLists || syncedItems) ? `Cloud nákupy: ${syncedLists} seznamů, ${syncedItems} položek` : 'Nákupy zůstávají lokálně a čekají na cloud');
+      return syncedLists + syncedItems;
     }
 
     async function toggleShoppingDone(id) {
       const store = state();
       const item = store.shopping?.find((entry) => entry.id === id);
       if (!item) return;
-      const previousDone = Boolean(item.done);
-      const previousDoneAt = item.doneAt || '';
       item.done = !item.done;
       item.doneAt = item.done ? new Date().toISOString() : '';
       item.updatedAt = new Date().toISOString();
-      if (item.cloudId) item.syncStatus = 'pending_update';
+      item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
       persist('request');
+      if (!item.cloudId) return;
       const ok = await deps.cloudUpdateShoppingItem?.(item);
-      if (ok === false) {
-        item.done = previousDone;
-        item.doneAt = previousDoneAt;
-        item.syncStatus = '';
-        persist('request');
-        showToast('Cloud úprava se nepovedla, změnu jsem vrátil');
-      } else if (ok === true) {
-        item.syncStatus = '';
-        persist('request');
-      }
+      if (ok === true) item.syncStatus = '';
+      else if (ok !== 'conflict') item.syncStatus = 'pending_update';
+      persist('request');
     }
 
     async function deleteShoppingItem(id) {
