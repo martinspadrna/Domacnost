@@ -1247,6 +1247,23 @@ async function run() {
       selector: '[data-action="delete"][data-collection="contracts"][data-id="contract-e2e-smoke"]',
       restoredExpression: `(() => { const saved = JSON.parse(localStorage.getItem('domacnostPlus.v0.1_86') || '{}'); return (saved.contracts || []).filter((item) => item.id === 'contract-e2e-smoke').length === 1 && (saved.contractFiles || []).filter((item) => item.id === 'contract-file-e2e-smoke').length === 1; })()`
     });
+    await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_NAV__('contracts')`, awaitPromise: true });
+    const contractPendingMergeCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `window.__DOMACNOST_E2E_CONTRACT_PENDING_MERGE__?.()`
+    });
+    const contractPendingMerge = contractPendingMergeCheck.result?.value || [];
+    if (!(Array.isArray(contractPendingMerge)
+      && contractPendingMerge.length === 3
+      && contractPendingMerge[0]?.id === 'contract-local-only'
+      && contractPendingMerge[1]?.cloudId === 'contract-cloud-1'
+      && contractPendingMerge[1]?.note === 'LOCAL'
+      && contractPendingMerge[1]?.syncStatus === 'pending'
+      && contractPendingMerge[2]?.cloudId === 'contract-cloud-2')) {
+      fail(`Smlouvy: cloud reload neponechal čekající lokální úpravu (${JSON.stringify(contractPendingMerge)}).`);
+    } else {
+      ok('Smlouvy: čekající lokální úprava přežije cloud reload a zůstane ve frontě.');
+    }
     await verifyHouseholdUndo({
       label: 'Garáž / auto',
       nav: { module: 'garage', tab: 'detail' },

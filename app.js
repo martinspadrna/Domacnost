@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_528';
-  const APP_BUILD = 528;
+  const APP_VERSION = 'Domácnost+ v.0.1_529';
+  const APP_BUILD = 529;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -23854,6 +23854,19 @@
       return { matchingCleared, noPendingAfterMatch, errorAfterMatch, changedCleared, pendingAfterDifference };
     };
     window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__ = (items = null) => Array.isArray(items) ? items.filter(cloudExtraItemNeedsSync).length : cloudExtraPendingCount();
+    window.__DOMACNOST_E2E_CONTRACT_PENDING_MERGE__ = () => {
+      const previous = structuredCloneSafe(state.contracts || []);
+      state.contracts = [
+        { id: 'contract-local-pending', cloudId: 'contract-cloud-1', name: 'Lokální smlouva', note: 'LOCAL', syncStatus: 'pending' },
+        { id: 'contract-local-only', cloudId: '', name: 'Offline smlouva', note: 'OFFLINE', syncStatus: 'pending' }
+      ];
+      const merged = getContractsModule().mergeCloudContractsPreservingPending([
+        { id: 'contract-cloud-copy', cloudId: 'contract-cloud-1', name: 'Stará cloud verze', note: 'REMOTE', syncStatus: '' },
+        { id: 'contract-cloud-2', cloudId: 'contract-cloud-2', name: 'Cloud smlouva', note: 'CLOUD', syncStatus: '' }
+      ]);
+      state.contracts = previous;
+      return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', name: item.name || '', note: item.note || '', syncStatus: item.syncStatus || '' }));
+    };
     window.__DOMACNOST_E2E_HDO_PENDING_MERGE__ = () => {
       const previous = structuredCloneSafe(state.hdoWindows || []);
       state.hdoWindows = [
