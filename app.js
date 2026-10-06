@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_529';
-  const APP_BUILD = 529;
+  const APP_VERSION = 'Domácnost+ v.0.1_530';
+  const APP_BUILD = 530;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -23879,6 +23879,62 @@
       ]);
       state.hdoWindows = previous;
       return merged.map((item) => ({ id: item.id, cloudId: item.cloudId || '', label: item.label || '', enabled: item.enabled !== false, syncStatus: item.syncStatus || '' }));
+    };
+    window.__DOMACNOST_E2E_TASK_PENDING_MERGE__ = () => {
+      const previousTasks = structuredCloneSafe(state.homeTasks || []);
+      state.homeTasks = [
+        {
+          id: 'task-local-pending',
+          cloudId: 'task-cloud-1',
+          title: 'Lokální dokončený úkol',
+          done: true,
+          completedAt: '2026-10-06T18:00:00.000Z',
+          syncStatus: 'pending_update',
+          createdAt: '2026-10-01T08:00:00.000Z'
+        },
+        {
+          id: 'task-local-only',
+          cloudId: '',
+          title: 'Offline nový úkol',
+          done: false,
+          syncStatus: 'pending_add',
+          createdAt: '2026-10-06T18:01:00.000Z'
+        }
+      ];
+      const merged = getNotesModule().mergeTaskCloudItemsPreservingPending([
+        {
+          id: 'task-cloud-copy',
+          cloudId: 'task-cloud-1',
+          title: 'Stará cloud verze',
+          done: false,
+          syncStatus: '',
+          createdAt: '2026-10-01T08:00:00.000Z'
+        },
+        {
+          id: 'task-cloud-2',
+          cloudId: 'task-cloud-2',
+          title: 'Potvrzený cloud úkol',
+          done: false,
+          syncStatus: '',
+          createdAt: '2026-10-01T09:00:00.000Z'
+        }
+      ]);
+      state.homeTasks = merged;
+      const row = getCloudSyncOverviewItems().find((item) => item.nav === 'tasks' && item.label === 'Zápisník a úkoly') || {};
+      const result = {
+        items: merged.map((item) => ({
+          id: item.id,
+          cloudId: item.cloudId || '',
+          title: item.title || '',
+          done: Boolean(item.done),
+          syncStatus: item.syncStatus || ''
+        })),
+        rowLocal: Number(row.local || 0),
+        rowCloud: Number(row.cloud || 0),
+        localIds: (row.localItems || []).map((item) => item.id)
+      };
+      state.homeTasks = previousTasks;
+      return result;
     };
     window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__ = () => {
       const previousCoupons = structuredCloneSafe(state.coupons || []);

@@ -538,6 +538,15 @@ if (app && shoppingRender && shoppingActions) {
   expect(shoppingActions, 'deps.renderOverlays?.();', 'shopping-actions.js: otevreni a zavreni Hotovo meni jen overlay.');
 }
 
+if (notesModule) {
+  expect(notesModule, 'function mergeTaskCloudItemsPreservingPending', 'notes.js: cloud reload zachová čekající úpravu existujícího úkolu.');
+  expect(notesModule, "filter((task) => !task.cloudId || task.syncStatus)", 'notes.js: autosync znovu odešle nové i změněné úkoly.');
+  expect(notesModule, "task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';", 'notes.js: změna úkolu se před potvrzením cloudu drží jako pending.');
+  expect(notesModule, "task.syncStatus = '';", 'notes.js: potvrzený cloud zápis úkolu pending stav vyčistí.');
+  expect(notesModule, 'getState().homeTasks = mergeTaskCloudItemsPreservingPending(cloudItems);', 'notes.js: cloud reload nepřepíše čekající lokální změnu úkolu.');
+  expect(notesModule, "saveState({ immediate: true });", 'notes.js: změna úkolu se před sítí zapíše okamžitě do local-first stavu.');
+}
+
 if (contracts) {
   expect(contracts, 'function mergeCloudContractsPreservingPending', 'contracts.js: cloud reload zachová čekající úpravu existující smlouvy.');
   expect(contracts, "filter((contract) => !contract.cloudId || contract.syncStatus)", 'contracts.js: autosync znovu odešle nové i změněné smlouvy.');
