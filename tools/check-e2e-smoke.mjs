@@ -1908,6 +1908,7 @@ async function run() {
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
         providerCalendarPending: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_PENDING__?.(),
         extraPendingMerge: window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__?.(),
+        shoppingPendingMerge: window.__DOMACNOST_E2E_SHOPPING_PENDING_MERGE__?.(),
         taskPendingMerge: window.__DOMACNOST_E2E_TASK_PENDING_MERGE__?.(),
         financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
         financePendingOverview: window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__?.(),
@@ -1928,6 +1929,7 @@ async function run() {
     const providerCalendarRecovery = householdBaselineValue.providerCalendarRecovery || {};
     const providerCalendarPending = householdBaselineValue.providerCalendarPending || {};
     const extraPendingMerge = householdBaselineValue.extraPendingMerge || [];
+    const shoppingPendingMerge = householdBaselineValue.shoppingPendingMerge || {};
     const taskPendingMerge = householdBaselineValue.taskPendingMerge || {};
     const financeLoanPending = householdBaselineValue.financeLoanPending || {};
     const financePendingOverview = householdBaselineValue.financePendingOverview || {};
@@ -1958,6 +1960,21 @@ async function run() {
       && extraPendingMerge[1]?.code === 'CLOUD'
       && extraPendingMerge[2]?.id === 'coupon-local-only'
       && extraPendingMerge[2]?.code === 'OFFLINE';
+    const shoppingPendingItems = Array.isArray(shoppingPendingMerge.items) ? shoppingPendingMerge.items : [];
+    const shoppingPendingLocal = shoppingPendingItems.find((item) => item.id === 'shopping-local-pending') || {};
+    const shoppingPendingOffline = shoppingPendingItems.find((item) => item.id === 'shopping-local-only') || {};
+    const shoppingConfirmedCloud = shoppingPendingItems.find((item) => item.id === 'shopping-cloud-2') || {};
+    const shoppingPendingPreserved = shoppingPendingItems.length === 3
+      && shoppingPendingLocal.cloudId === 'shopping-cloud-1'
+      && shoppingPendingLocal.name === 'Lokální mléko'
+      && shoppingPendingLocal.quantity === 3
+      && shoppingPendingLocal.done === true
+      && shoppingPendingLocal.syncStatus === 'pending_update'
+      && shoppingPendingOffline.name === 'Offline rohlíky'
+      && shoppingPendingOffline.syncStatus === 'pending_add'
+      && shoppingConfirmedCloud.name === 'Cloud máslo'
+      && shoppingPendingMerge.rowLocal === 2
+      && JSON.stringify([...(shoppingPendingMerge.localIds || [])].sort()) === JSON.stringify(['shopping-local-only', 'shopping-local-pending']);
     const taskPendingPreserved = Array.isArray(taskPendingMerge.items)
       && taskPendingMerge.items.length === 3
       && taskPendingMerge.items[0]?.cloudId === 'task-cloud-1'
@@ -1993,8 +2010,8 @@ async function run() {
       && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !taskPendingPreserved || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající úkol, Finance účty, externí kalendář nebo snapshot sekce.');
-    else ok('Cloud: čekající změny úkolů a Finance zůstávají local-first do potvrzení a cloud reload je nepřepíše.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Finance účty, externí kalendář nebo snapshot sekce.');
+    else ok('Cloud: čekající změny Nákupů, úkolů a Finance zůstávají local-first do potvrzení a cloud reload je nepřepíše.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
