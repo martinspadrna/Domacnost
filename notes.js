@@ -503,33 +503,49 @@
 
     async function cloudAddTask(task) {
       const client = getSupabaseClient();
-      if (!client || !getState().cloud?.householdId) return null;
+      if (!client || !getState().cloud?.householdId) {
+        task.syncStatus = 'pending_add';
+        return null;
+      }
       const user = await refreshCloudSession(false);
-      if (!user) return null;
+      if (!user) {
+        task.syncStatus = 'pending_add';
+        return null;
+      }
       const { data, error } = await client.from('household_tasks').insert(cloudTaskPayload(task, user.id)).select('id').single();
       if (error) {
+        task.syncStatus = 'pending_add';
         showToast(error.message || 'Úkol se nepovedlo uložit do cloudu');
         return null;
       }
       task.cloudId = data.id;
+      task.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
     async function cloudUpdateTask(task) {
       const client = getSupabaseClient();
-      if (!client || !task?.cloudId || !getState().cloud?.householdId) return true;
+      if (!client || !task?.cloudId || !getState().cloud?.householdId) {
+        if (task) task.syncStatus = task?.cloudId ? 'pending_update' : 'pending_add';
+        return false;
+      }
       const user = await refreshCloudSession(false);
-      if (!user) return false;
+      if (!user) {
+        task.syncStatus = 'pending_update';
+        return false;
+      }
       const { error } = await client
         .from('household_tasks')
         .update(cloudTaskPayload(task, user.id))
         .eq('id', task.cloudId)
         .eq('household_id', getState().cloud.householdId);
       if (error) {
+        task.syncStatus = 'pending_update';
         showToast(error.message || 'Úkol se nepovedlo upravit v cloudu');
         return false;
       }
+      task.syncStatus = '';
       getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
@@ -546,6 +562,28 @@
       return true;
     }
 
+    function mergeTaskCloudItemsPreservingPending(cloudItems = []) {
+      const localTasks = Array.isArray(getState().homeTasks) ? getState().homeTasks : [];
+      const pendingByCloudId = new Map(
+        localTasks
+          .filter((task) => task?.cloudId && task.syncStatus)
+          .map((task) => [String(task.cloudId), task])
+      );
+      const usedPendingIds = new Set();
+      const mergedCloud = (Array.isArray(cloudItems) ? cloudItems : []).map((task) => {
+        const cloudId = String(task?.cloudId || '');
+        const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+        if (!pending) return task;
+        usedPendingIds.add(cloudId);
+        return pending;
+      });
+      const pendingMissingFromCloud = [...pendingByCloudId.entries()]
+        .filter(([cloudId]) => !usedPendingIds.has(cloudId))
+        .map(([, task]) => task);
+      const localOnly = localTasks.filter((task) => !task?.cloudId);
+      return [...mergedCloud, ...pendingMissingFromCloud, ...localOnly];
+    }
+
     async function cloudLoadTasks(showMessage = true) {
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) return false;
@@ -560,7 +598,6 @@
         showToast(error.message || 'Úkoly se nepovedlo načíst z cloudu');
         return false;
       }
-      const localOnly = getState().homeTasks.filter((task) => !task.cloudId);
       const cloudItems = (data || []).map((item) => ({
         id: getState().homeTasks.find((task) => task.cloudId === item.id)?.id || `task-cloud-${item.id}`,
         householdId: currentHouseholdId(),
@@ -573,9 +610,10 @@
         priority: normalizeTaskPriority(item.priority),
         done: item.status === 'done',
         completedAt: item.completed_at || '',
-        createdAt: item.created_at || new Date().toISOString()
+        createdAt: item.created_at || new Date().toISOString(),
+        syncStatus: ''
       }));
-      getState().homeTasks = [...cloudItems, ...localOnly];
+      getState().homeTasks = mergeTaskCloudItemsPreservingPending(cloudItems);
       getState().tasksCloud = { ...(getState().tasksCloud || {}), loadedAt: new Date().toISOString() };
       touchState();
       saveState();
@@ -586,27 +624,35 @@
 
     async function cloudSyncTaskById(id) {
       const task = getState().homeTasks.find((entry) => entry.id === id);
-      if (!task) return;
+      if (!task) return false;
       const saved = task.cloudId ? await cloudUpdateTask(task) : await cloudAddTask(task);
-      if (!saved && !task.cloudId) return;
+      if (saved?.id || saved === true) task.syncStatus = '';
+      else task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      showToast('Úkol odeslán do cloudu');
+      showToast(saved?.id || saved === true ? 'Úkol odeslán do cloudu' : 'Úkol zůstává lokálně a čeká na cloud');
+      return Boolean(saved?.id || saved === true);
     }
 
     async function cloudSyncLocalTasks() {
-      const local = getState().homeTasks.filter((task) => !task.cloudId);
-      if (!local.length) return showToast('Žádné lokální úkoly k odeslání');
+      const pending = getState().homeTasks.filter((task) => !task.cloudId || task.syncStatus);
+      if (!pending.length) return 0;
       let count = 0;
-      for (const task of local) {
-        const saved = await cloudAddTask(task);
-        if (saved?.id) count += 1;
+      for (const task of pending) {
+        const saved = task.cloudId ? await cloudUpdateTask(task) : await cloudAddTask(task);
+        if (saved?.id || saved === true) {
+          task.syncStatus = '';
+          count += 1;
+        } else {
+          task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';
+        }
       }
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      showToast(`Odesláno úkolů: ${count}`);
+      showToast(count ? `Odesláno úkolů: ${count}` : 'Úkoly zůstávají lokálně a čekají na cloud');
+      return count;
     }
 
     async function addTaskFromForm(data, form) {
@@ -620,19 +666,34 @@
         note: normalizeText(data.note),
         category: normalizeTaskCategory(data.category),
         priority: normalizeTaskPriority(data.priority),
-        done: false
+        done: false,
+        syncStatus: 'pending_add'
       };
       if (!task.title) return showToast('Doplň název úkolu');
       getState().homeTasks.push(task);
       setModuleTab('notebookCreate', '');
       touchState();
-      saveState();
+      saveState({ immediate: true });
       form.reset();
       render();
       showToast('Úkol uložen');
       cloudAddTask(task).then((saved) => {
-        if (saved?.id) { task.cloudId = saved.id; saveState(); requestRender(); }
-      }).catch((error) => console.warn('Cloud sync (úkol) na pozadí selhal', error));
+        if (saved?.id) {
+          task.cloudId = saved.id;
+          task.syncStatus = '';
+        } else {
+          task.syncStatus = 'pending_add';
+        }
+        touchState();
+        saveState({ immediate: true });
+        requestRender();
+      }).catch((error) => {
+        task.syncStatus = 'pending_add';
+        touchState();
+        saveState({ immediate: true });
+        requestRender();
+        console.warn('Cloud sync (úkol) na pozadí selhal', error);
+      });
     }
 
     async function toggleTaskDone(id) {
@@ -640,10 +701,21 @@
       if (!task) return;
       task.done = !task.done;
       task.completedAt = task.done ? new Date().toISOString() : '';
+      task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      cloudUpdateTask(task).catch((error) => console.warn('Cloud sync (úkol) na pozadí selhal', error));
+      try {
+        const saved = task.cloudId ? await cloudUpdateTask(task) : await cloudAddTask(task);
+        if (saved?.id || saved === true) task.syncStatus = '';
+        else task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';
+      } catch (error) {
+        task.syncStatus = task.cloudId ? 'pending_update' : 'pending_add';
+        console.warn('Cloud sync (úkol) na pozadí selhal', error);
+      }
+      touchState();
+      saveState({ immediate: true });
+      requestRender();
     }
 
     async function deleteTask(id) {
@@ -792,6 +864,7 @@
       cloudLoadTasks,
       cloudSyncTaskById,
       cloudSyncLocalTasks,
+      mergeTaskCloudItemsPreservingPending,
       addTaskFromForm,
       toggleTaskDone,
       deleteTask
