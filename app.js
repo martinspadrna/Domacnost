@@ -16158,16 +16158,21 @@
     vehicle.iconShape = normalizeVehicleIconShape(data.iconShape || vehicle.iconShape);
     vehicle.note = normalizeText(data.note);
     vehicle.updatedAt = new Date().toISOString();
+    markGarageRecordPending(vehicle);
     applyVehicleTechnicalFields(vehicle, data);
     rememberVehicleIconColor(vehicle);
     rememberVehicleIconShape(vehicle);
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast(garageVehicleExtendedSchemaPending ? 'Údaje auta uloženy. Nová pole se pošlou do cloudu po spuštění DB migrace.' : 'Údaje auta uloženy');
     syncUpdateToCloud((async () => {
       const cloudSaved = await cloudUpdateVehicle(vehicle);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
       if (cloudReady() && cloudSaved) await cloudSaveHouseholdUiSettings(false);
+      return cloudSaved;
     })());
   }
 
@@ -16183,14 +16188,21 @@
     item.pricePerLiter = fuelParts.pricePerLiter;
     item.note = normalizeText(data.note);
     item.updatedAt = new Date().toISOString();
+    markGarageRecordPending(item);
     syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
     garageEditRecord = null;
     garageModal = null;
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast('Tankování upraveno');
-    syncUpdateToCloud(cloudUpdateFuelLog(item));
+    syncUpdateToCloud((async () => {
+      const ok = await cloudUpdateFuelLog(item);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
+      return ok;
+    })());
   }
 
   async function updateServiceLog(id, data) {
@@ -16202,14 +16214,21 @@
     item.price = decimalValue(data.price);
     item.note = normalizeText(data.note);
     item.updatedAt = new Date().toISOString();
+    markGarageRecordPending(item);
     syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
     garageEditRecord = null;
     garageModal = null;
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast('Servis upraven');
-    syncUpdateToCloud(cloudUpdateServiceLog(item));
+    syncUpdateToCloud((async () => {
+      const ok = await cloudUpdateServiceLog(item);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
+      return ok;
+    })());
   }
 
 
@@ -17609,7 +17628,8 @@
           iconShape: normalizeVehicleIconShape(data.iconShape),
           nextServiceKm: '',
           nextServiceDate: '',
-          note: ''
+          note: '',
+          syncStatus: 'pending_add'
         };
         applyVehicleTechnicalFields(vehicle, data);
         state.vehicles.push(vehicle);
@@ -17655,7 +17675,7 @@
           input?.focus?.();
           return;
         }
-        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, liters: fuelParts.liters, price: fuelParts.price, pricePerLiter: fuelParts.pricePerLiter, note: data.note };
+        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, liters: fuelParts.liters, price: fuelParts.price, pricePerLiter: fuelParts.pricePerLiter, note: data.note, syncStatus: 'pending_add' };
         state.fuel.push(item);
         syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
         garageModal = null;
@@ -17667,7 +17687,7 @@
         syncNewItemToCloud(cloudAddFuelLog(item), item);
       },
       'add-service': async () => {
-        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, title: data.title, price: decimalValue(data.price), note: data.note };
+        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, title: data.title, price: decimalValue(data.price), note: data.note, syncStatus: 'pending_add' };
         state.services.push(item);
         syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
         garageModal = null;
