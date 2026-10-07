@@ -156,6 +156,12 @@ if (app && garage && index && sw && moduleLoader) {
   expect(app, 'return getGarageModule().renderGarageRecordEditForm(collection, item)', 'app.js: modal úpravy záznamu používá rozhraní Garáže.');
   expect(app, 'async function saveServicePlanItemFromForm', 'app.js: ukládání servisního plánu zůstává v datové vrstvě.');
   expect(app, 'function mergeGarageCloudItemsPreservingPending', 'app.js: Garáž umí při cloud reloadu zachovat čekající lokální editace.');
+  expect(app, "if (cloudValue === undefined) return existingValue ?? ''", 'app.js: chybějící starší Garage sloupec zachová lokální fallback.');
+  expect(app, "if (cloudValue === null || cloudValue === '') return ''", 'app.js: explicitně smazaná cloudová hodnota Garáže nezůstane lokálně viset.');
+  expect(app, 'payload[key] = number === null ? null : number;', 'app.js: prázdné číselné Garage pole se při update odešle jako NULL.');
+  expect(app, 'payload[key] = text || null;', 'app.js: prázdné textové Garage pole se při update odešle jako NULL.');
+  expect(app, "payload.fuel_type = normalizeText(vehicle.fuelType) ? fuelType : null;", 'app.js: vymazaný typ paliva se propíše do cloudu.');
+  expect(app, 'payload.technical_specs = normalizeVehicleTechnicalSpecs(vehicle);', 'app.js: vymazané technické údaje se propíší jako prázdný cloud objekt.');
   expect(app, 'state.vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, cloudVehicles)', 'app.js: cloud reload aut nepřepíše pending lokální auto.');
   expect(app, 'state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel)', 'app.js: cloud reload tankování nepřepíše pending lokální úpravu.');
   expect(app, 'state.services = mergeGarageCloudItemsPreservingPending(state.services, cloudServices)', 'app.js: cloud reload servisů nepřepíše pending lokální úpravu.');
