@@ -137,14 +137,16 @@ if (appSource) {
       errors.push(`app.js: nenašel jsem ${fnName}().`);
       return;
     }
+    const delegatesToCompleteCapture = fnName === 'saveHouseholdWorkspace'
+      && /captureCurrentHouseholdWorkspace\(\)/.test(match[0]);
     isolatedMaps.forEach((mapName) => {
-      if (!new RegExp(mapName).test(match[0])) {
+      if (!new RegExp(mapName).test(match[0]) && !delegatesToCompleteCapture) {
         errors.push(
           `app.js: ${fnName} neřeší ${mapName} — po přepnutí domácnosti by ` +
             'zůstala mapa z předchozí. Přidej ho do workspace cesty.'
         );
       } else {
-        notes.push(`app.js: ${fnName} izoluje ${mapName}.`);
+        notes.push(`app.js: ${fnName} izoluje ${mapName}${delegatesToCompleteCapture ? ' přes kompletní capture snapshot' : ''}.`);
       }
     });
   });
