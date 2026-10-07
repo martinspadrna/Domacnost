@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_533';
-  const APP_BUILD = 533;
+  const APP_VERSION = 'Domácnost+ v.0.1_534';
+  const APP_BUILD = 534;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -12479,7 +12479,10 @@
   }
 
   function keepExistingGarageValue(cloudValue, existingValue = '') {
-    if (cloudValue === null || cloudValue === undefined || cloudValue === '') return existingValue ?? '';
+    // undefined = sloupec ve starším schématu vůbec není dostupný → drž lokální
+    // fallback. null/prázdná hodnota je naopak platná cloudová hodnota "smazáno".
+    if (cloudValue === undefined) return existingValue ?? '';
+    if (cloudValue === null || cloudValue === '') return '';
     return String(cloudValue);
   }
 
@@ -12525,8 +12528,11 @@
   }
 
   function keepExistingGarageObject(cloudValue, existingValue = {}) {
-    if (cloudValue && typeof cloudValue === 'object' && !Array.isArray(cloudValue) && Object.keys(cloudValue).length) return cloudValue;
-    return existingValue && typeof existingValue === 'object' && !Array.isArray(existingValue) ? existingValue : {};
+    if (cloudValue === undefined) {
+      return existingValue && typeof existingValue === 'object' && !Array.isArray(existingValue) ? existingValue : {};
+    }
+    if (cloudValue && typeof cloudValue === 'object' && !Array.isArray(cloudValue)) return cloudValue;
+    return {};
   }
   function garageHasMeaningfulValue(value) {
     if (value === null || value === undefined) return false;
@@ -12551,19 +12557,11 @@
     const updateMode = options.updateMode === true;
     if (options.type === 'number') {
       const number = garageCloudNumberValue(value, { positiveOnly: updateMode });
-      if (number === null) {
-        if (!updateMode) payload[key] = null;
-        return;
-      }
-      payload[key] = number;
+      payload[key] = number === null ? null : number;
       return;
     }
     const text = normalizeText(value);
-    if (!text) {
-      if (!updateMode) payload[key] = null;
-      return;
-    }
-    payload[key] = text;
+    payload[key] = text || null;
   }
 
   function garageHasTechnicalSpecs(vehicle = {}) {
@@ -16922,7 +16920,7 @@
 
     assignGaragePayloadField(payload, 'plate_number', vehicle.plate, { updateMode });
     const fuelType = fuelTypeToCloud(vehicle.fuelType);
-    if (!updateMode || normalizeText(vehicle.fuelType)) payload.fuel_type = fuelType;
+    payload.fuel_type = normalizeText(vehicle.fuelType) ? fuelType : null;
     assignGaragePayloadField(payload, 'current_odometer', vehicle.odometer, { type: 'number', updateMode });
     assignGaragePayloadField(payload, 'stk_until', vehicle.technicalInspectionUntil, { updateMode });
     assignGaragePayloadField(payload, 'insurance_until', vehicle.insuranceUntil, { updateMode });
@@ -16938,7 +16936,7 @@
       assignGaragePayloadField(payload, 'sale_date', vehicle.saleDate, { updateMode });
       assignGaragePayloadField(payload, 'sale_price', vehicle.salePrice, { type: 'number', updateMode });
       assignGaragePayloadField(payload, 'sale_odometer', vehicle.saleOdometer, { type: 'number', updateMode });
-      if (!updateMode || garageHasTechnicalSpecs(vehicle)) payload.technical_specs = normalizeVehicleTechnicalSpecs(vehicle);
+      payload.technical_specs = normalizeVehicleTechnicalSpecs(vehicle);
       // Odkaz na smlouvu ("povinné ručení") se do cloudu posílá jen jako
       // cloud id smlouvy (aby dávalo smysl i na jiném zařízení) - dokud
       // smlouva sama ještě není v cloudu, pole se prostě přeskočí.
@@ -24139,6 +24137,37 @@
       };
       state.homeTasks = previousTasks;
       return result;
+    };
+    window.__DOMACNOST_E2E_GARAGE_CLEAR_SEMANTICS__ = () => {
+      const updatePayload = cloudVehiclePayload({
+        name: 'Test auto',
+        plate: '',
+        fuelType: '',
+        odometer: '',
+        technicalInspectionUntil: '',
+        insuranceUntil: '',
+        nextServiceKm: '',
+        nextServiceDate: '',
+        note: '',
+        ownershipStatus: 'owned',
+        purchaseDate: '',
+        purchasePrice: '',
+        purchaseOdometer: '',
+        saleDate: '',
+        salePrice: '',
+        saleOdometer: '',
+        technicalSpecs: {},
+        insuranceContractId: ''
+      }, 'e2e-user', { mode: 'update' });
+      return {
+        updatePayload,
+        nullText: keepExistingGarageValue(null, 'STARÁ'),
+        emptyText: keepExistingGarageValue('', 'STARÁ'),
+        missingText: keepExistingGarageValue(undefined, 'STARÁ'),
+        nullObject: keepExistingGarageObject(null, { old: 'value' }),
+        emptyObject: keepExistingGarageObject({}, { old: 'value' }),
+        missingObject: keepExistingGarageObject(undefined, { old: 'value' })
+      };
     };
     window.__DOMACNOST_E2E_GARAGE_PENDING_MERGE__ = () => {
       const previousVehicles = structuredCloneSafe(state.vehicles || []);
