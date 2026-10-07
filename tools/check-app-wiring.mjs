@@ -155,6 +155,16 @@ if (app && garage && index && sw && moduleLoader) {
   expect(app, 'return getGarageModule().renderGarage()', 'app.js: renderer Garáže jde přes samostatný modul.');
   expect(app, 'return getGarageModule().renderGarageRecordEditForm(collection, item)', 'app.js: modal úpravy záznamu používá rozhraní Garáže.');
   expect(app, 'async function saveServicePlanItemFromForm', 'app.js: ukládání servisního plánu zůstává v datové vrstvě.');
+  expect(app, 'function mergeGarageCloudItemsPreservingPending', 'app.js: Garáž umí při cloud reloadu zachovat čekající lokální editace.');
+  expect(app, 'state.vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, cloudVehicles)', 'app.js: cloud reload aut nepřepíše pending lokální auto.');
+  expect(app, 'state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel)', 'app.js: cloud reload tankování nepřepíše pending lokální úpravu.');
+  expect(app, 'state.services = mergeGarageCloudItemsPreservingPending(state.services, cloudServices)', 'app.js: cloud reload servisů nepřepíše pending lokální úpravu.');
+  expect(app, "state.fuel.filter((entry) => !entry.cloudId || entry.syncStatus)", 'app.js: autosync Garáže znovu odešle i pending update tankování.');
+  expect(app, "state.services.filter((entry) => !entry.cloudId || entry.syncStatus)", 'app.js: autosync Garáže znovu odešle i pending update servisu.');
+  expect(app, "vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : ''", 'app.js: fallback staršího Garage schematu nenechá rozšířená data falešně potvrzená.');
+  expect(app, 'markGarageRecordPending(vehicle);', 'app.js: úprava auta se označí jako pending před background syncem.');
+  expect(app, 'markGarageRecordPending(item);', 'app.js: úprava tankování/servisu se označí jako pending před background syncem.');
+  expectAbsent(app, "if (garageVehicleHasBackupData(vehicle)) {\n        const ok = await cloudUpdateVehicle(vehicle);", 'app.js: autosync už neposílá každé cloudové auto bez skutečné lokální změny.');
   expectAbsent(app, 'function renderGarageStatsPanel(', 'app.js: statistické UI Garáže už není v hlavním souboru.');
   expectAbsent(app, 'function renderVehicleDetail(', 'app.js: detail auta už není v hlavním souboru.');
   expect(garage, 'function createGarage(deps)', 'garage.js: factory samostatného modulu existuje.');
