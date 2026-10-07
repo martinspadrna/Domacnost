@@ -24140,6 +24140,50 @@
       state.homeTasks = previousTasks;
       return result;
     };
+    window.__DOMACNOST_E2E_GARAGE_PENDING_MERGE__ = () => {
+      const previousVehicles = structuredCloneSafe(state.vehicles || []);
+      const previousFuel = structuredCloneSafe(state.fuel || []);
+      const previousServices = structuredCloneSafe(state.services || []);
+      state.vehicles = [
+        { id: 'garage-vehicle-pending', cloudId: 'garage-vehicle-cloud-1', name: 'Lokální auto', odometer: '123456', syncStatus: 'pending_update', updatedAt: '2026-10-06T18:00:00.000Z' },
+        { id: 'garage-vehicle-local', cloudId: '', name: 'Offline auto', odometer: '50000', syncStatus: 'pending_add', updatedAt: '2026-10-06T18:01:00.000Z' }
+      ];
+      state.fuel = [
+        { id: 'garage-fuel-pending', cloudId: 'garage-fuel-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-06', liters: 44, price: 1500, syncStatus: 'pending_update', updatedAt: '2026-10-06T18:02:00.000Z' },
+        { id: 'garage-fuel-local', cloudId: '', vehicleId: 'garage-vehicle-local', date: '2026-10-06', liters: 30, price: 1000, syncStatus: 'pending_add', updatedAt: '2026-10-06T18:03:00.000Z' }
+      ];
+      state.services = [
+        { id: 'garage-service-pending', cloudId: 'garage-service-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-05', title: 'Lokální servis', price: 2500, syncStatus: 'pending_update', updatedAt: '2026-10-06T18:04:00.000Z' },
+        { id: 'garage-service-local', cloudId: '', vehicleId: 'garage-vehicle-local', date: '2026-10-05', title: 'Offline servis', price: 900, syncStatus: 'pending_add', updatedAt: '2026-10-06T18:05:00.000Z' }
+      ];
+      const vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, [
+        { id: 'garage-vehicle-cloudcopy', cloudId: 'garage-vehicle-cloud-1', name: 'Stará cloud verze auta', odometer: '100000', syncStatus: '' },
+        { id: 'garage-vehicle-confirmed', cloudId: 'garage-vehicle-cloud-2', name: 'Cloud auto', odometer: '90000', syncStatus: '' }
+      ]);
+      const fuel = mergeGarageCloudItemsPreservingPending(state.fuel, [
+        { id: 'garage-fuel-cloudcopy', cloudId: 'garage-fuel-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-06', liters: 20, price: 700, syncStatus: '' },
+        { id: 'garage-fuel-confirmed', cloudId: 'garage-fuel-cloud-2', vehicleId: 'garage-vehicle-confirmed', date: '2026-10-04', liters: 40, price: 1300, syncStatus: '' }
+      ]);
+      const services = mergeGarageCloudItemsPreservingPending(state.services, [
+        { id: 'garage-service-cloudcopy', cloudId: 'garage-service-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-05', title: 'Stará cloud verze servisu', price: 1000, syncStatus: '' },
+        { id: 'garage-service-confirmed', cloudId: 'garage-service-cloud-2', vehicleId: 'garage-vehicle-confirmed', date: '2026-10-03', title: 'Cloud servis', price: 1800, syncStatus: '' }
+      ]);
+      state.vehicles = vehicles;
+      state.fuel = fuel;
+      state.services = services;
+      const row = getCloudSyncOverviewItems().find((item) => item.nav === 'garage' && item.label === 'Garáž') || {};
+      const result = {
+        vehicles: vehicles.map((item) => ({ id: item.id, cloudId: item.cloudId || '', name: item.name || '', odometer: item.odometer || '', syncStatus: item.syncStatus || '' })),
+        fuel: fuel.map((item) => ({ id: item.id, cloudId: item.cloudId || '', liters: Number(item.liters || 0), price: Number(item.price || 0), syncStatus: item.syncStatus || '' })),
+        services: services.map((item) => ({ id: item.id, cloudId: item.cloudId || '', title: item.title || '', price: Number(item.price || 0), syncStatus: item.syncStatus || '' })),
+        rowLocal: Number(row.local || 0),
+        localIds: (row.localItems || []).map((item) => item.id).sort()
+      };
+      state.vehicles = previousVehicles;
+      state.fuel = previousFuel;
+      state.services = previousServices;
+      return result;
+    };
     window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__ = () => {
       const previousCoupons = structuredCloneSafe(state.coupons || []);
       state.coupons = [
