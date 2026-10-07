@@ -91,6 +91,15 @@ if (app && finance) {
   expect(app, 'function markHouseholdUiSnapshotChangesSince', 'app.js: potvrzení staršího household snapshotu zachová novější lokální změny vzniklé během requestu.');
   expect(app, 'const sentSnapshotStillCurrent = householdUiSnapshotMatchesRemote(updatePayload);', 'app.js: po cloud potvrzení se ověřuje přesně snapshot, který byl skutečně odeslán.');
   expect(app, "scheduleCloudAutosync('household-ui-followup'", 'app.js: novější household změna vzniklá během zápisu se automaticky zařadí k dalšímu odeslání.');
+  expect(app, 'function captureHouseholdWorkspaceSyncState', 'app.js: každá domácnost si ukládá vlastní cloud pending/outbox stav.');
+  expect(app, 'function restoreHouseholdWorkspaceSyncState', 'app.js: přepnutí domácnosti obnovuje pouze její vlastní cloud sync metadata.');
+  expect(app, 'state.householdWorkspaces[key] = captureCurrentHouseholdWorkspace();', 'app.js: household switch používá kompletní workspace snapshot místo zúžené duplicitní kopie.');
+  expect(app, 'outbox: normalizeCloudOutbox(cloud.outbox || [])', 'app.js: čekající smazání se při přepnutí domácnosti nepropíše do jiné domácnosti.');
+  expect(app, 'state.financeTemplates = normalizeFinanceTemplates(snapshot.financeTemplates || [])', 'app.js: Finance šablony jsou oddělené pro každou domácnost.');
+  expect(app, 'state.pools = normalizePools(snapshot.pools || [])', 'app.js: Bazény jsou oddělené pro každou domácnost.');
+  expect(app, 'state.trash = normalizeTrashEntries(snapshot.trash || [])', 'app.js: Koš je oddělený pro každou domácnost.');
+  expect(app, "state.subscriptionsCloud = structuredCloneSafe(DEFAULT_STATE.subscriptionsCloud)", 'app.js: přepnutí cloud účtu vyčistí pending metadata Předplatného.');
+  expect(app, 'outbox: [],\n      householdUiPendingAt:', 'app.js: přepnutí cloud účtu nepřenese delete outbox předchozího uživatele.');
   expect(app, "reconcile('financeLoans'", 'app.js: section-level recovery zahrnuje i půjčky.');
   expect(app, 'reconcileConfirmedSnapshotSectionPendings(household);', 'app.js: household load spouští section-level recovery před konfliktem.');
 }
