@@ -1922,6 +1922,7 @@ async function run() {
         financePendingOverview: window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__?.(),
         financePendingCleanup: window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__?.(),
         snapshotSections: window.__DOMACNOST_E2E_RECONCILE_SNAPSHOT_SECTIONS__?.(),
+        householdSaveRace: window.__DOMACNOST_E2E_HOUSEHOLD_SAVE_RACE__?.(),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
           { cloudId: 'confirmed', syncStatus: '' },
@@ -1945,6 +1946,7 @@ async function run() {
     const financePendingOverview = householdBaselineValue.financePendingOverview || {};
     const financePendingCleanup = householdBaselineValue.financePendingCleanup || {};
     const snapshotSections = householdBaselineValue.snapshotSections || {};
+    const householdSaveRace = householdBaselineValue.householdSaveRace || {};
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
     const changedSubscriptionProtected = subscriptionPending.changedCleared === false && Boolean(subscriptionPending.pendingAfterDifference);
@@ -2068,10 +2070,20 @@ async function run() {
       && !snapshotSections.matching?.loans
       && !(snapshotSections.changedCleared || []).includes('readings')
       && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
+    const newerHouseholdEditPreserved = householdSaveRace.beforeMarkMatches === false
+      && Array.isArray(householdSaveRace.changed)
+      && JSON.stringify(householdSaveRace.changed) === JSON.stringify(['readings'])
+      && householdSaveRace.householdPending === '2026-10-07T12:00:00.000Z'
+      && householdSaveRace.readingsPending === '2026-10-07T12:00:00.000Z'
+      && !householdSaveRace.subscriptionsPending
+      && !householdSaveRace.loyaltyPending
+      && !householdSaveRace.poolsPending
+      && !householdSaveRace.templatesPending
+      && !householdSaveRace.loansPending;
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !garagePendingDurable || !garageClearsPropagate || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Garáž, vymazaná Garage pole, Finance účty, externí kalendář nebo snapshot sekce.');
-    else ok('Cloud: čekající změny zůstávají local-first a vymazaná pole Garáže se správně propíšou mezi zařízeními.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !garagePendingDurable || !garageClearsPropagate || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !newerHouseholdEditPreserved || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Garáž, Finance, snapshot sekci nebo novější změnu vzniklou během cloudového zápisu.');
+    else ok('Cloud: local-first změny zůstávají ve frontě a novější household úprava vzniklá během zápisu se neztratí.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
