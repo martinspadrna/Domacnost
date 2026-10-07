@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_535';
-  const APP_BUILD = 535;
+  const APP_VERSION = 'Domácnost+ v.0.1_536';
+  const APP_BUILD = 536;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -21012,6 +21012,84 @@
     return normalizeText(meta.full_name || meta.name || user?.email?.split('@')?.[0] || 'Já') || 'Já';
   }
 
+  function captureHouseholdWorkspaceSyncState() {
+    return {
+      shoppingCloud: structuredCloneSafe(state.shoppingCloud || DEFAULT_STATE.shoppingCloud),
+      hdoCloud: structuredCloneSafe(state.hdoCloud || DEFAULT_STATE.hdoCloud),
+      wasteCloud: structuredCloneSafe(state.wasteCloud || DEFAULT_STATE.wasteCloud),
+      tasksCloud: structuredCloneSafe(state.tasksCloud || DEFAULT_STATE.tasksCloud),
+      calendarCloud: structuredCloneSafe(state.calendarCloud || DEFAULT_STATE.calendarCloud),
+      financeCloud: structuredCloneSafe(state.financeCloud || DEFAULT_STATE.financeCloud),
+      householdExtrasCloud: structuredCloneSafe(state.householdExtrasCloud || DEFAULT_STATE.householdExtrasCloud),
+      readingsCloud: structuredCloneSafe(state.readingsCloud || DEFAULT_STATE.readingsCloud),
+      subscriptionsCloud: structuredCloneSafe(state.subscriptionsCloud || DEFAULT_STATE.subscriptionsCloud),
+      loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud),
+      poolCloud: structuredCloneSafe(normalizePoolCloudState(state.poolCloud || DEFAULT_STATE.poolCloud)),
+      cloud: {
+        householdUiPendingAt: normalizeText(state.cloud?.householdUiPendingAt),
+        householdUiRevision: normalizeText(state.cloud?.householdUiRevision),
+        householdUiConflict: state.cloud?.householdUiConflict ? structuredCloneSafe(state.cloud.householdUiConflict) : null,
+        recordConflicts: structuredCloneSafe(normalizeCloudRecordConflicts(state.cloud?.recordConflicts || [])),
+        outbox: structuredCloneSafe(normalizeCloudOutbox(state.cloud?.outbox || [])),
+        lastSyncAt: normalizeText(state.cloud?.lastSyncAt),
+        lastAutosyncAt: normalizeText(state.cloud?.lastAutosyncAt),
+        lastAutosyncError: normalizeText(state.cloud?.lastAutosyncError)
+      }
+    };
+  }
+
+  function restoreHouseholdWorkspaceSyncState(snapshot = null) {
+    const sync = snapshot?.syncState && typeof snapshot.syncState === 'object' ? snapshot.syncState : {};
+    state.shoppingCloud = structuredCloneSafe(sync.shoppingCloud || DEFAULT_STATE.shoppingCloud);
+    state.hdoCloud = structuredCloneSafe(sync.hdoCloud || DEFAULT_STATE.hdoCloud);
+    state.wasteCloud = structuredCloneSafe(sync.wasteCloud || DEFAULT_STATE.wasteCloud);
+    state.tasksCloud = structuredCloneSafe(sync.tasksCloud || DEFAULT_STATE.tasksCloud);
+    state.calendarCloud = structuredCloneSafe(sync.calendarCloud || DEFAULT_STATE.calendarCloud);
+    state.financeCloud = structuredCloneSafe(sync.financeCloud || DEFAULT_STATE.financeCloud);
+    state.householdExtrasCloud = structuredCloneSafe(sync.householdExtrasCloud || DEFAULT_STATE.householdExtrasCloud);
+    state.readingsCloud = structuredCloneSafe(sync.readingsCloud || DEFAULT_STATE.readingsCloud);
+    state.subscriptionsCloud = structuredCloneSafe(sync.subscriptionsCloud || DEFAULT_STATE.subscriptionsCloud);
+    // Starší workspace snapshoty měly loyalty/pool cloud stav nahoře.
+    state.loyaltyCardsCloud = structuredCloneSafe(sync.loyaltyCardsCloud || snapshot?.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud);
+    state.poolCloud = normalizePoolCloudState(sync.poolCloud || snapshot?.poolCloud || DEFAULT_STATE.poolCloud);
+
+    const cloud = sync.cloud && typeof sync.cloud === 'object' ? sync.cloud : {};
+    state.cloud = {
+      ...(state.cloud || {}),
+      householdUiPendingAt: normalizeText(cloud.householdUiPendingAt),
+      householdUiRevision: normalizeText(cloud.householdUiRevision),
+      householdUiConflict: cloud.householdUiConflict ? structuredCloneSafe(cloud.householdUiConflict) : null,
+      recordConflicts: normalizeCloudRecordConflicts(cloud.recordConflicts || []),
+      outbox: normalizeCloudOutbox(cloud.outbox || []),
+      lastSyncAt: normalizeText(cloud.lastSyncAt),
+      lastAutosyncAt: normalizeText(cloud.lastAutosyncAt),
+      lastAutosyncAttemptAt: '',
+      lastAutosyncError: normalizeText(cloud.lastAutosyncError),
+      localPendingCount: 0,
+      autosyncFailureCount: 0,
+      autosyncRetryAt: '',
+      autosyncStatus: state.cloud?.autoSyncEnabled === false ? 'disabled' : 'idle'
+    };
+    const pending = cloudLocalPendingCount();
+    state.cloud.localPendingCount = pending;
+    if (cloudHasBlockingConflict()) state.cloud.autosyncStatus = 'blocked';
+    else if (pending && state.cloud?.autoSyncEnabled !== false) state.cloud.autosyncStatus = 'pending';
+  }
+
+  function resetStandaloneHouseholdWorkspaceData() {
+    state.loyaltyCards = [];
+    state.readingPrices = normalizeReadingPrices(DEFAULT_STATE.readingPrices);
+    state.readingDeposits = normalizeReadingDeposits(DEFAULT_STATE.readingDeposits);
+    state.readingBilling = normalizeReadingBilling(DEFAULT_STATE.readingBilling);
+    state.financeTemplates = [];
+    state.financeRefinanceResult = null;
+    state.pools = [];
+    state.vape = normalizeVapeState({});
+    state.trash = [];
+    state.shoppingStats = {};
+    state.weather = normalizeWeatherState(structuredCloneSafe(DEFAULT_STATE.weather));
+  }
+
   function captureCurrentHouseholdWorkspace() {
     const snapshot = {
       savedAt: new Date().toISOString(),
@@ -21033,11 +21111,19 @@
       readingPrices: structuredCloneSafe(state.readingPrices || DEFAULT_STATE.readingPrices),
       readingDeposits: structuredCloneSafe(state.readingDeposits || DEFAULT_STATE.readingDeposits),
       readingBilling: structuredCloneSafe(state.readingBilling || DEFAULT_STATE.readingBilling),
+      financeTemplates: structuredCloneSafe(normalizeFinanceTemplates(state.financeTemplates || [])),
+      pools: structuredCloneSafe(normalizePools(state.pools || [])),
+      vape: structuredCloneSafe(normalizeVapeState(state.vape || {})),
+      trash: structuredCloneSafe(normalizeTrashEntries(state.trash || [])),
+      shoppingStats: structuredCloneSafe(state.shoppingStats || {}),
+      weather: structuredCloneSafe(normalizeWeatherState(state.weather || DEFAULT_STATE.weather)),
       poolCloud: structuredCloneSafe(normalizePoolCloudState(state.poolCloud || DEFAULT_STATE.poolCloud)),
+      syncState: captureHouseholdWorkspaceSyncState(),
       // Per-vehicle/per-household mapy — musí se ukládat s workspace, jinak
       // by po přepnutí domácnosti zůstala v paměti mapa z předchozí.
       vehicleServicePlans: structuredCloneSafe(normalizeVehicleServicePlanMap(state.settings?.vehicleServicePlans)),
       vehicleIconColors: structuredCloneSafe(normalizeVehicleIconColorMap(state.settings?.vehicleIconColors)),
+      vehicleIconShapes: structuredCloneSafe(normalizeVehicleIconShapeMap(state.settings?.vehicleIconShapes)),
       collections: {}
     };
     getCollectionNames().forEach((collection) => {
@@ -21055,6 +21141,9 @@
     state.financeCloud = structuredCloneSafe(DEFAULT_STATE.financeCloud);
     state.householdExtrasCloud = structuredCloneSafe(DEFAULT_STATE.householdExtrasCloud);
     state.readingsCloud = structuredCloneSafe(DEFAULT_STATE.readingsCloud);
+    state.subscriptionsCloud = structuredCloneSafe(DEFAULT_STATE.subscriptionsCloud);
+    state.loyaltyCardsCloud = structuredCloneSafe(DEFAULT_STATE.loyaltyCardsCloud);
+    state.poolCloud = structuredCloneSafe(DEFAULT_STATE.poolCloud);
   }
 
   function resetLocalWorkspaceForCloudUser(user, options = {}) {
@@ -21084,8 +21173,8 @@
     getCollectionNames().forEach((collection) => {
       state[collection] = [];
     });
+    resetStandaloneHouseholdWorkspaceData();
     resetCloudModuleCachesForUserSwitch();
-    state.poolCloud = structuredCloneSafe(DEFAULT_STATE.poolCloud);
     state.settings = {
       ...(state.settings || {}),
       cloudEnabled: true,
@@ -21111,6 +21200,7 @@
       householdUiRevision: '',
       householdUiConflict: null,
       recordConflicts: [],
+      outbox: [],
       householdUiPendingAt: '',
       households: [],
       invitations: [],
@@ -22156,25 +22246,7 @@
     const key = currentWorkspaceKey();
     if (!key) return;
     state.householdWorkspaces = state.householdWorkspaces || {};
-    const snapshot = {
-      household: structuredCloneSafe(state.household),
-      profiles: structuredCloneSafe(state.profiles),
-      activeProfileId: state.activeProfileId,
-      loyaltyCards: structuredCloneSafe(normalizeLoyaltyCards(state.loyaltyCards || [])),
-      loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud),
-      readingPrices: structuredCloneSafe(state.readingPrices || DEFAULT_STATE.readingPrices),
-      readingDeposits: structuredCloneSafe(state.readingDeposits || DEFAULT_STATE.readingDeposits),
-      readingBilling: structuredCloneSafe(state.readingBilling || DEFAULT_STATE.readingBilling),
-      poolCloud: structuredCloneSafe(normalizePoolCloudState(state.poolCloud || DEFAULT_STATE.poolCloud)),
-      // Per-vehicle/per-household mapy — viz captureCurrentHouseholdWorkspace.
-      vehicleServicePlans: structuredCloneSafe(normalizeVehicleServicePlanMap(state.settings?.vehicleServicePlans)),
-      vehicleIconColors: structuredCloneSafe(normalizeVehicleIconColorMap(state.settings?.vehicleIconColors)),
-      collections: {}
-    };
-    getCollectionNames().forEach((collection) => {
-      snapshot.collections[collection] = structuredCloneSafe(state[collection] || []);
-    });
-    state.householdWorkspaces[key] = snapshot;
+    state.householdWorkspaces[key] = captureCurrentHouseholdWorkspace();
   }
 
   function restoreHouseholdWorkspace(key, cloudName = 'Domácnost') {
@@ -22188,14 +22260,21 @@
       state.readingPrices = normalizeReadingPrices(snapshot.readingPrices || state.readingPrices);
       state.readingDeposits = normalizeReadingDeposits(snapshot.readingDeposits || state.readingDeposits);
       state.readingBilling = normalizeReadingBilling(snapshot.readingBilling || state.readingBilling);
-      state.poolCloud = normalizePoolCloudState(snapshot.poolCloud || state.poolCloud || DEFAULT_STATE.poolCloud);
+      state.financeTemplates = normalizeFinanceTemplates(snapshot.financeTemplates || []);
+      state.pools = normalizePools(snapshot.pools || []);
+      state.vape = normalizeVapeState(snapshot.vape || {});
+      state.trash = normalizeTrashEntries(snapshot.trash || []);
+      state.shoppingStats = structuredCloneSafe(snapshot.shoppingStats || {});
+      state.weather = normalizeWeatherState(snapshot.weather || DEFAULT_STATE.weather);
       // Per-household vehicle mapy — z workspace snapshotu domácnosti, ne
       // z předchozí domácnosti v paměti. Chybí-li ve starším snapshotu → {}.
       state.settings.vehicleServicePlans = normalizeVehicleServicePlanMap(snapshot.vehicleServicePlans || {});
       state.settings.vehicleIconColors = normalizeVehicleIconColorMap(snapshot.vehicleIconColors || {});
+      state.settings.vehicleIconShapes = normalizeVehicleIconShapeMap(snapshot.vehicleIconShapes || {});
       getCollectionNames().forEach((collection) => {
         state[collection] = structuredCloneSafe(snapshot.collections?.[collection] || []);
       });
+      restoreHouseholdWorkspaceSyncState(snapshot);
     } else {
       state.household = {
         id: `household-${key}`,
@@ -22205,18 +22284,14 @@
       };
       state.profiles = [createProfile(currentProfile()?.name || 'Já', 'owner', state.household.id)];
       state.activeProfileId = state.profiles[0]?.id || '';
-      state.loyaltyCards = [];
-      state.loyaltyCardsCloud = structuredCloneSafe(DEFAULT_STATE.loyaltyCardsCloud);
-      state.readingPrices = normalizeReadingPrices(DEFAULT_STATE.readingPrices);
-      state.readingDeposits = normalizeReadingDeposits(DEFAULT_STATE.readingDeposits);
-      state.readingBilling = normalizeReadingBilling(DEFAULT_STATE.readingBilling);
-      state.poolCloud = structuredCloneSafe(DEFAULT_STATE.poolCloud);
+      resetStandaloneHouseholdWorkspaceData();
       // Nová/neznámá domácnost bez snapshotu → prázdné vehicle mapy, ať
       // nezůstane servisní plán ani barvy z předchozí domácnosti.
       state.settings.vehicleServicePlans = {};
       state.settings.vehicleIconColors = {};
+      state.settings.vehicleIconShapes = {};
       getCollectionNames().forEach((collection) => { state[collection] = []; });
-      state.shoppingStats = {};
+      restoreHouseholdWorkspaceSyncState(null);
     }
   }
 
@@ -23859,6 +23934,84 @@
       state.cloud.autosyncStatus = previous.autosyncStatus;
       state.cloud.lastAutosyncError = previous.lastAutosyncError;
       return result;
+    };
+    window.__DOMACNOST_E2E_WORKSPACE_ISOLATION__ = () => {
+      const originalState = state;
+      const originalRuntimeStateRef = runtimeStateRef;
+      try {
+        state = structuredCloneSafe(originalState);
+        runtimeStateRef = state;
+        state.householdWorkspaces = {};
+        state.cloud = {
+          ...(state.cloud || {}),
+          householdId: 'workspace-a',
+          householdUiPendingAt: '2026-10-07T10:00:00.000Z',
+          householdUiRevision: 'revision-a',
+          outbox: [{
+            id: 'outbox-a',
+            operation: 'delete',
+            table: 'household_notes',
+            cloudId: 'note-cloud-a',
+            collection: 'notes',
+            label: 'A',
+            createdAt: '2026-10-07T10:00:00.000Z'
+          }],
+          recordConflicts: []
+        };
+        state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt: '2026-10-07T10:01:00.000Z' };
+        state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: '2026-10-07T10:02:00.000Z' };
+        state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: '2026-10-07T10:03:00.000Z' };
+        state.financeTemplates = [{ id: 'template-a', name: 'A', title: 'A', type: 'expense', category: 'other' }];
+        state.pools = [{ id: 'pool-a', name: 'Bazén A', measurements: [] }];
+        state.trash = normalizeTrashEntries([{
+          id: 'trash-a',
+          label: 'A',
+          deletedAt: '2026-10-07T10:00:00.000Z',
+          expiresAt: '2026-11-06T10:00:00.000Z',
+          records: [{ collection: 'notes', index: 0, record: { id: 'note-a', text: 'A' } }]
+        }]);
+        saveHouseholdWorkspace();
+
+        state.cloud.householdId = 'workspace-b';
+        resetStandaloneHouseholdWorkspaceData();
+        restoreHouseholdWorkspaceSyncState(null);
+        state.financeTemplates = [{ id: 'template-b', name: 'B', title: 'B', type: 'expense', category: 'other' }];
+        state.pools = [{ id: 'pool-b', name: 'Bazén B', measurements: [] }];
+        saveHouseholdWorkspace();
+
+        state.cloud.householdId = 'workspace-a';
+        restoreHouseholdWorkspace('workspace-a', 'A');
+        const restoredA = {
+          outbox: normalizeCloudOutbox(state.cloud?.outbox || []).map((entry) => entry.cloudId),
+          householdPending: normalizeText(state.cloud?.householdUiPendingAt),
+          revision: normalizeText(state.cloud?.householdUiRevision),
+          readingsPending: normalizeText(state.readingsCloud?.pendingAt),
+          subscriptionsPending: normalizeText(state.subscriptionsCloud?.pendingAt),
+          templatesPending: normalizeText(state.financeCloud?.templatesPendingAt),
+          templates: (state.financeTemplates || []).map((item) => item.id),
+          pools: (state.pools || []).map((item) => item.id),
+          trash: (state.trash || []).map((item) => item.id)
+        };
+
+        state.cloud.householdId = 'workspace-new';
+        restoreHouseholdWorkspace('workspace-new', 'Nová');
+        const cleanNew = {
+          outbox: normalizeCloudOutbox(state.cloud?.outbox || []).length,
+          householdPending: normalizeText(state.cloud?.householdUiPendingAt),
+          revision: normalizeText(state.cloud?.householdUiRevision),
+          readingsPending: normalizeText(state.readingsCloud?.pendingAt),
+          subscriptionsPending: normalizeText(state.subscriptionsCloud?.pendingAt),
+          templatesPending: normalizeText(state.financeCloud?.templatesPendingAt),
+          templates: (state.financeTemplates || []).length,
+          pools: (state.pools || []).length,
+          trash: (state.trash || []).length
+        };
+        return { restoredA, cleanNew };
+      } finally {
+        state = originalState;
+        runtimeStateRef = originalRuntimeStateRef;
+        resetTrashTrackingBaseline();
+      }
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_SAVE_RACE__ = () => {
       const previous = {
