@@ -1923,6 +1923,7 @@ async function run() {
         financePendingCleanup: window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__?.(),
         snapshotSections: window.__DOMACNOST_E2E_RECONCILE_SNAPSHOT_SECTIONS__?.(),
         householdSaveRace: window.__DOMACNOST_E2E_HOUSEHOLD_SAVE_RACE__?.(),
+        workspaceIsolation: window.__DOMACNOST_E2E_WORKSPACE_ISOLATION__?.(),
         householdUiPending: window.__DOMACNOST_E2E_RECONCILE_HOUSEHOLD_UI_PENDING__?.(),
         extras: window.__DOMACNOST_E2E_EXTRA_PENDING_COUNT__?.([
           { cloudId: 'confirmed', syncStatus: '' },
@@ -1947,6 +1948,7 @@ async function run() {
     const financePendingCleanup = householdBaselineValue.financePendingCleanup || {};
     const snapshotSections = householdBaselineValue.snapshotSections || {};
     const householdSaveRace = householdBaselineValue.householdSaveRace || {};
+    const workspaceIsolation = householdBaselineValue.workspaceIsolation || {};
     const householdUiPending = householdBaselineValue.householdUiPending || {};
     const staleSubscriptionCleared = subscriptionPending.matchingCleared === true && !subscriptionPending.pendingAfterMatch;
     const changedSubscriptionProtected = subscriptionPending.changedCleared === false && Boolean(subscriptionPending.pendingAfterDifference);
@@ -2080,10 +2082,28 @@ async function run() {
       && !householdSaveRace.poolsPending
       && !householdSaveRace.templatesPending
       && !householdSaveRace.loansPending;
+    const workspaceSyncIsolated = JSON.stringify(workspaceIsolation.restoredA?.outbox || []) === JSON.stringify(['note-cloud-a'])
+      && workspaceIsolation.restoredA?.householdPending === '2026-10-07T10:00:00.000Z'
+      && workspaceIsolation.restoredA?.revision === 'revision-a'
+      && workspaceIsolation.restoredA?.readingsPending === '2026-10-07T10:01:00.000Z'
+      && workspaceIsolation.restoredA?.subscriptionsPending === '2026-10-07T10:02:00.000Z'
+      && workspaceIsolation.restoredA?.templatesPending === '2026-10-07T10:03:00.000Z'
+      && JSON.stringify(workspaceIsolation.restoredA?.templates || []) === JSON.stringify(['template-a'])
+      && JSON.stringify(workspaceIsolation.restoredA?.pools || []) === JSON.stringify(['pool-a'])
+      && JSON.stringify(workspaceIsolation.restoredA?.trash || []) === JSON.stringify(['trash-a'])
+      && workspaceIsolation.cleanNew?.outbox === 0
+      && !workspaceIsolation.cleanNew?.householdPending
+      && !workspaceIsolation.cleanNew?.revision
+      && !workspaceIsolation.cleanNew?.readingsPending
+      && !workspaceIsolation.cleanNew?.subscriptionsPending
+      && !workspaceIsolation.cleanNew?.templatesPending
+      && workspaceIsolation.cleanNew?.templates === 0
+      && workspaceIsolation.cleanNew?.pools === 0
+      && workspaceIsolation.cleanNew?.trash === 0;
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !garagePendingDurable || !garageClearsPropagate || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !newerHouseholdEditPreserved || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Garáž, Finance, snapshot sekci nebo novější změnu vzniklou během cloudového zápisu.');
-    else ok('Cloud: local-first změny zůstávají ve frontě a novější household úprava vzniklá během zápisu se neztratí.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !garagePendingDurable || !garageClearsPropagate || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !newerHouseholdEditPreserved || !workspaceSyncIsolated || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat pending data při zápisu nebo oddělit data a sync frontu mezi domácnostmi.');
+    else ok('Cloud: local-first změny přežijí zápis a každá domácnost má oddělená data, pending stav i delete outbox.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));
