@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_534';
-  const APP_BUILD = 534;
+  const APP_VERSION = 'Domácnost+ v.0.1_535';
+  const APP_BUILD = 535;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -935,6 +935,7 @@
       recordConflicts: [],
       localPendingCount: 0,
       outbox: [],
+      profileArchiveOutbox: [],
       autoSyncEnabled: true,
       autosyncStatus: 'idle',
       realtimeStatus: 'offline',
@@ -2072,6 +2073,7 @@
     migrated.cloud.profilesLoadedAt = migrated.cloud?.profilesLoadedAt || '';
     migrated.cloud.localPendingCount = Number(migrated.cloud?.localPendingCount || 0);
     migrated.cloud.outbox = normalizeCloudOutbox(migrated.cloud?.outbox || []);
+    migrated.cloud.profileArchiveOutbox = normalizeProfileArchiveOutbox(migrated.cloud?.profileArchiveOutbox || []);
     migrated.trash = normalizeTrashEntries(migrated.trash || []);
     delete migrated.devices;
     delete migrated.deviceDiscovery;
@@ -2515,6 +2517,85 @@
     return [...unique.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   }
 
+  function normalizeProfileArchiveOutbox(value) {
+    const unique = new Map();
+    (Array.isArray(value) ? value : []).forEach((entry) => {
+      const cloudId = normalizeText(entry?.cloudId || entry?.profileId);
+      const householdId = normalizeText(entry?.householdId);
+      if (!cloudId || !householdId) return;
+      const key = `${householdId}:${cloudId}`;
+      const createdAt = Number.isFinite(Date.parse(entry?.createdAt || '')) ? entry.createdAt : new Date().toISOString();
+      unique.set(key, {
+        id: normalizeText(entry?.id) || `profile-archive-${cloudId}`,
+        cloudId,
+        householdId,
+        label: normalizeText(entry?.label || entry?.name) || 'Profil',
+        createdAt,
+        attempts: Math.max(0, Number(entry?.attempts || 0)),
+        lastError: normalizeText(entry?.lastError),
+        lastErrorCode: normalizeText(entry?.lastErrorCode),
+        nextRetryAt: normalizeText(entry?.nextRetryAt)
+      });
+    });
+    return [...unique.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  }
+
+  function profileArchiveOutbox() {
+    const queue = normalizeProfileArchiveOutbox(state.cloud?.profileArchiveOutbox || []);
+    state.cloud.profileArchiveOutbox = queue;
+    return queue;
+  }
+
+  function profileArchiveCloudIdSet(householdId = state.cloud?.householdId) {
+    const targetHouseholdId = normalizeText(householdId);
+    return new Set(profileArchiveOutbox()
+      .filter((entry) => !targetHouseholdId || entry.householdId === targetHouseholdId)
+      .map((entry) => entry.cloudId));
+  }
+
+  function profileCloudPendingCount() {
+    const localAdds = (state.profiles || []).filter((profile) => !profile.cloudId).length;
+    return localAdds + profileArchiveOutbox().length;
+  }
+
+  function profileCloudPendingAt() {
+    const dates = [
+      ...profileArchiveOutbox().map((entry) => entry.createdAt),
+      ...(state.profiles || []).filter((profile) => !profile.cloudId).flatMap((profile) => [profile.updatedAt, profile.createdAt])
+    ].map((value) => Date.parse(value || '')).filter(Number.isFinite);
+    return dates.length ? new Date(Math.min(...dates)).toISOString() : '';
+  }
+
+  function enqueueProfileArchive(profile) {
+    const cloudId = normalizeText(profile?.cloudId);
+    const householdId = normalizeText(profile?.householdId || state.cloud?.householdId);
+    if (!cloudId || !householdId) return false;
+    state.cloud.profileArchiveOutbox = normalizeProfileArchiveOutbox([
+      ...profileArchiveOutbox(),
+      {
+        id: `profile-archive-${cloudId}`,
+        cloudId,
+        householdId,
+        label: normalizeText(profile?.name) || 'Profil',
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+        lastError: '',
+        lastErrorCode: '',
+        nextRetryAt: ''
+      }
+    ]);
+    state.cloud.localPendingCount = cloudLocalPendingCount();
+    persistStateSnapshot({ immediate: true });
+    return true;
+  }
+
+  function mergeProfileCloudItemsPreservingPending(cloudProfiles = [], householdId = state.cloud?.householdId) {
+    const archivedIds = profileArchiveCloudIdSet(householdId);
+    const localOnly = (state.profiles || []).filter((profile) => !profile.cloudId);
+    const remote = (Array.isArray(cloudProfiles) ? cloudProfiles : []).filter((profile) => !archivedIds.has(String(profile.cloudId || profile.id || '')));
+    return dedupeProfiles([...localOnly, ...remote], { activeProfileId: state.activeProfileId, householdId });
+  }
+
   function normalizeCloudRecordConflicts(value) {
     const unique = new Map();
     (Array.isArray(value) ? value : []).forEach((entry) => {
@@ -2689,10 +2770,15 @@
   }
 
   function cloudOutboxHasPermanentFailure() {
-    return normalizeCloudOutbox(state.cloud?.outbox || []).some((entry) => entry.lastError && !cloudErrorIsTransient({
+    const deleteFailure = normalizeCloudOutbox(state.cloud?.outbox || []).some((entry) => entry.lastError && !cloudErrorIsTransient({
       code: entry.lastErrorCode,
       message: entry.lastError
     }));
+    const profileArchiveFailure = profileArchiveOutbox().some((entry) => entry.lastError && !cloudErrorIsTransient({
+      code: entry.lastErrorCode,
+      message: entry.lastError
+    }));
+    return deleteFailure || profileArchiveFailure;
   }
 
   async function replayCloudOutbox() {
@@ -7503,7 +7589,7 @@
     );
     const householdUiFallbackPending = state.cloud?.householdUiPendingAt && !snapshotSectionPending ? 1 : 0;
     const counters = [
-      { nav: 'settings', tab: 'household', icon: '👥', label: 'Profily', items: state.profiles || [], loadedAt: state.cloud?.profilesLoadedAt },
+      { nav: 'settings', tab: 'household', icon: '👥', label: 'Profily', items: state.profiles || [], loadedAt: state.cloud?.profilesLoadedAt, cloudSynced: Boolean(state.cloud?.profilesLoadedAt && cloudReady()), pendingCount: profileCloudPendingCount(), pendingAt: profileCloudPendingAt() },
       { nav: 'shopping', tab: 'list', icon: '🛒', label: 'Nákupy', items: [...(state.shoppingLists || []), ...(state.shopping || [])], loadedAt: state.shoppingCloud?.loadedAt },
       { nav: 'contracts', tab: 'overview', icon: '📄', label: 'Smlouvy', items: state.contracts || [] },
       { nav: 'contracts', tab: 'detail', icon: '📎', label: 'Přílohy smluv', items: state.contractFiles || [] },
@@ -18408,6 +18494,12 @@
 
   function cloudPendingItemSummary(item = {}) {
     const labels = (item.localItems || []).map(cloudPendingRecordLabel).filter(Boolean).slice(0, 3);
+    if (item.label === 'Profily') {
+      const profileLabels = [...labels, ...profileArchiveOutbox().map((entry) => entry.label).filter(Boolean)]
+        .filter((value, index, array) => array.indexOf(value) === index)
+        .slice(0, 3);
+      if (profileLabels.length) return `${profileLabels.join(', ')}${Number(item.local || 0) > profileLabels.length ? ` +${Number(item.local || 0) - profileLabels.length}` : ''}`;
+    }
     if (labels.length) return `${labels.join(', ')}${Number(item.local || 0) > labels.length ? ` +${Number(item.local || 0) - labels.length}` : ''}`;
     if (item.label === 'Čekající smazání') {
       const outboxLabels = normalizeCloudOutbox(state.cloud?.outbox || []).map((entry) => entry.label || cloudOutboxCollectionLabel(entry)).filter(Boolean).slice(0, 3);
@@ -21111,6 +21203,7 @@
       householdUiRevision: '',
       householdUiConflict: null,
       recordConflicts: [],
+      profileArchiveOutbox: [],
       householdUiPendingAt: '',
       households: [],
       invitations: [],
@@ -22816,6 +22909,7 @@
         householdUiRevision: currentCloud.householdUiRevision || '',
         householdUiConflict: null,
         recordConflicts: [],
+        profileArchiveOutbox: normalizeProfileArchiveOutbox(currentCloud.profileArchiveOutbox || []),
         householdUiPendingAt: pendingAt,
         autosyncStatus: pendingAt ? 'pending' : 'idle',
         autosyncRetryAt: '',
