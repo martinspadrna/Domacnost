@@ -21078,6 +21078,8 @@
 
   function resetStandaloneHouseholdWorkspaceData() {
     state.loyaltyCards = [];
+    state.activeShoppingListId = '';
+    state.shoppingCatalogHidden = [];
     state.readingPrices = normalizeReadingPrices(DEFAULT_STATE.readingPrices);
     state.readingDeposits = normalizeReadingDeposits(DEFAULT_STATE.readingDeposits);
     state.readingBilling = normalizeReadingBilling(DEFAULT_STATE.readingBilling);
@@ -21107,6 +21109,8 @@
         theme: state.settings?.theme || 'light'
       },
       loyaltyCards: structuredCloneSafe(normalizeLoyaltyCards(state.loyaltyCards || [])),
+      activeShoppingListId: normalizeText(state.activeShoppingListId),
+      shoppingCatalogHidden: structuredCloneSafe(Array.isArray(state.shoppingCatalogHidden) ? state.shoppingCatalogHidden : []),
       loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud),
       readingPrices: structuredCloneSafe(state.readingPrices || DEFAULT_STATE.readingPrices),
       readingDeposits: structuredCloneSafe(state.readingDeposits || DEFAULT_STATE.readingDeposits),
@@ -22255,11 +22259,13 @@
       state.household = structuredCloneSafe(snapshot.household || state.household);
       state.profiles = structuredCloneSafe(snapshot.profiles || []);
       state.activeProfileId = snapshot.activeProfileId || state.profiles[0]?.id || '';
-      state.loyaltyCards = normalizeLoyaltyCards(snapshot.loyaltyCards || state.loyaltyCards || []);
-      state.loyaltyCardsCloud = structuredCloneSafe(snapshot.loyaltyCardsCloud || state.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud);
-      state.readingPrices = normalizeReadingPrices(snapshot.readingPrices || state.readingPrices);
-      state.readingDeposits = normalizeReadingDeposits(snapshot.readingDeposits || state.readingDeposits);
-      state.readingBilling = normalizeReadingBilling(snapshot.readingBilling || state.readingBilling);
+      state.loyaltyCards = normalizeLoyaltyCards(snapshot.loyaltyCards || []);
+      state.activeShoppingListId = normalizeText(snapshot.activeShoppingListId);
+      state.shoppingCatalogHidden = Array.isArray(snapshot.shoppingCatalogHidden) ? structuredCloneSafe(snapshot.shoppingCatalogHidden) : [];
+      state.loyaltyCardsCloud = structuredCloneSafe(snapshot.loyaltyCardsCloud || DEFAULT_STATE.loyaltyCardsCloud);
+      state.readingPrices = normalizeReadingPrices(snapshot.readingPrices || DEFAULT_STATE.readingPrices);
+      state.readingDeposits = normalizeReadingDeposits(snapshot.readingDeposits || DEFAULT_STATE.readingDeposits);
+      state.readingBilling = normalizeReadingBilling(snapshot.readingBilling || DEFAULT_STATE.readingBilling);
       state.financeTemplates = normalizeFinanceTemplates(snapshot.financeTemplates || []);
       state.pools = normalizePools(snapshot.pools || []);
       state.vape = normalizeVapeState(snapshot.vape || {});
