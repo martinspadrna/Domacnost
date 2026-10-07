@@ -18086,49 +18086,98 @@
     return data;
   }
 
-  async function cloudArchiveProfile(profile) {
-    if (!profile?.cloudId || !cloudReady()) return true;
+  async function cloudArchiveProfile(profile, options = {}) {
+    const cloudId = normalizeText(profile?.cloudId || options.cloudId);
+    const householdId = normalizeText(profile?.householdId || options.householdId || state.cloud?.householdId);
+    if (!cloudId || !householdId) return true;
+    if (!state.cloud?.userId) return false;
     const client = getSupabaseClient();
-    if (!client) return true;
-    const { error } = await client
+    if (!client) return false;
+    const archivePayload = { is_archived: true, updated_at: new Date().toISOString() };
+    const { data, error } = await client
       .from('profiles')
-      .update({ is_archived: true, updated_at: new Date().toISOString() })
-      .eq('id', profile.cloudId)
-      .eq('household_id', state.cloud.householdId);
+      .update(archivePayload)
+      .eq('id', cloudId)
+      .eq('household_id', householdId)
+      .select('id,is_archived')
+      .maybeSingle();
     if (error) {
-      showToast(error.message || 'Profil se nepovedlo smazat v cloudu');
+      if (options.showMessage !== false) showToast(error.message || 'Profil se nepovedlo smazat v cloudu');
       return false;
+    }
+    if (!data?.id) {
+      const { data: existing, error: verifyError } = await client
+        .from('profiles')
+        .select('id,is_archived')
+        .eq('id', cloudId)
+        .eq('household_id', householdId)
+        .maybeSingle();
+      if (verifyError) {
+        if (options.showMessage !== false) showToast(verifyError.message || 'Profil se nepovedlo ověřit v cloudu');
+        return false;
+      }
+      if (existing && existing.is_archived !== true) return false;
     }
     state.cloud.profilesLoadedAt = new Date().toISOString();
     state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
+  async function replayProfileArchiveOutbox(showMessage = false) {
+    let queue = profileArchiveOutbox();
+    if (!queue.length) return 0;
+    if (!state.cloud?.userId || !browserAppearsOnline()) return 0;
+    let archived = 0;
+    for (const entry of [...queue]) {
+      const ok = await cloudArchiveProfile(entry, { cloudId: entry.cloudId, householdId: entry.householdId, showMessage: false });
+      if (ok) {
+        archived += 1;
+        queue = queue.filter((item) => !(item.cloudId === entry.cloudId && item.householdId === entry.householdId));
+        state.cloud.profileArchiveOutbox = queue;
+        persistStateSnapshot({ immediate: true });
+        continue;
+      }
+      entry.attempts = Math.max(0, Number(entry.attempts || 0)) + 1;
+      entry.lastError = entry.lastError || 'Profil se zatím nepovedlo archivovat v cloudu';
+      entry.lastErrorCode = entry.lastErrorCode || '';
+      const retryMs = Math.min(300000, 3000 * (2 ** Math.min(entry.attempts, 6)));
+      entry.nextRetryAt = new Date(Date.now() + retryMs).toISOString();
+      state.cloud.lastAutosyncError = 'Profil se zatím nepovedlo archivovat v cloudu';
+      state.cloud.profileArchiveOutbox = normalizeProfileArchiveOutbox(queue);
+      persistStateSnapshot({ immediate: true });
+      break;
+    }
+    state.cloud.profileArchiveOutbox = normalizeProfileArchiveOutbox(queue);
+    state.cloud.localPendingCount = cloudLocalPendingCount();
+    if (!state.cloud.profileArchiveOutbox.length && !cloudHasBlockingConflict() && !cloudLocalPendingCount()) state.cloud.lastAutosyncError = '';
+    persistStateSnapshot({ immediate: true });
+    if (showMessage && archived) showToast(`Archivováno profilů: ${archived}`);
+    return archived;
+  }
+
   async function cloudSyncLocalProfiles(showMessage = false) {
     if (!cloudReady()) return 0;
+    const archived = await replayProfileArchiveOutbox(false);
     dedupeProfilesState();
     const existingKeys = new Set((state.profiles || []).filter((profile) => profile.cloudId).map(profileDedupeKey));
     const localProfiles = (state.profiles || []).filter((profile) => !profile.cloudId && !existingKeys.has(profileDedupeKey(profile)));
-    if (!localProfiles.length) {
-      touchState();
-      saveState();
-      if (showMessage) showToast('Žádné lokální profily k odeslání');
-      return 0;
-    }
-    let count = 0;
+    let added = 0;
     for (const profile of localProfiles) {
       try {
         const saved = await cloudAddProfile(profile);
-        if (saved?.id) count += 1;
+        if (saved?.id) added += 1;
       } catch (error) {
         console.warn('Cloud profile sync failed', error);
       }
     }
     dedupeProfilesState();
     touchState();
-    saveState();
-    if (showMessage) showToast(`Odesláno profilů: ${count}`);
-    return count;
+    saveState({ immediate: true, skipTrashTracking: true });
+    if (showMessage) {
+      const total = added + archived;
+      showToast(total ? `Zpracováno změn profilů: ${total}` : 'Žádné změny profilů k odeslání');
+    }
+    return added + archived;
   }
 
   async function addProfile(name, role = 'member') {
