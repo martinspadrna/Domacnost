@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_534';
-  const APP_BUILD = 534;
+  const APP_VERSION = 'Domácnost+ v.0.1_535';
+  const APP_BUILD = 535;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -21332,6 +21332,43 @@
       === JSON.stringify(canonicalComparableJson({ layout: remoteLayout, weather: remoteWeather }));
   }
 
+  function markHouseholdUiSnapshotChangesSince(snapshot, changedAt = new Date().toISOString()) {
+    if (householdUiSnapshotMatchesRemote(snapshot)) return [];
+    const pendingAt = Number.isFinite(Date.parse(changedAt || '')) ? changedAt : new Date().toISOString();
+    const changed = [];
+    const markSection = (name, keys, applyMark) => {
+      if (householdUiLayoutSectionsMatchRemote(snapshot, keys)) return;
+      applyMark();
+      changed.push(name);
+    };
+    markSection('subscriptions', ['subscriptionPeople', 'subscriptions', 'subscriptionPayments', 'subscriptionSettings'], () => {
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: state.subscriptionsCloud?.pendingAt || pendingAt };
+    });
+    markSection('readings', ['readingGroups', 'readingMeters', 'readings', 'readingPrices', 'readingDeposits', 'readingBilling'], () => {
+      state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt: state.readingsCloud?.pendingAt || pendingAt };
+    });
+    markSection('loyaltyCards', ['loyaltyCards'], () => {
+      state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: state.loyaltyCardsCloud?.pendingAt || pendingAt, errorAt: '', error: '' };
+    });
+    markSection('pools', ['pools'], () => {
+      state.poolCloud = { ...(state.poolCloud || {}), pendingAt: state.poolCloud?.pendingAt || pendingAt };
+    });
+    markSection('financeTemplates', ['financeTemplates'], () => {
+      state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: state.financeCloud?.templatesPendingAt || pendingAt };
+    });
+    markSection('financeLoans', ['financeLoans'], () => {
+      state.financeCloud = { ...(state.financeCloud || {}), loansPendingAt: state.financeCloud?.loansPendingAt || pendingAt };
+    });
+    state.cloud = {
+      ...(state.cloud || {}),
+      householdUiPendingAt: state.cloud?.householdUiPendingAt || pendingAt,
+      autosyncStatus: state.cloud?.autoSyncEnabled === false ? 'disabled' : 'pending',
+      autosyncRetryAt: '',
+      lastAutosyncError: ''
+    };
+    return changed;
+  }
+
   function reconcileConfirmedHouseholdUiPending(household) {
     const pendingAt = householdUiOldestPendingAt();
     if (!pendingAt) return false;
@@ -21967,25 +22004,34 @@
       return false;
     }
     const syncedAt = new Date().toISOString();
+    const sentSnapshotStillCurrent = householdUiSnapshotMatchesRemote(updatePayload);
     state.cloud = {
       ...(state.cloud || {}),
       lastSyncAt: syncedAt,
-      householdUiPendingAt: '',
+      householdUiPendingAt: sentSnapshotStillCurrent ? '' : (state.cloud?.householdUiPendingAt || syncedAt),
       householdUiRevision: normalizeText(data?.updated_at || nextRevision),
       householdUiConflict: null,
-      lastAutosyncError: ''
+      lastAutosyncError: '',
+      autosyncRetryAt: ''
     };
-    state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
-    state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
-    state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
-    state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: syncedAt, templatesPendingAt: '', loansLoadedAt: syncedAt, loansPendingAt: '' };
-    // householdUiPayload() posílá i state.pools při KAŽDÉM volání téhle funkce,
-    // ne jen když ho vyvolal pool.js - bez tohohle zůstal poolCloud.pendingAt
-    // uvízlý po úspěšném uložení z jiné funkce (předplatné, věrnostní karty...),
-    // takže merge z cloudu pak navždy preferoval lokální bazény.
-    state.poolCloud = { ...(state.poolCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+    if (sentSnapshotStillCurrent) {
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+      state.readingsCloud = { ...(state.readingsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+      state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+      state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: syncedAt, templatesPendingAt: '', loansLoadedAt: syncedAt, loansPendingAt: '' };
+      // householdUiPayload() posílá i state.pools při KAŽDÉM volání téhle funkce,
+      // ne jen když ho vyvolal pool.js - po potvrzeném shodném snapshotu lze
+      // bezpečně odblokovat i pending bazénu.
+      state.poolCloud = { ...(state.poolCloud || {}), loadedAt: syncedAt, pendingAt: '' };
+    } else {
+      // Během síťového zápisu mohl uživatel udělat další změnu. Odpověď pak
+      // potvrzuje pouze snapshot odeslaný na začátku requestu, ne novější
+      // lokální stav. Novější změny proto ponecháme ve frontě a pošleme znovu.
+      markHouseholdUiSnapshotChangesSince(updatePayload, syncedAt);
+    }
     saveState();
-    if (showMessage) showToast('Nastavení hlavní obrazovky uloženo do cloudu');
+    if (!sentSnapshotStillCurrent) scheduleCloudAutosync('household-ui-followup', { force: true, delayMs: 650 });
+    if (showMessage) showToast(sentSnapshotStillCurrent ? 'Nastavení hlavní obrazovky uloženo do cloudu' : 'Starší změna byla uložena, novější se ještě automaticky odešle');
     return true;
   }
 
@@ -23812,6 +23858,49 @@
       state.trash = previous.trash;
       state.cloud.autosyncStatus = previous.autosyncStatus;
       state.cloud.lastAutosyncError = previous.lastAutosyncError;
+      return result;
+    };
+    window.__DOMACNOST_E2E_HOUSEHOLD_SAVE_RACE__ = () => {
+      const previous = {
+        cloud: structuredCloneSafe(state.cloud || {}),
+        readingsCloud: structuredCloneSafe(state.readingsCloud || {}),
+        subscriptionsCloud: structuredCloneSafe(state.subscriptionsCloud || {}),
+        loyaltyCardsCloud: structuredCloneSafe(state.loyaltyCardsCloud || {}),
+        poolCloud: structuredCloneSafe(state.poolCloud || {}),
+        financeCloud: structuredCloneSafe(state.financeCloud || {}),
+        readingPrices: structuredCloneSafe(state.readingPrices || {})
+      };
+      const sent = householdUiPayload();
+      state.cloud = { ...(state.cloud || {}), householdUiPendingAt: '' };
+      state.readingsCloud = { ...(state.readingsCloud || {}), pendingAt: '' };
+      state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: '' };
+      state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: '' };
+      state.poolCloud = { ...(state.poolCloud || {}), pendingAt: '' };
+      state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: '', loansPendingAt: '' };
+      state.readingPrices = {
+        ...(state.readingPrices || {}),
+        electricityT1: Number(state.readingPrices?.electricityT1 || 0) + 0.123456
+      };
+      const beforeMarkMatches = householdUiSnapshotMatchesRemote(sent);
+      const changed = markHouseholdUiSnapshotChangesSince(sent, '2026-10-07T12:00:00.000Z');
+      const result = {
+        beforeMarkMatches,
+        changed,
+        householdPending: normalizeText(state.cloud?.householdUiPendingAt),
+        readingsPending: normalizeText(state.readingsCloud?.pendingAt),
+        subscriptionsPending: normalizeText(state.subscriptionsCloud?.pendingAt),
+        loyaltyPending: normalizeText(state.loyaltyCardsCloud?.pendingAt),
+        poolsPending: normalizeText(state.poolCloud?.pendingAt),
+        templatesPending: normalizeText(state.financeCloud?.templatesPendingAt),
+        loansPending: normalizeText(state.financeCloud?.loansPendingAt)
+      };
+      state.cloud = previous.cloud;
+      state.readingsCloud = previous.readingsCloud;
+      state.subscriptionsCloud = previous.subscriptionsCloud;
+      state.loyaltyCardsCloud = previous.loyaltyCardsCloud;
+      state.poolCloud = previous.poolCloud;
+      state.financeCloud = previous.financeCloud;
+      state.readingPrices = previous.readingPrices;
       return result;
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);

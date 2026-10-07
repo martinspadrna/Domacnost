@@ -88,6 +88,9 @@ if (app && finance) {
   expect(finance, "markFinanceCloudPending('sync-finance-account-failed')", 'finance.js: neúspěšný autosync účtu zachová trvalý pending marker.');
   expect(app, 'function householdUiLayoutSectionsMatchRemote', 'app.js: embedded household sekce mají bezpečné samostatné porovnání s cloudem.');
   expect(app, 'function reconcileConfirmedSnapshotSectionPendings', 'app.js: potvrzené snapshot sekce umí samostatně odblokovat stale pending marker.');
+  expect(app, 'function markHouseholdUiSnapshotChangesSince', 'app.js: potvrzení staršího household snapshotu zachová novější lokální změny vzniklé během requestu.');
+  expect(app, 'const sentSnapshotStillCurrent = householdUiSnapshotMatchesRemote(updatePayload);', 'app.js: po cloud potvrzení se ověřuje přesně snapshot, který byl skutečně odeslán.');
+  expect(app, "scheduleCloudAutosync('household-ui-followup'", 'app.js: novější household změna vzniklá během zápisu se automaticky zařadí k dalšímu odeslání.');
   expect(app, "reconcile('financeLoans'", 'app.js: section-level recovery zahrnuje i půjčky.');
   expect(app, 'reconcileConfirmedSnapshotSectionPendings(household);', 'app.js: household load spouští section-level recovery před konfliktem.');
 }
