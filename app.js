@@ -22648,16 +22648,20 @@
     if (!profile) return;
     const confirmed = window.confirm(`Smazat profil ${profile.name}? Data z modulů zůstanou uložená, jen už nebudou patřit aktivnímu profilu.`);
     if (!confirmed) return;
+    const queuedArchive = enqueueProfileArchive(profile);
     state.profiles = state.profiles.filter((item) => item.id !== id);
     if (state.activeProfileId === id) {
       state.activeProfileId = state.profiles[0]?.id || '';
       applyActiveProfileUiSettings();
     }
     touchState();
-    saveState();
+    saveState({ immediate: true, skipTrashTracking: true });
     render();
     showToast('Profil smazán');
-    syncUpdateToCloud(cloudArchiveProfile(profile));
+    if (queuedArchive) {
+      scheduleCloudAutosync('profile-archive', { force: true, delayMs: 500 });
+      syncUpdateToCloud(replayProfileArchiveOutbox(false));
+    }
   }
 
   function toggleModule(moduleId) {
