@@ -1916,6 +1916,7 @@ async function run() {
         extraPendingMerge: window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__?.(),
         shoppingPendingMerge: window.__DOMACNOST_E2E_SHOPPING_PENDING_MERGE__?.(),
         taskPendingMerge: window.__DOMACNOST_E2E_TASK_PENDING_MERGE__?.(),
+        garagePendingMerge: window.__DOMACNOST_E2E_GARAGE_PENDING_MERGE__?.(),
         financeLoanPending: window.__DOMACNOST_E2E_FINANCE_LOAN_PENDING__?.(),
         financePendingOverview: window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__?.(),
         financePendingCleanup: window.__DOMACNOST_E2E_FINANCE_PENDING_CLEANUP__?.(),
@@ -1937,6 +1938,7 @@ async function run() {
     const extraPendingMerge = householdBaselineValue.extraPendingMerge || [];
     const shoppingPendingMerge = householdBaselineValue.shoppingPendingMerge || {};
     const taskPendingMerge = householdBaselineValue.taskPendingMerge || {};
+    const garagePendingMerge = householdBaselineValue.garagePendingMerge || {};
     const financeLoanPending = householdBaselineValue.financeLoanPending || {};
     const financePendingOverview = householdBaselineValue.financePendingOverview || {};
     const financePendingCleanup = householdBaselineValue.financePendingCleanup || {};
@@ -1994,6 +1996,32 @@ async function run() {
       && taskPendingMerge.rowLocal === 2
       && taskPendingMerge.rowCloud === 1
       && JSON.stringify(taskPendingMerge.localIds || []) === JSON.stringify(['task-local-pending', 'task-local-only']);
+    const garageVehicles = Array.isArray(garagePendingMerge.vehicles) ? garagePendingMerge.vehicles : [];
+    const garageFuel = Array.isArray(garagePendingMerge.fuel) ? garagePendingMerge.fuel : [];
+    const garageServices = Array.isArray(garagePendingMerge.services) ? garagePendingMerge.services : [];
+    const garagePendingDurable = garageVehicles.length === 3
+      && garageFuel.length === 3
+      && garageServices.length === 3
+      && garageVehicles.find((item) => item.id === 'garage-vehicle-pending')?.name === 'Lokální auto'
+      && garageVehicles.find((item) => item.id === 'garage-vehicle-pending')?.odometer === '123456'
+      && garageVehicles.find((item) => item.id === 'garage-vehicle-pending')?.syncStatus === 'pending_update'
+      && garageVehicles.find((item) => item.id === 'garage-vehicle-local')?.syncStatus === 'pending_add'
+      && garageVehicles.find((item) => item.id === 'garage-vehicle-confirmed')?.name === 'Cloud auto'
+      && garageFuel.find((item) => item.id === 'garage-fuel-pending')?.liters === 44
+      && garageFuel.find((item) => item.id === 'garage-fuel-pending')?.price === 1500
+      && garageFuel.find((item) => item.id === 'garage-fuel-local')?.syncStatus === 'pending_add'
+      && garageServices.find((item) => item.id === 'garage-service-pending')?.title === 'Lokální servis'
+      && garageServices.find((item) => item.id === 'garage-service-pending')?.price === 2500
+      && garageServices.find((item) => item.id === 'garage-service-local')?.syncStatus === 'pending_add'
+      && garagePendingMerge.rowLocal === 6
+      && JSON.stringify(garagePendingMerge.localIds || []) === JSON.stringify([
+        'garage-fuel-local',
+        'garage-fuel-pending',
+        'garage-service-local',
+        'garage-service-pending',
+        'garage-vehicle-local',
+        'garage-vehicle-pending'
+      ]);
     const financeLoanPendingDurable = financeLoanPending.householdPending === true
       && financeLoanPending.count === 1
       && financeLoanPending.pendingAt === '2026-10-03T20:00:00.000Z'
@@ -2016,8 +2044,8 @@ async function run() {
       && snapshotSections.changedReadingsPending === '2026-06-29T12:00:00.000Z';
     const staleHouseholdUiCleared = householdUiPending.matchingCleared === true && householdUiPending.noPendingAfterMatch === true && !householdUiPending.errorAfterMatch;
     const changedHouseholdUiProtected = householdUiPending.changedCleared === false && householdUiPending.pendingAfterDifference === true;
-    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Finance účty, externí kalendář nebo snapshot sekce.');
-    else ok('Cloud: čekající změny Nákupů, úkolů a Finance zůstávají local-first do potvrzení a cloud reload je nepřepíše.');
+    if (householdBaselineValue.staleLocalRevision !== 'adopt' || householdBaselineValue.newerCloudRevision !== 'conflict' || !staleSubscriptionCleared || !changedSubscriptionProtected || !semanticSubscriptionIdsReconciled || !subscriptionModulePrepared || !providerCalendarArtifactsCleared || !providerCalendarPendingIgnored || !extraPendingPreserved || !shoppingPendingPreserved || !taskPendingPreserved || !garagePendingDurable || !financeLoanPendingDurable || !financeAccountPendingDurable || !financeStaleMarkerRecovered || !snapshotSectionsReconciled || !staleHouseholdUiCleared || !changedHouseholdUiProtected || householdBaselineValue.extras !== 2) fail('Cloud neumí bezpečně zachovat čekající Nákup, úkol, Garáž, Finance účty, externí kalendář nebo snapshot sekce.');
+    else ok('Cloud: čekající změny Nákupů, úkolů, Garáže a Finance zůstávají local-first do potvrzení a cloud reload je nepřepíše.');
 
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_SET_SYNC_FAILURE__?.()` });
     await new Promise((resolveWait) => setTimeout(resolveWait, 180));

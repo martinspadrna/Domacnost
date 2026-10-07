@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_532';
-  const APP_BUILD = 532;
+  const APP_VERSION = 'Domácnost+ v.0.1_533';
+  const APP_BUILD = 533;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -1267,7 +1267,7 @@
   let garageStatsVehicleId = '';
   let garageCalcVehicleId = '';
   let garageTripCalcResult = null;
-  let garageVehicleExtendedSchemaPending = false;
+  let garageVehicleExtendedSchemaPending = Boolean(state.cloud?.garageVehicleExtendedColumnsPending);
   let garageStatsPeriodFilter = 'last12';
   let garageStatsTypeFilter = 'all';
   let calendarViewMonth = localStorage.getItem('domacnostPlus.calendarViewMonth') || todayISO().slice(0, 7);
@@ -12483,6 +12483,47 @@
     return String(cloudValue);
   }
 
+  function markGarageRecordPending(item) {
+    if (!item) return item;
+    item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
+    return item;
+  }
+
+  function mergeGarageCloudItemsPreservingPending(localItems = [], cloudItems = []) {
+    const local = Array.isArray(localItems) ? localItems : [];
+    const pendingByCloudId = new Map(
+      local
+        .filter((item) => item?.cloudId && item.syncStatus)
+        .map((item) => [String(item.cloudId), item])
+    );
+    const usedPendingIds = new Set();
+    const mergedCloud = (Array.isArray(cloudItems) ? cloudItems : []).map((item) => {
+      const cloudId = String(item?.cloudId || '');
+      const pending = cloudId ? pendingByCloudId.get(cloudId) : null;
+      if (!pending) return item;
+      usedPendingIds.add(cloudId);
+      return pending;
+    });
+    const pendingMissingFromCloud = [...pendingByCloudId.entries()]
+      .filter(([cloudId]) => !usedPendingIds.has(cloudId))
+      .map(([, item]) => item);
+    const localOnly = local.filter((item) => !item?.cloudId);
+    return [...localOnly, ...mergedCloud, ...pendingMissingFromCloud];
+  }
+
+  function garageVehicleNeedsCloudSync(vehicle = {}) {
+    if (!vehicle.cloudId || vehicle.syncStatus) return true;
+    return Boolean(state.cloud?.garageVehicleExtendedColumnsPending && garageVehicleHasBackupData(vehicle));
+  }
+
+  function settleGarageExtendedSchemaPending() {
+    if (!state.cloud?.garageVehicleExtendedColumnsPending) return;
+    const stillPending = (state.vehicles || []).some((vehicle) => vehicle.cloudId && vehicle.syncStatus && garageVehicleHasBackupData(vehicle));
+    if (stillPending) return;
+    garageVehicleExtendedSchemaPending = false;
+    state.cloud.garageVehicleExtendedColumnsPending = false;
+  }
+
   function keepExistingGarageObject(cloudValue, existingValue = {}) {
     if (cloudValue && typeof cloudValue === 'object' && !Array.isArray(cloudValue) && Object.keys(cloudValue).length) return cloudValue;
     return existingValue && typeof existingValue === 'object' && !Array.isArray(existingValue) ? existingValue : {};
@@ -12786,7 +12827,11 @@
     if (!Number.isFinite(km) || km <= 0) return;
     const vehicle = state.vehicles.find((item) => item.id === vehicleId);
     if (!vehicle) return;
-    if (km > Number(vehicle.odometer || 0)) vehicle.odometer = String(km);
+    if (km > Number(vehicle.odometer || 0)) {
+      vehicle.odometer = String(km);
+      vehicle.updatedAt = new Date().toISOString();
+      markGarageRecordPending(vehicle);
+    }
   }
 
   // Servisní plán auta — položky jako olej, filtry, brzdy atd. s intervalem
@@ -16055,7 +16100,7 @@
         const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), source: 'fuelio', vehicleId, date: row.date, odometer: row.odometer, liters: row.liters, price: row.price, pricePerLiter: row.pricePerLiter || '', note: row.note };
         state.fuel.push(item);
         importedIds.fuel.push(item.id);
-        if (row.odometer && Number(row.odometer) > Number(vehicle.odometer || 0)) vehicle.odometer = String(row.odometer);
+        syncVehicleOdometerFromReading(vehicleId, row.odometer);
         importedFuel += 1;
       }
       if (row.kind === 'service') {
@@ -16113,16 +16158,21 @@
     vehicle.iconShape = normalizeVehicleIconShape(data.iconShape || vehicle.iconShape);
     vehicle.note = normalizeText(data.note);
     vehicle.updatedAt = new Date().toISOString();
+    markGarageRecordPending(vehicle);
     applyVehicleTechnicalFields(vehicle, data);
     rememberVehicleIconColor(vehicle);
     rememberVehicleIconShape(vehicle);
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast(garageVehicleExtendedSchemaPending ? 'Údaje auta uloženy. Nová pole se pošlou do cloudu po spuštění DB migrace.' : 'Údaje auta uloženy');
     syncUpdateToCloud((async () => {
       const cloudSaved = await cloudUpdateVehicle(vehicle);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
       if (cloudReady() && cloudSaved) await cloudSaveHouseholdUiSettings(false);
+      return cloudSaved;
     })());
   }
 
@@ -16138,14 +16188,21 @@
     item.pricePerLiter = fuelParts.pricePerLiter;
     item.note = normalizeText(data.note);
     item.updatedAt = new Date().toISOString();
+    markGarageRecordPending(item);
     syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
     garageEditRecord = null;
     garageModal = null;
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast('Tankování upraveno');
-    syncUpdateToCloud(cloudUpdateFuelLog(item));
+    syncUpdateToCloud((async () => {
+      const ok = await cloudUpdateFuelLog(item);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
+      return ok;
+    })());
   }
 
   async function updateServiceLog(id, data) {
@@ -16157,14 +16214,21 @@
     item.price = decimalValue(data.price);
     item.note = normalizeText(data.note);
     item.updatedAt = new Date().toISOString();
+    markGarageRecordPending(item);
     syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
     garageEditRecord = null;
     garageModal = null;
     touchState();
-    saveState();
+    saveState({ immediate: true });
     render();
     showToast('Servis upraven');
-    syncUpdateToCloud(cloudUpdateServiceLog(item));
+    syncUpdateToCloud((async () => {
+      const ok = await cloudUpdateServiceLog(item);
+      touchState();
+      saveState({ immediate: true });
+      requestBackgroundRender();
+      return ok;
+    })());
   }
 
 
@@ -16885,44 +16949,67 @@
   }
 
   async function cloudAddVehicle(vehicle) {
+    markGarageRecordPending(vehicle);
     const client = getSupabaseClient();
     if (!client || !state.cloud?.householdId) return null;
     const user = await refreshCloudSession(false);
     if (!user) return null;
     const payload = cloudVehiclePayload(vehicle, user.id);
+    let usedSchemaFallback = false;
     let { data, error } = await client.from('vehicles').insert(payload).select('id').single();
     if (error && isGarageVehicleExtendedSchemaError(error)) {
       markGarageVehicleExtendedSchemaPending();
+      usedSchemaFallback = true;
       const fallbackPayload = cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false });
       ({ data, error } = await client.from('vehicles').insert(fallbackPayload).select('id').single());
     }
-    if (error) {
-      showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
+    if (error || !data?.id) {
+      markGarageRecordPending(vehicle);
+      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
       return null;
     }
+    vehicle.cloudId = data.id;
+    vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : '';
     state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
   async function cloudUpdateVehicle(vehicle) {
+    if (!vehicle) return false;
+    markGarageRecordPending(vehicle);
     const client = getSupabaseClient();
-    if (!client || !vehicle?.cloudId || !state.cloud?.householdId) return true;
+    if (!client || !vehicle.cloudId || !state.cloud?.householdId) return false;
     const user = await refreshCloudSession(false);
     if (!user) return false;
     const payload = cloudVehiclePayload(vehicle, user.id, { mode: 'update' });
-    let { error } = await client.from('vehicles').update(payload).eq('id', vehicle.cloudId).eq('household_id', state.cloud.householdId);
+    let usedSchemaFallback = false;
+    let { data, error } = await client
+      .from('vehicles')
+      .update(payload)
+      .eq('id', vehicle.cloudId)
+      .eq('household_id', state.cloud.householdId)
+      .select('id')
+      .maybeSingle();
     if (error && isGarageVehicleExtendedSchemaError(error)) {
       markGarageVehicleExtendedSchemaPending();
+      usedSchemaFallback = true;
       const fallbackPayload = cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false, mode: 'update' });
-      ({ error } = await client.from('vehicles').update(fallbackPayload).eq('id', vehicle.cloudId).eq('household_id', state.cloud.householdId));
-      if (!error) return false;
+      ({ data, error } = await client
+        .from('vehicles')
+        .update(fallbackPayload)
+        .eq('id', vehicle.cloudId)
+        .eq('household_id', state.cloud.householdId)
+        .select('id')
+        .maybeSingle());
     }
-    if (error) {
-      showToast(error.message || 'Auto se nepovedlo aktualizovat v cloudu');
+    if (error || !data?.id) {
+      markGarageRecordPending(vehicle);
+      if (error) showToast(error.message || 'Auto se nepovedlo aktualizovat v cloudu');
       return false;
     }
+    vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : '';
     state.cloud.lastSyncAt = new Date().toISOString();
-    return true;
+    return !usedSchemaFallback;
   }
 
   async function cloudDeleteVehicle(vehicle) {
@@ -16938,6 +17025,7 @@
   }
 
   async function cloudAddFuelLog(item) {
+    markGarageRecordPending(item);
     const client = getSupabaseClient();
     if (!client || !state.cloud?.householdId) return null;
     const user = await refreshCloudSession(false);
@@ -16964,8 +17052,9 @@
       updated_by: user.id
     };
     const { data, error } = await client.from('fuel_logs').insert(payload).select('id').single();
-    if (error) {
-      if (!String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Tankování se nepovedlo uložit do cloudu');
+    if (error || !data?.id) {
+      markGarageRecordPending(item);
+      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Tankování se nepovedlo uložit do cloudu');
       return null;
     }
     item.cloudId = data.id;
@@ -16975,6 +17064,7 @@
   }
 
   async function cloudAddServiceLog(item) {
+    markGarageRecordPending(item);
     const client = getSupabaseClient();
     if (!client || !state.cloud?.householdId) return null;
     const user = await refreshCloudSession(false);
@@ -16998,8 +17088,9 @@
       updated_by: user.id
     };
     const { data, error } = await client.from('service_logs').insert(payload).select('id').single();
-    if (error) {
-      if (!String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Servis se nepovedlo uložit do cloudu');
+    if (error || !data?.id) {
+      markGarageRecordPending(item);
+      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Servis se nepovedlo uložit do cloudu');
       return null;
     }
     item.cloudId = data.id;
@@ -17010,8 +17101,10 @@
 
 
   async function cloudUpdateFuelLog(item) {
+    if (!item) return false;
+    markGarageRecordPending(item);
     const client = getSupabaseClient();
-    if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
+    if (!client || !item.cloudId || !state.cloud?.householdId) return false;
     const user = await refreshCloudSession(false);
     if (!user) return false;
     const liters = item.liters === '' || item.liters === undefined ? null : Number(item.liters);
@@ -17025,18 +17118,28 @@
       note: item.note || null,
       updated_by: user.id
     };
-    const { error } = await client.from('fuel_logs').update(payload).eq('id', item.cloudId).eq('household_id', state.cloud.householdId);
-    if (error) {
-      showToast(error.message || 'Tankování se nepovedlo upravit v cloudu');
+    const { data, error } = await client
+      .from('fuel_logs')
+      .update(payload)
+      .eq('id', item.cloudId)
+      .eq('household_id', state.cloud.householdId)
+      .select('id')
+      .maybeSingle();
+    if (error || !data?.id) {
+      markGarageRecordPending(item);
+      if (error) showToast(error.message || 'Tankování se nepovedlo upravit v cloudu');
       return false;
     }
+    item.syncStatus = '';
     state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
   async function cloudUpdateServiceLog(item) {
+    if (!item) return false;
+    markGarageRecordPending(item);
     const client = getSupabaseClient();
-    if (!client || !item?.cloudId || !state.cloud?.householdId) return true;
+    if (!client || !item.cloudId || !state.cloud?.householdId) return false;
     const user = await refreshCloudSession(false);
     if (!user) return false;
     const payload = {
@@ -17048,11 +17151,19 @@
       note: item.note || null,
       updated_by: user.id
     };
-    const { error } = await client.from('service_logs').update(payload).eq('id', item.cloudId).eq('household_id', state.cloud.householdId);
-    if (error) {
-      showToast(error.message || 'Servis se nepovedlo upravit v cloudu');
+    const { data, error } = await client
+      .from('service_logs')
+      .update(payload)
+      .eq('id', item.cloudId)
+      .eq('household_id', state.cloud.householdId)
+      .select('id')
+      .maybeSingle();
+    if (error || !data?.id) {
+      markGarageRecordPending(item);
+      if (error) showToast(error.message || 'Servis se nepovedlo upravit v cloudu');
       return false;
     }
+    item.syncStatus = '';
     state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
@@ -17116,55 +17227,53 @@
         iconColor: normalizeVehicleIconColor(existing.iconColor || vehicleIconColorFromSettings({ cloudId: vehicle.id, name: vehicle.name })),
         iconShape: normalizeVehicleIconShape(existing.iconShape || vehicleIconShapeFromSettings({ cloudId: vehicle.id, name: vehicle.name })),
         note: keepExistingGarageValue(vehicle.note, existing.note),
-        technicalSpecs: keepExistingGarageObject(vehicle.technical_specs, existing.technicalSpecs)
+        technicalSpecs: keepExistingGarageObject(vehicle.technical_specs, existing.technicalSpecs),
+        syncStatus: ''
       };
       applyVehicleTechnicalFields(item, Object.keys(item.technicalSpecs || {}).length ? { ...existing, ...item.technicalSpecs } : item);
       return item;
     });
-    const vehicleIdByCloud = new Map(cloudVehicles.map((vehicle) => [vehicle.cloudId, vehicle.id]));
-    const localVehicles = state.vehicles.filter((vehicle) => !vehicle.cloudId);
-    state.vehicles = [...localVehicles, ...cloudVehicles];
+    state.vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, cloudVehicles);
+    const vehicleIdByCloud = new Map(state.vehicles.filter((vehicle) => vehicle.cloudId).map((vehicle) => [vehicle.cloudId, vehicle.id]));
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
 
-    const localFuel = state.fuel.filter((item) => !item.cloudId);
-    state.fuel = [
-      ...localFuel,
-      ...(fuel || []).map((item) => ({
-        id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
-        cloudId: item.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
-        createdAt: item.created_at || new Date().toISOString(),
-        source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
-        vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
-        date: item.date || '',
-        odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
-        liters: item.liters === null || item.liters === undefined ? '' : Number(item.liters),
-        price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
-        pricePerLiter: item.price_per_liter === null || item.price_per_liter === undefined ? '' : Number(item.price_per_liter),
-        note: item.note || ''
-      })).filter((item) => item.vehicleId)
-    ];
+    const cloudFuel = (fuel || []).map((item) => ({
+      id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
+      cloudId: item.id,
+      householdId: currentHouseholdId(),
+      profileId: currentProfileId(),
+      createdAt: item.created_at || new Date().toISOString(),
+      updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+      source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
+      vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
+      date: item.date || '',
+      odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
+      liters: item.liters === null || item.liters === undefined ? '' : Number(item.liters),
+      price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
+      pricePerLiter: item.price_per_liter === null || item.price_per_liter === undefined ? '' : Number(item.price_per_liter),
+      note: item.note || '',
+      syncStatus: ''
+    })).filter((item) => item.vehicleId);
+    state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel);
 
-    const localServices = state.services.filter((item) => !item.cloudId);
-    state.services = [
-      ...localServices,
-      ...(services || []).map((item) => ({
-        id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
-        cloudId: item.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
-        createdAt: item.created_at || new Date().toISOString(),
-        source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
-        vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
-        date: item.date || '',
-        odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
-        title: item.title || 'Servis',
-        price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
-        note: item.note || ''
-      })).filter((item) => item.vehicleId)
-    ];
+    const cloudServices = (services || []).map((item) => ({
+      id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
+      cloudId: item.id,
+      householdId: currentHouseholdId(),
+      profileId: currentProfileId(),
+      createdAt: item.created_at || new Date().toISOString(),
+      updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+      source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
+      vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
+      date: item.date || '',
+      odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
+      title: item.title || 'Servis',
+      price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
+      note: item.note || '',
+      syncStatus: ''
+    })).filter((item) => item.vehicleId);
+    state.services = mergeGarageCloudItemsPreservingPending(state.services, cloudServices);
 
     if (!garageVehicleId && state.vehicles.length) garageVehicleId = state.vehicles[0].id;
     normalizeGarageRuntimeState({ persist: false });
@@ -17200,34 +17309,34 @@
       if (!vehicle.cloudId) {
         const cloudVehicle = await cloudAddVehicle(vehicle);
         if (cloudVehicle?.id) {
-          vehicle.cloudId = cloudVehicle.id;
           rememberVehicleIconColor(vehicle);
           rememberVehicleIconShape(vehicle);
           vehicles += 1;
         }
         continue;
       }
-      if (garageVehicleHasBackupData(vehicle)) {
+      if (garageVehicleNeedsCloudSync(vehicle)) {
         const ok = await cloudUpdateVehicle(vehicle);
         if (ok) vehicles += 1;
       }
     }
     for (const item of state.fuel.filter((entry) => fuelIds.has(entry.id))) {
-      if (!item.cloudId) {
-        const saved = await cloudAddFuelLog(item);
-        if (saved?.id) fuel += 1;
-      }
+      const saved = item.cloudId
+        ? item.syncStatus ? await cloudUpdateFuelLog(item) : true
+        : await cloudAddFuelLog(item);
+      if (saved?.id || saved === true) fuel += 1;
     }
     for (const item of state.services.filter((entry) => serviceIds.has(entry.id))) {
-      if (!item.cloudId) {
-        const saved = await cloudAddServiceLog(item);
-        if (saved?.id) services += 1;
-      }
+      const saved = item.cloudId
+        ? item.syncStatus ? await cloudUpdateServiceLog(item) : true
+        : await cloudAddServiceLog(item);
+      if (saved?.id || saved === true) services += 1;
     }
+    settleGarageExtendedSchemaPending();
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
     touchState();
-    saveState();
+    saveState({ immediate: true });
     if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
     return { vehicles, fuel, services };
   }
@@ -17239,37 +17348,32 @@
     let fuel = 0;
     let services = 0;
     for (const vehicle of state.vehicles) {
+      if (!garageVehicleNeedsCloudSync(vehicle)) continue;
       if (!vehicle.cloudId) {
         const cloudVehicle = await cloudAddVehicle(vehicle);
         if (cloudVehicle?.id) {
-          vehicle.cloudId = cloudVehicle.id;
           rememberVehicleIconColor(vehicle);
           rememberVehicleIconShape(vehicle);
           vehicles += 1;
         }
         continue;
       }
-      if (garageVehicleHasBackupData(vehicle)) {
-        const ok = await cloudUpdateVehicle(vehicle);
-        if (ok) vehicles += 1;
-      }
+      const ok = await cloudUpdateVehicle(vehicle);
+      if (ok) vehicles += 1;
     }
-    for (const item of state.fuel) {
-      if (!item.cloudId) {
-        const saved = await cloudAddFuelLog(item);
-        if (saved?.id) fuel += 1;
-      }
+    for (const item of state.fuel.filter((entry) => !entry.cloudId || entry.syncStatus)) {
+      const saved = item.cloudId ? await cloudUpdateFuelLog(item) : await cloudAddFuelLog(item);
+      if (saved?.id || saved === true) fuel += 1;
     }
-    for (const item of state.services) {
-      if (!item.cloudId) {
-        const saved = await cloudAddServiceLog(item);
-        if (saved?.id) services += 1;
-      }
+    for (const item of state.services.filter((entry) => !entry.cloudId || entry.syncStatus)) {
+      const saved = item.cloudId ? await cloudUpdateServiceLog(item) : await cloudAddServiceLog(item);
+      if (saved?.id || saved === true) services += 1;
     }
+    settleGarageExtendedSchemaPending();
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
     touchState();
-    saveState();
+    saveState({ immediate: true });
     if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
     render();
     const suffix = garageVehicleExtendedSchemaPending ? ' · nová pole čekají na Supabase migraci/schema reload' : '';
@@ -17524,7 +17628,8 @@
           iconShape: normalizeVehicleIconShape(data.iconShape),
           nextServiceKm: '',
           nextServiceDate: '',
-          note: ''
+          note: '',
+          syncStatus: 'pending_add'
         };
         applyVehicleTechnicalFields(vehicle, data);
         state.vehicles.push(vehicle);
@@ -17570,7 +17675,7 @@
           input?.focus?.();
           return;
         }
-        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, liters: fuelParts.liters, price: fuelParts.price, pricePerLiter: fuelParts.pricePerLiter, note: data.note };
+        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, liters: fuelParts.liters, price: fuelParts.price, pricePerLiter: fuelParts.pricePerLiter, note: data.note, syncStatus: 'pending_add' };
         state.fuel.push(item);
         syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
         garageModal = null;
@@ -17582,7 +17687,7 @@
         syncNewItemToCloud(cloudAddFuelLog(item), item);
       },
       'add-service': async () => {
-        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, title: data.title, price: decimalValue(data.price), note: data.note };
+        const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), vehicleId: form.dataset.vehicleId, date: data.date, odometer: data.odometer, title: data.title, price: decimalValue(data.price), note: data.note, syncStatus: 'pending_add' };
         state.services.push(item);
         syncVehicleOdometerFromReading(item.vehicleId, item.odometer);
         garageModal = null;
@@ -24033,6 +24138,50 @@
         localIds: (row.localItems || []).map((item) => item.id)
       };
       state.homeTasks = previousTasks;
+      return result;
+    };
+    window.__DOMACNOST_E2E_GARAGE_PENDING_MERGE__ = () => {
+      const previousVehicles = structuredCloneSafe(state.vehicles || []);
+      const previousFuel = structuredCloneSafe(state.fuel || []);
+      const previousServices = structuredCloneSafe(state.services || []);
+      state.vehicles = [
+        { id: 'garage-vehicle-pending', cloudId: 'garage-vehicle-cloud-1', name: 'Lokální auto', odometer: '123456', syncStatus: 'pending_update', updatedAt: '2026-10-06T18:00:00.000Z' },
+        { id: 'garage-vehicle-local', cloudId: '', name: 'Offline auto', odometer: '50000', syncStatus: 'pending_add', updatedAt: '2026-10-06T18:01:00.000Z' }
+      ];
+      state.fuel = [
+        { id: 'garage-fuel-pending', cloudId: 'garage-fuel-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-06', liters: 44, price: 1500, syncStatus: 'pending_update', updatedAt: '2026-10-06T18:02:00.000Z' },
+        { id: 'garage-fuel-local', cloudId: '', vehicleId: 'garage-vehicle-local', date: '2026-10-06', liters: 30, price: 1000, syncStatus: 'pending_add', updatedAt: '2026-10-06T18:03:00.000Z' }
+      ];
+      state.services = [
+        { id: 'garage-service-pending', cloudId: 'garage-service-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-05', title: 'Lokální servis', price: 2500, syncStatus: 'pending_update', updatedAt: '2026-10-06T18:04:00.000Z' },
+        { id: 'garage-service-local', cloudId: '', vehicleId: 'garage-vehicle-local', date: '2026-10-05', title: 'Offline servis', price: 900, syncStatus: 'pending_add', updatedAt: '2026-10-06T18:05:00.000Z' }
+      ];
+      const vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, [
+        { id: 'garage-vehicle-cloudcopy', cloudId: 'garage-vehicle-cloud-1', name: 'Stará cloud verze auta', odometer: '100000', syncStatus: '' },
+        { id: 'garage-vehicle-confirmed', cloudId: 'garage-vehicle-cloud-2', name: 'Cloud auto', odometer: '90000', syncStatus: '' }
+      ]);
+      const fuel = mergeGarageCloudItemsPreservingPending(state.fuel, [
+        { id: 'garage-fuel-cloudcopy', cloudId: 'garage-fuel-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-06', liters: 20, price: 700, syncStatus: '' },
+        { id: 'garage-fuel-confirmed', cloudId: 'garage-fuel-cloud-2', vehicleId: 'garage-vehicle-confirmed', date: '2026-10-04', liters: 40, price: 1300, syncStatus: '' }
+      ]);
+      const services = mergeGarageCloudItemsPreservingPending(state.services, [
+        { id: 'garage-service-cloudcopy', cloudId: 'garage-service-cloud-1', vehicleId: 'garage-vehicle-pending', date: '2026-10-05', title: 'Stará cloud verze servisu', price: 1000, syncStatus: '' },
+        { id: 'garage-service-confirmed', cloudId: 'garage-service-cloud-2', vehicleId: 'garage-vehicle-confirmed', date: '2026-10-03', title: 'Cloud servis', price: 1800, syncStatus: '' }
+      ]);
+      state.vehicles = vehicles;
+      state.fuel = fuel;
+      state.services = services;
+      const row = getCloudSyncOverviewItems().find((item) => item.nav === 'garage' && item.label === 'Garáž') || {};
+      const result = {
+        vehicles: vehicles.map((item) => ({ id: item.id, cloudId: item.cloudId || '', name: item.name || '', odometer: item.odometer || '', syncStatus: item.syncStatus || '' })),
+        fuel: fuel.map((item) => ({ id: item.id, cloudId: item.cloudId || '', liters: Number(item.liters || 0), price: Number(item.price || 0), syncStatus: item.syncStatus || '' })),
+        services: services.map((item) => ({ id: item.id, cloudId: item.cloudId || '', title: item.title || '', price: Number(item.price || 0), syncStatus: item.syncStatus || '' })),
+        rowLocal: Number(row.local || 0),
+        localIds: (row.localItems || []).map((item) => item.id).sort()
+      };
+      state.vehicles = previousVehicles;
+      state.fuel = previousFuel;
+      state.services = previousServices;
       return result;
     };
     window.__DOMACNOST_E2E_EXTRA_PENDING_MERGE__ = () => {
