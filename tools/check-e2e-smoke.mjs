@@ -2041,7 +2041,7 @@ async function run() {
       && garageClearPayload.sale_odometer === null
       && garageClearPayload.insurance_contract_id === null
       && garageClearPayload.technical_specs
-      && Object.keys(garageClearPayload.technical_specs).length === 0
+      && Object.values(garageClearPayload.technical_specs).every((value) => !String(value || '').trim())
       && garageClearSemantics.nullText === ''
       && garageClearSemantics.emptyText === ''
       && garageClearSemantics.missingText === 'STARÁ'
