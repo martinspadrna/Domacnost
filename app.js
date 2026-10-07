@@ -22445,19 +22445,19 @@
   async function cloudLoadProfilesForCurrentHousehold() {
     const client = getSupabaseClient();
     if (!client || !state.cloud?.householdId) return false;
+    const householdId = state.cloud.householdId;
     const previousActive = state.profiles?.find((profile) => profile.id === state.activeProfileId) || null;
     const { data, error } = await client
       .from('profiles')
       .select('id, name, user_id, avatar_emoji, color, is_default, created_at')
-      .eq('household_id', state.cloud.householdId)
+      .eq('household_id', householdId)
       .eq('is_archived', false)
       .order('created_at', { ascending: true });
     if (error) return false;
-    if (!data?.length) return false;
-    state.profiles = dedupeProfiles(data.map((profile, index) => ({
+    const cloudProfiles = (data || []).map((profile, index) => ({
       id: profile.id,
       cloudId: profile.id,
-      householdId: state.cloud.householdId,
+      householdId,
       name: profile.name || `Profil ${index + 1}`,
       avatarEmoji: profile.avatar_emoji || '🙂',
       color: profile.color || ['blue', 'green', 'violet', 'orange'][index % 4],
@@ -22465,8 +22465,12 @@
       userId: profile.user_id || '',
       isDefault: Boolean(profile.is_default),
       createdAt: profile.created_at || new Date().toISOString()
-    })), { activeProfileId: state.activeProfileId });
+    }));
+    const merged = mergeProfileCloudItemsPreservingPending(cloudProfiles, householdId);
+    if (!merged.length) return false;
+    state.profiles = merged;
     const preserved = state.profiles.find((profile) => profile.cloudId && profile.cloudId === previousActive?.cloudId)
+      || state.profiles.find((profile) => profile.id === previousActive?.id)
       || state.profiles.find((profile) => normalizeText(profile.name).toLowerCase() === normalizeText(previousActive?.name).toLowerCase())
       || state.profiles.find((profile) => profile.isDefault)
       || state.profiles[0];
