@@ -16100,7 +16100,7 @@
         const item = { id: uid(), householdId: currentHouseholdId(), profileId: currentProfileId(), createdAt: new Date().toISOString(), source: 'fuelio', vehicleId, date: row.date, odometer: row.odometer, liters: row.liters, price: row.price, pricePerLiter: row.pricePerLiter || '', note: row.note };
         state.fuel.push(item);
         importedIds.fuel.push(item.id);
-        if (row.odometer && Number(row.odometer) > Number(vehicle.odometer || 0)) vehicle.odometer = String(row.odometer);
+        syncVehicleOdometerFromReading(vehicleId, row.odometer);
         importedFuel += 1;
       }
       if (row.kind === 'service') {
@@ -17208,55 +17208,53 @@
         iconColor: normalizeVehicleIconColor(existing.iconColor || vehicleIconColorFromSettings({ cloudId: vehicle.id, name: vehicle.name })),
         iconShape: normalizeVehicleIconShape(existing.iconShape || vehicleIconShapeFromSettings({ cloudId: vehicle.id, name: vehicle.name })),
         note: keepExistingGarageValue(vehicle.note, existing.note),
-        technicalSpecs: keepExistingGarageObject(vehicle.technical_specs, existing.technicalSpecs)
+        technicalSpecs: keepExistingGarageObject(vehicle.technical_specs, existing.technicalSpecs),
+        syncStatus: ''
       };
       applyVehicleTechnicalFields(item, Object.keys(item.technicalSpecs || {}).length ? { ...existing, ...item.technicalSpecs } : item);
       return item;
     });
-    const vehicleIdByCloud = new Map(cloudVehicles.map((vehicle) => [vehicle.cloudId, vehicle.id]));
-    const localVehicles = state.vehicles.filter((vehicle) => !vehicle.cloudId);
-    state.vehicles = [...localVehicles, ...cloudVehicles];
+    state.vehicles = mergeGarageCloudItemsPreservingPending(state.vehicles, cloudVehicles);
+    const vehicleIdByCloud = new Map(state.vehicles.filter((vehicle) => vehicle.cloudId).map((vehicle) => [vehicle.cloudId, vehicle.id]));
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
 
-    const localFuel = state.fuel.filter((item) => !item.cloudId);
-    state.fuel = [
-      ...localFuel,
-      ...(fuel || []).map((item) => ({
-        id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
-        cloudId: item.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
-        createdAt: item.created_at || new Date().toISOString(),
-        source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
-        vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
-        date: item.date || '',
-        odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
-        liters: item.liters === null || item.liters === undefined ? '' : Number(item.liters),
-        price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
-        pricePerLiter: item.price_per_liter === null || item.price_per_liter === undefined ? '' : Number(item.price_per_liter),
-        note: item.note || ''
-      })).filter((item) => item.vehicleId)
-    ];
+    const cloudFuel = (fuel || []).map((item) => ({
+      id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
+      cloudId: item.id,
+      householdId: currentHouseholdId(),
+      profileId: currentProfileId(),
+      createdAt: item.created_at || new Date().toISOString(),
+      updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+      source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
+      vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
+      date: item.date || '',
+      odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
+      liters: item.liters === null || item.liters === undefined ? '' : Number(item.liters),
+      price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
+      pricePerLiter: item.price_per_liter === null || item.price_per_liter === undefined ? '' : Number(item.price_per_liter),
+      note: item.note || '',
+      syncStatus: ''
+    })).filter((item) => item.vehicleId);
+    state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel);
 
-    const localServices = state.services.filter((item) => !item.cloudId);
-    state.services = [
-      ...localServices,
-      ...(services || []).map((item) => ({
-        id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
-        cloudId: item.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
-        createdAt: item.created_at || new Date().toISOString(),
-        source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
-        vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
-        date: item.date || '',
-        odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
-        title: item.title || 'Servis',
-        price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
-        note: item.note || ''
-      })).filter((item) => item.vehicleId)
-    ];
+    const cloudServices = (services || []).map((item) => ({
+      id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
+      cloudId: item.id,
+      householdId: currentHouseholdId(),
+      profileId: currentProfileId(),
+      createdAt: item.created_at || new Date().toISOString(),
+      updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+      source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
+      vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
+      date: item.date || '',
+      odometer: item.odometer === null || item.odometer === undefined ? '' : String(item.odometer),
+      title: item.title || 'Servis',
+      price: item.total_price === null || item.total_price === undefined ? '' : Number(item.total_price),
+      note: item.note || '',
+      syncStatus: ''
+    })).filter((item) => item.vehicleId);
+    state.services = mergeGarageCloudItemsPreservingPending(state.services, cloudServices);
 
     if (!garageVehicleId && state.vehicles.length) garageVehicleId = state.vehicles[0].id;
     normalizeGarageRuntimeState({ persist: false });
@@ -17292,34 +17290,34 @@
       if (!vehicle.cloudId) {
         const cloudVehicle = await cloudAddVehicle(vehicle);
         if (cloudVehicle?.id) {
-          vehicle.cloudId = cloudVehicle.id;
           rememberVehicleIconColor(vehicle);
           rememberVehicleIconShape(vehicle);
           vehicles += 1;
         }
         continue;
       }
-      if (garageVehicleHasBackupData(vehicle)) {
+      if (garageVehicleNeedsCloudSync(vehicle)) {
         const ok = await cloudUpdateVehicle(vehicle);
         if (ok) vehicles += 1;
       }
     }
     for (const item of state.fuel.filter((entry) => fuelIds.has(entry.id))) {
-      if (!item.cloudId) {
-        const saved = await cloudAddFuelLog(item);
-        if (saved?.id) fuel += 1;
-      }
+      const saved = item.cloudId
+        ? item.syncStatus ? await cloudUpdateFuelLog(item) : true
+        : await cloudAddFuelLog(item);
+      if (saved?.id || saved === true) fuel += 1;
     }
     for (const item of state.services.filter((entry) => serviceIds.has(entry.id))) {
-      if (!item.cloudId) {
-        const saved = await cloudAddServiceLog(item);
-        if (saved?.id) services += 1;
-      }
+      const saved = item.cloudId
+        ? item.syncStatus ? await cloudUpdateServiceLog(item) : true
+        : await cloudAddServiceLog(item);
+      if (saved?.id || saved === true) services += 1;
     }
+    settleGarageExtendedSchemaPending();
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
     touchState();
-    saveState();
+    saveState({ immediate: true });
     if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
     return { vehicles, fuel, services };
   }
@@ -17331,37 +17329,32 @@
     let fuel = 0;
     let services = 0;
     for (const vehicle of state.vehicles) {
+      if (!garageVehicleNeedsCloudSync(vehicle)) continue;
       if (!vehicle.cloudId) {
         const cloudVehicle = await cloudAddVehicle(vehicle);
         if (cloudVehicle?.id) {
-          vehicle.cloudId = cloudVehicle.id;
           rememberVehicleIconColor(vehicle);
           rememberVehicleIconShape(vehicle);
           vehicles += 1;
         }
         continue;
       }
-      if (garageVehicleHasBackupData(vehicle)) {
-        const ok = await cloudUpdateVehicle(vehicle);
-        if (ok) vehicles += 1;
-      }
+      const ok = await cloudUpdateVehicle(vehicle);
+      if (ok) vehicles += 1;
     }
-    for (const item of state.fuel) {
-      if (!item.cloudId) {
-        const saved = await cloudAddFuelLog(item);
-        if (saved?.id) fuel += 1;
-      }
+    for (const item of state.fuel.filter((entry) => !entry.cloudId || entry.syncStatus)) {
+      const saved = item.cloudId ? await cloudUpdateFuelLog(item) : await cloudAddFuelLog(item);
+      if (saved?.id || saved === true) fuel += 1;
     }
-    for (const item of state.services) {
-      if (!item.cloudId) {
-        const saved = await cloudAddServiceLog(item);
-        if (saved?.id) services += 1;
-      }
+    for (const item of state.services.filter((entry) => !entry.cloudId || entry.syncStatus)) {
+      const saved = item.cloudId ? await cloudUpdateServiceLog(item) : await cloudAddServiceLog(item);
+      if (saved?.id || saved === true) services += 1;
     }
+    settleGarageExtendedSchemaPending();
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
     touchState();
-    saveState();
+    saveState({ immediate: true });
     if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
     render();
     const suffix = garageVehicleExtendedSchemaPending ? ' · nová pole čekají na Supabase migraci/schema reload' : '';
