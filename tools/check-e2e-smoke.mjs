@@ -1919,6 +1919,7 @@ async function run() {
         subscriptionPending: window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__?.(),
         subscriptionDiagnostic: window.__DOMACNOST_E2E_SUBSCRIPTION_PENDING_DIAGNOSTIC__?.(),
         singleSubscriptionPaymentPlan: window.__DOMACNOST_E2E_SINGLE_SUBSCRIPTION_PAYMENT_PLAN__?.(),
+        subscriptionReadThrough: window.__DOMACNOST_E2E_SUBSCRIPTION_READ_THROUGH__?.(),
         subscriptionSemantic: window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__?.(),
         pendingSubscriptionModules: window.__DOMACNOST_E2E_PENDING_MODULE_IDS__?.([{ nav: 'subscriptions', local: 1 }]),
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
@@ -1946,6 +1947,9 @@ async function run() {
     const subscriptionPending = householdBaselineValue.subscriptionPending || {};
     const subscriptionDiagnostic = householdBaselineValue.subscriptionDiagnostic || {};
     const paymentPlan = householdBaselineValue.singleSubscriptionPaymentPlan || {};
+    const subscriptionReadThrough = householdBaselineValue.subscriptionReadThrough || {};
+    if (Object.values(subscriptionReadThrough).length !== 8 || !subscriptionReadThrough.blockedPending || !subscriptionReadThrough.accepted || !subscriptionReadThrough.once || !subscriptionReadThrough.localPendingUntouched || subscriptionReadThrough.acceptedCount !== 2 || !subscriptionReadThrough.changedBlocked || !subscriptionReadThrough.foreignBlocked || !subscriptionReadThrough.localOnlyBlocked) fail('Předplatné: cloudové read-through nesmí ztratit lokální změny ani ignorovat konflikty.');
+    else ok('Předplatné: cloudové read-through doplní novou platbu navzdory jiné pending sekci a nezmění konfliktní data.');
     if (!paymentPlan.recoverable || !paymentPlan.duplicatesBlocked || !paymentPlan.conflictBlocked || !paymentPlan.householdBlocked || !paymentPlan.sameBlocked || !paymentPlan.brokenReferenceBlocked) fail('Předplatné: obnova jedné platby nechrání proti duplicitě, konfliktu nebo změně domácnosti.');
     else ok('Předplatné: bezpečná obnova jedné platby hlídá duplicity, změny dat i izolaci domácnosti.');
     const subscriptionSemantic = householdBaselineValue.subscriptionSemantic || {};
