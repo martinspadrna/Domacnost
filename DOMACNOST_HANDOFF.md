@@ -29,6 +29,7 @@ Aktualizováno: 14. 10. 2026. Na začátku nového chatu načíst celý tento so
 - [ ] Uživatelský fyzický test: Předplatné Netflix 1/2 a OnePlay, čekající změna 29. 6. 2026; po přihlášení nebo restartu ověřit, zda skutečně sedí cloud snapshot; pokud ne, zachovat konflikt a vyžádat anonymizovaný rozdíl
 - [ ] Dvě zařízení: souběžná editace, skutečný konflikt, restart a offline → online
 - [ ] Finance: kompletní P0 audit všech pending markerů a jejich zachování při souběžných úpravách
+- [ ] **P0 vysoká priorita:** `finance.js` / `cloudUpdateFinanceAccount` vrací `true` při chybějícím klientovi nebo domácnosti a používá `UPDATE` bez potvrzení změněného řádku i bez CAS. Může chybně potvrdit `syncStatus` a skrýt neodeslaná data. U `cloudUpdateFinance` je obdobný předčasný `true` guard. Nejdřív ověřit DB schéma `finance_accounts` a revize (Supabase připojení zde zobrazuje jen jiné projekty); pak bezpečně upravit s testy. Nesahat do cizí Supabase.
 - [ ] Mobil Safari iPhone, Android Chrome, desktop; regresní smoke ostatních modulů
 - [ ] Prověřit i `cloudSyncLocalPendingData`, které může aktualizovat `lastSyncAt` během neúplného syncu
 - [ ] Až po fyzickém schválení bezpečně nasadit do produkce
