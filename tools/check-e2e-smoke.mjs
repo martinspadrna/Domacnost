@@ -1918,6 +1918,7 @@ async function run() {
         newerCloudRevision: window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__?.('2026-09-20T08:00:00.000Z', '2026-09-16T08:00:00.000Z'),
         subscriptionPending: window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__?.(),
         subscriptionDiagnostic: window.__DOMACNOST_E2E_SUBSCRIPTION_PENDING_DIAGNOSTIC__?.(),
+        singleSubscriptionPaymentPlan: window.__DOMACNOST_E2E_SINGLE_SUBSCRIPTION_PAYMENT_PLAN__?.(),
         subscriptionSemantic: window.__DOMACNOST_E2E_SUBSCRIPTION_SEMANTIC_MATCH__?.(),
         pendingSubscriptionModules: window.__DOMACNOST_E2E_PENDING_MODULE_IDS__?.([{ nav: 'subscriptions', local: 1 }]),
         providerCalendarRecovery: window.__DOMACNOST_E2E_PROVIDER_CALENDAR_RECOVERY__?.(),
@@ -1944,6 +1945,9 @@ async function run() {
     const householdBaselineValue = householdBaselineCheck.result?.value || {};
     const subscriptionPending = householdBaselineValue.subscriptionPending || {};
     const subscriptionDiagnostic = householdBaselineValue.subscriptionDiagnostic || {};
+    const paymentPlan = householdBaselineValue.singleSubscriptionPaymentPlan || {};
+    if (!paymentPlan.recoverable || !paymentPlan.duplicatesBlocked || !paymentPlan.conflictBlocked || !paymentPlan.householdBlocked || !paymentPlan.sameBlocked || !paymentPlan.brokenReferenceBlocked) fail('Předplatné: obnova jedné platby nechrání proti duplicitě, konfliktu nebo změně domácnosti.');
+    else ok('Předplatné: bezpečná obnova jedné platby hlídá duplicity, změny dat i izolaci domácnosti.');
     const subscriptionSemantic = householdBaselineValue.subscriptionSemantic || {};
     if (subscriptionDiagnostic.same !== true || subscriptionDiagnostic.changed !== false || subscriptionDiagnostic.reportsDifferent !== true) fail('Cloud: diagnostika Předplatného neodhalila rozdíly.');
     else ok('Cloud: Předplatné lze porovnat bezpečně bez přepsání rozdílných dat.');

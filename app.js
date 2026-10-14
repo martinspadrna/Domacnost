@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_538';
-  const APP_BUILD = 538;
+  const APP_VERSION = 'Domácnost+ v.0.1_539';
+  const APP_BUILD = 539;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18455,6 +18455,7 @@
 
   let subscriptionCloudDiagnosticReport = '';
   let subscriptionCloudDiagnosticHouseholdId = '';
+  let subscriptionCloudRecoveryAvailable = false;
 
   async function diagnoseSubscriptionPending() {
     if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
@@ -18471,6 +18472,7 @@
       if (error) throw error;
       if (!data) throw new Error('Domácnost v cloudu nenalezena');
       const result = subscriptionPendingDiagnosticSummary(householdUiRemoteLayout(data));
+      subscriptionCloudRecoveryAvailable = Boolean(!cloudHasBlockingConflict() && subscriptionPaymentRecoveryCandidate(householdUiRemoteLayout(data)));
       if (result.matched && reconcileConfirmedSubscriptionPending(data)) {
         touchState();
         persistStateSnapshot({ immediate: true });
@@ -18484,10 +18486,101 @@
       }
     } catch (error) {
       if (state.cloud?.householdId !== householdId) return;
+      subscriptionCloudRecoveryAvailable = false;
       subscriptionCloudDiagnosticReport = 'Ověření selhalo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální data zůstala nedotčená.';
     }
+    if (subscriptionCloudRecoveryAvailable) subscriptionCloudDiagnosticReport += ' Je možné bezpečně zkusit doplnit jedinou chybějící platbu.';
     subscriptionCloudDiagnosticHouseholdId = householdId;
     requestBackgroundRender();
+  }
+
+
+  async function recoverSingleMissingSubscriptionPayment() {
+    if (!cloudReady() || !state.subscriptionsCloud?.pendingAt || cloudHasBlockingConflict()) {
+      return showToast('Obnova není dostupná, dokud se neověří čekající změny a konflikty');
+    }
+    if (!window.confirm('Doplnit jednu chybějící platbu do cloudu? Před zápisem se znovu ověří všechna data Předplatného a revize cloudu. Žádná stávající platba se nenahradí.')) return;
+    const householdId = state.cloud.householdId;
+    return enqueueHouseholdUiSave(async () => {
+      if (!cloudReady() || state.cloud?.householdId !== householdId
+          || cloudHasBlockingConflict() || !state.subscriptionsCloud?.pendingAt) return false;
+      try {
+        await ensureHouseholdUiSyncDependencies();
+        const client = getSupabaseClient();
+        if (!client) throw new Error('Cloudové připojení není dostupné');
+        const { data: remote, error: loadError } = await client.from('households')
+          .select('updated_at, dashboard_layout, weather_location').eq('id', householdId).maybeSingle();
+        if (state.cloud?.householdId !== householdId) return false;
+        if (loadError) throw loadError;
+        const layout = householdUiRemoteLayout(remote);
+        const revision = householdUiRemoteRevision(remote);
+        const planned = subscriptionPaymentRecoveryCandidate(layout);
+        if (!planned || !Number.isFinite(Date.parse(revision))) {
+          subscriptionCloudDiagnosticReport = 'Data se mezitím změnila, nebo nejde ověřit jedinou chybějící platbu. Nic nebylo zapsáno. Spusť znovu Prověřit Předplatné.';
+          subscriptionCloudRecoveryAvailable = false;
+          subscriptionCloudDiagnosticHouseholdId = householdId;
+          requestBackgroundRender();
+          return false;
+        }
+        const localBefore = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+        const updatedLayout = structuredCloneSafe(layout);
+        updatedLayout.subscriptionPayments = [...layout.subscriptionPayments, planned.payment];
+        const now = new Date().toISOString();
+        updatedLayout.updatedAt = now;
+        updatedLayout.appBuild = APP_BUILD;
+        // Před zápisem zkontrolovat i změny, které proběhly během načítání.
+        const localNow = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+        if (state.cloud?.householdId !== householdId || cloudHasBlockingConflict()
+            || JSON.stringify(canonicalComparableJson(localBefore)) !== JSON.stringify(canonicalComparableJson(localNow))) {
+          subscriptionCloudDiagnosticReport = 'Během kontroly se změnila lokální data. Pro bezpečné uložení zopakuj ověření.';
+          subscriptionCloudRecoveryAvailable = false;
+          subscriptionCloudDiagnosticHouseholdId = householdId;
+          requestBackgroundRender();
+          return false;
+        }
+        // CAS: pokud jiný klient změnil domácnost, UPDATE nevrátí žádný řádek.
+        // Zásadní: do cloudu odesíláme jen původní REMOTE layout + jednu platbu.
+        const { data: saved, error: saveError } = await client.from('households')
+          .update({ dashboard_layout: updatedLayout, updated_at: now })
+          .eq('id', householdId).eq('updated_at', revision)
+          .select('updated_at, dashboard_layout, weather_location').maybeSingle();
+        if (state.cloud?.householdId !== householdId) return false;
+        if (saveError) throw saveError;
+        if (!saved || !Array.isArray(householdUiRemoteLayout(saved).subscriptionPayments)
+            || !householdUiRemoteLayout(saved).subscriptionPayments.some((entry) => String(entry.id) === planned.id)) {
+          subscriptionCloudDiagnosticReport = 'Cloud nepotvrdil doplnění. Jiná změna mohla proběhnout souběžně. Žádná čekající data nejsou smazaná.';
+          subscriptionCloudRecoveryAvailable = false;
+          subscriptionCloudDiagnosticHouseholdId = householdId;
+          requestBackgroundRender();
+          return false;
+        }
+        const allMatched = householdUiSnapshotMatchesRemote(saved);
+        if (allMatched) {
+          reconcileConfirmedHouseholdUiPending(saved);
+        } else {
+          // Pokud se během síťové operace něco změnilo, zachováme novou frontu.
+          reconcileConfirmedSubscriptionPending(saved);
+        }
+        if (allMatched) state.cloud.householdUiRevision = householdUiRemoteRevision(saved);
+        state.cloud.lastSyncAt = new Date().toISOString();
+        subscriptionCloudRecoveryAvailable = false;
+        subscriptionCloudDiagnosticHouseholdId = householdId;
+        subscriptionCloudDiagnosticReport = state.subscriptionsCloud?.pendingAt
+          ? 'Platba byla potvrzena cloudem, ale na zařízení vznikla další změna. Ta zůstává ve frontě.'
+          : 'Chybějící platba byla potvrzena cloudem. Ostatní údaje zůstaly nedotčené.';
+        touchState();
+        persistStateSnapshot({ immediate: true });
+        requestBackgroundRender();
+        return true;
+      } catch (error) {
+        if (state.cloud?.householdId !== householdId) return false;
+        subscriptionCloudRecoveryAvailable = false;
+        subscriptionCloudDiagnosticHouseholdId = householdId;
+        subscriptionCloudDiagnosticReport = 'Doplnění se nepovedlo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální platba zůstává zachovaná.';
+        requestBackgroundRender();
+        return false;
+      }
+    });
   }
 
   function renderCloudRecoveryPanel() {
@@ -18525,6 +18618,7 @@
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
         ${state.subscriptionsCloud?.pendingAt ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
         ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
+        ${state.subscriptionsCloud?.pendingAt && subscriptionCloudRecoveryAvailable && !cloudHasBlockingConflict() && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-recover-single-subscription-payment">Doplnit 1 chybějící platbu</button></div>' : ''}
       </section>`;
   }
 
@@ -19873,6 +19967,10 @@
     }
     if (action === 'cloud-diagnose-subscriptions') {
       diagnoseSubscriptionPending();
+      return;
+    }
+    if (action === 'cloud-recover-single-subscription-payment') {
+      recoverSingleMissingSubscriptionPayment();
       return;
     }
     if (action === 'cloud-dismiss-error') {
@@ -21409,6 +21507,54 @@
 
   // Diagnostika pracuje jen s metadaty rozdílů. Žádné lokální hodnoty neposílá
   // nikam jinam než přes stávající ověřené rozhraní domácnosti.
+
+  // Striktně konzervativní obnova jedné chybějící platby. Zápis není možný,
+  // pokud se ostatní položky liší, chybí vazby, jsou duplicitní ID, nebo
+  // existuje možná stejná platba pod jiným ID.
+  function planSingleMissingSubscriptionPayment(local, remote, rawPayments, householdId) {
+    const equal = (a, b) => JSON.stringify(canonicalComparableJson(a)) === JSON.stringify(canonicalComparableJson(b));
+    if (!local || !remote || !Array.isArray(rawPayments) || !householdId) return null;
+    const groups = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
+    if (!groups.every((key) => Array.isArray(local[key]) && Array.isArray(remote[key]))) return null;
+    const idsUnique = (rows) => rows.every((row) => row?.id && rows.filter((other) => String(other.id) === String(row.id)).length === 1);
+    if (!groups.every((key) => idsUnique(local[key]) && idsUnique(remote[key]))) return null;
+    if (!equal(local.subscriptions, remote.subscriptions) || !equal(local.subscriptionPeople, remote.subscriptionPeople)) return null;
+    if (local.subscriptionPayments.length !== remote.subscriptionPayments.length + 1
+        || rawPayments.length !== local.subscriptionPayments.length) return null;
+    const localById = new Map(local.subscriptionPayments.map((item) => [String(item.id), item]));
+    const remoteIds = new Set(remote.subscriptionPayments.map((item) => String(item.id)));
+    for (const cloudPayment of remote.subscriptionPayments) {
+      if (!equal(localById.get(String(cloudPayment.id)), cloudPayment)) return null;
+    }
+    const missing = local.subscriptionPayments.filter((item) => !remoteIds.has(String(item.id)));
+    if (missing.length !== 1) return null;
+    const payment = missing[0];
+    if (!remote.subscriptions.some((item) => String(item.id) === String(payment.subscriptionId))
+        || !remote.subscriptionPeople.some((item) => String(item.id) === String(payment.personId))
+        || !/^[0-9]{4}-[0-9]{2}$/.test(payment.month || '')
+        || !(Number(payment.amount) > 0)) return null;
+    const equivalent = (item) => equal(
+      { ...item, id: '' },
+      { ...payment, id: '' }
+    );
+    if (remote.subscriptionPayments.some(equivalent)) return null;
+    const raw = rawPayments.find((item) => String(item?.id) === String(payment.id));
+    if (!raw || (raw.householdId && String(raw.householdId) !== String(householdId))) return null;
+    // normalizace uchová ID, vazby, částku, období a datum původní platby.
+    const normalized = normalizeSubscriptionPayment(raw);
+    if (String(normalized.id) !== String(payment.id)
+        || !equal(canonicalSubscriptionSnapshot([], [], [normalized]).subscriptionPayments[0], payment)) return null;
+    return { payment: structuredCloneSafe(normalized), id: String(payment.id) };
+  }
+
+  function subscriptionPaymentRecoveryCandidate(layout = {}) {
+    if (!Array.isArray(layout.subscriptions) || !Array.isArray(layout.subscriptionPeople)
+        || !Array.isArray(layout.subscriptionPayments)) return null;
+    const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+    const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
+    return planSingleMissingSubscriptionPayment(local, remote, state.subscriptionPayments || [], state.cloud?.householdId);
+  }
+
   function subscriptionPendingDiagnosticSummary(layout = {}) {
     const keys = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
     if (!keys.every((key) => Array.isArray(layout[key]))) {
@@ -24245,6 +24391,28 @@
       };
     };
 
+
+    window.__DOMACNOST_E2E_SINGLE_SUBSCRIPTION_PAYMENT_PLAN__ = () => {
+      const householdId = state.cloud?.householdId || 'e2e-household';
+      const people = [{ id: 'person-1', householdId, name: 'Jméno E2E' }];
+      const services = [{ id: 'service-1', householdId, serviceKey: 'netflix', name: 'Netflix', price: 100, billingDay: 1, maxMembers: 2, enabled: true, shares: [] }];
+      const first = { id: 'pay-1', householdId, subscriptionId: 'service-1', personId: 'person-1', amount: 100, month: '2026-06', paidAt: '2026-06-29' };
+      const missing = { ...first, id: 'pay-missing', month: '2026-07', paidAt: '2026-07-01' };
+      const local = canonicalSubscriptionSnapshot(services, people, [first, missing]);
+      const cloud = canonicalSubscriptionSnapshot(services, people, [first]);
+      const recovered = planSingleMissingSubscriptionPayment(local, cloud, [first, missing], householdId);
+      const duplicated = planSingleMissingSubscriptionPayment(local, cloud, [first, { ...missing, month: first.month, paidAt: first.paidAt }], householdId);
+      const changed = structuredCloneSafe(cloud);
+      changed.subscriptionPayments[0].amount = 101;
+      const conflicting = planSingleMissingSubscriptionPayment(local, changed, [first, missing], householdId);
+      const wrongHousehold = planSingleMissingSubscriptionPayment(local, cloud, [first, { ...missing, householdId: 'other-household' }], householdId);
+      const same = planSingleMissingSubscriptionPayment(local, local, [first, missing], householdId);
+      const staleLinks = structuredCloneSafe(cloud);
+      staleLinks.subscriptionPeople = [];
+      const missingPerson = planSingleMissingSubscriptionPayment(local, staleLinks, [first, missing], householdId);
+      return { recoverable: recovered?.id === 'pay-missing', duplicatesBlocked: !duplicated, conflictBlocked: !conflicting,
+        householdBlocked: !wrongHousehold, sameBlocked: !same, brokenReferenceBlocked: !missingPerson };
+    };
     window.__DOMACNOST_E2E_SUBSCRIPTION_PENDING_DIAGNOSTIC__ = () => {
       const layout = {
         subscriptions: structuredCloneSafe(state.subscriptions || []),
