@@ -1919,6 +1919,14 @@ async function run() {
     if (dependencyCheck.result?.value !== true) fail('Cloud: household snapshot vyžaduje lazy Předplatné a vape i bez otevřeného modulu.');
     else ok('Cloud: všechny lazy závislosti household snapshotu jsou načtené před synchronizací.');
 
+    const garageDiagnosticCheck = await page.send('Runtime.evaluate', {
+      expression: 'window.__DOMACNOST_E2E_GARAGE_CLOUD_DIAGNOSTIC__?.()',
+      returnByValue: true
+    });
+    const garageDiagnostic = garageDiagnosticCheck.result?.value || {};
+    if (!garageDiagnostic.equal || !garageDiagnostic.schema || !garageDiagnostic.changed || !garageDiagnostic.newer || !garageDiagnostic.missing || !garageDiagnostic.local) fail('Cloud Garáž: diagnostika nerozlišuje shodu, schéma, rozdíly ani novější data.');
+    else ok('Cloud Garáž: read-only diagnostika rozlišuje shodu, chybějící DB sloupec a rozdíly.');
+
     const householdBaselineCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => ({

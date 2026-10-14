@@ -88,3 +88,25 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - PR https://github.com/martinspadrna/Domacnost/pull/33, merge `abf6a62ddb625ee9a31f7ff85bf19767ab4ccad2`, produkční Vercel READY. GitHub CI včetně browser E2E **PASS**, branch run `38626634585`, main run `38626810412`.
 - **Fyzický test zatím chybí**: (a) na PC `Prověřit Předplatné` a skutečný stav PC vs cloud po kliknutí na `Doplnit 1 chybějící platbu`; (b) iPhone otevřít v541 a `Prověřit Předplatné` → zda přibylo 1, zda nová platba vidět ve **stejném měsíci a filtru**. Pokud shoda, ale UI nezobrazuje, audit filtru a aktivního profilu. Pokud rozdíl, podívat se na count/ids/conflict, nesmazat lokální cache.
 - iPhone navíc má stále 2× Garáž pending od 29.6. a 1× Nastavení domácnosti pending od 5.10. **Nemaž a nenutit overwrite.** Po Předplatném pokračovat P0 auditem Garáž, Nastavení domácnosti, pak Finance (account false-success guard a CAS).
+
+## 14. 10. 2026 večer — Předplatné potvrzeno na iPhone
+- **DONE – funkční cross-device Předplatné**: uživatel po nasazení v0.1_541 potvrdil „na mobilu předplatné ok“ (nová platba z PC již viditelná). Produkční oprava PR #33 je tak fyzicky ověřená; uzavřít příslušný krok P0 bez opakovaných zásahů.
+- Konfliktující a nadbytečný alternativní **draft PR #34 uzavřen bez merge**, protože je zastaralý vůči nejnovějšímu main a jeho funkce jsou již pokryty PR #33.
+- **DALŠÍ PRIORITA P0:** Garáž — 2 čekající lokální změny na iPhonu od 29. 6. 2026; zjistit per-record pending, cloud revize a možné duplicity na vozidlech Fabia/Toyota Auris. Nepřepisovat bez shody, nemaž local data.
+- Potom Nastavení domácnosti — 1 pending od 5. 10. 2026, ověřit čistě přes snapshot/CAS a možný technický marker.
+- Nakonec P0 Finance: bankovní účty false-success a CAS, transakce, šablony/půjčky, 2 zařízení, offline→online.
+- Aktuální produkční verze **v0.1_541**. Nové změny vyžadují navýšení na **0.1_542** a CI/E2E.
+
+## P0 Garáž — první kódový audit po potvrzení Předplatného
+- `markGarageRecordPending` nastavuje `pending_update` pro auto s cloudId, `pending_add` pro nové auto. Dashboard počítá přímo `syncStatus`, nikoli skutečný rozdíl v DB.
+- `cloudUpdateVehicle` při chybě chybějících rozšířených sloupců `vehicles` provede fallback zápis pouze základních údajů a **záměrně ponechá `pending_update`**. Pokud schéma stále nepodporuje `purchase_*`, `sale_*`, `technical_specs`, `ownership_status` nebo `insurance_contract_id`, může fronta Fabia + Toyota Auris zůstat trvale viset. **Hypotéza, zatím neověřená proti DB.**
+- `garageVehicleNeedsCloudSync` zohledňuje příznak `garageVehicleExtendedColumnsPending`, takže opakované pokusy se samy nevypnou; ověřit reálné Supabase schema (správný projekt) a detaily cloudové odpovědi.
+- `cloudUpdateVehicle`, `cloudUpdateFuelLog`, `cloudUpdateServiceLog` sice ověřují existenci vráceného řádku, ale neporovnávají `updated_at` přes CAS: audit mezizařízení a skutečných konfliktů je nutný před opravou.
+- **Další bezpečný krok:** read-only diagnostika pro každé ze 2 aut (cloudId přítomen?, syncStatus, fallback/schema error, absence/přítomnost rozšířených sloupců). Nic nemaž, nevynucuj přepis. Priorita kořenová příčina, ne smazat pending marker.
+
+## 14. 10. 2026 — Předplatné potvrzeno, další bod Garáž
+- **Fyzický test uživatele: Předplatné na mobilu OK** ve verzi v0.1_541. Uzavřeno konkrétní sdílení platby PC → cloud → iPhone; celkové P0 cloud moduly dosud neuzavřeny.
+- Uživatel zaslal nový stav: čekají už jen **2 položky Garáže (Fabia, Toyota Auris)** od 29. 6. 2026; dřívější Nastavení domácnosti v tomto screenshotu už nečeká. Nezrušit jejich pending bez potvrzení.
+- P0 analýza Garáže: `cloudUpdateVehicle` při nedostupnosti rozšířených sloupců provádí fallback do starého schématu; při úspěchu záměrně ponechá `syncStatus='pending_update'`, protože rozšířené informace nejsou potvrzené. `garageVehicleExtendedColumnsPending` poznamenává potřebu DB migrace/reloadu. Může to vysvětlovat dlouhodobě čekající oba vozy, ale zatím neověřeno proti skutečným cloudovým řádkům.
+- Kandidát **v0.1_542** / větev `fix/p0-garage-pending-audit-542`: tlačítko **Prověřit Garáž** v Cloud domácnosti čte data vozidel pouze přes SELECT a ukáže pro čekající auto: chybějící ID/řádek, chybějící DB sloupce, rozdílné názvy polí, novější vzdálenou revizi, nebo shodu všech odesílaných polí. Nic nezapisuje/nesmaže. E2E prověří všech šest kategorií. Před merge CI + browser E2E; po nasazení fyzický diagnostický výsledek, následně řešit schéma DB nebo bezpečné potvrzení skutečně shodných dat. U reálných rozdílů CAS a ruční konflikt.
+- Poté dokončit P0 Finance `cloudUpdateFinanceAccount` potvrzení skutečné změny řádku a kontrolu konfliktů.
