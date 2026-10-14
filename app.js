@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_540';
-  const APP_BUILD = 540;
+  const APP_VERSION = 'Domácnost+ v.0.1_541';
+  const APP_BUILD = 541;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18456,6 +18456,7 @@
   let subscriptionCloudDiagnosticReport = '';
   let subscriptionCloudDiagnosticHouseholdId = '';
   let subscriptionCloudRecoveryAvailable = false;
+  let subscriptionCloudPullAvailable = false;
 
   async function diagnoseSubscriptionPending() {
     if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
@@ -18472,6 +18473,9 @@
       if (error) throw error;
       if (!data) throw new Error('Domácnost v cloudu nenalezena');
       const result = subscriptionPendingDiagnosticSummary(householdUiRemoteLayout(data));
+      // Diagnostika zůstává read-only. Teprve další výslovný klik
+      // nabídne bezpečné načtení jedné potvrzené cloudové platby.
+      subscriptionCloudPullAvailable = planConfirmedRemoteSubscriptionPayments({ ...data, id: householdId })?.length === 1;
       subscriptionCloudRecoveryAvailable = Boolean(!cloudHasBlockingConflict() && subscriptionPaymentRecoveryCandidate(householdUiRemoteLayout(data)));
       if (result.matched && reconcileConfirmedSubscriptionPending(data)) {
         touchState();
@@ -18487,6 +18491,7 @@
     } catch (error) {
       if (state.cloud?.householdId !== householdId) return;
       subscriptionCloudRecoveryAvailable = false;
+      subscriptionCloudPullAvailable = false;
       subscriptionCloudDiagnosticReport = 'Ověření selhalo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální data zůstala nedotčená.';
     }
     if (subscriptionCloudRecoveryAvailable) subscriptionCloudDiagnosticReport += ' Je možné bezpečně zkusit doplnit jedinou chybějící platbu.';
@@ -18494,6 +18499,54 @@
     requestBackgroundRender();
   }
 
+
+
+  async function pullConfirmedSubscriptionPaymentFromCloud() {
+    if (!cloudReady() || state.subscriptionsCloud?.pendingAt) {
+      showToast('Nejdřív je potřeba ověřit neodeslané změny Předplatného');
+      return false;
+    }
+    const householdId = state.cloud.householdId;
+    if (subscriptionCloudDiagnosticHouseholdId !== householdId || !subscriptionCloudPullAvailable) {
+      showToast('Nejdřív znovu prověř Předplatné');
+      return false;
+    }
+    try {
+      await ensureHouseholdUiSyncDependencies();
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Cloudové spojení není dostupné');
+      // Nový SELECT brání použití zastaralého diagnostického snapshotu.
+      const { data, error } = await client.from('households')
+        .select('id, updated_at, dashboard_layout')
+        .eq('id', householdId).maybeSingle();
+      if (state.cloud?.householdId !== householdId) return false;
+      if (error) throw error;
+      const validated = planConfirmedRemoteSubscriptionPayments(data);
+      if (validated?.length !== 1) {
+        subscriptionCloudPullAvailable = false;
+        subscriptionCloudDiagnosticReport = 'Cloud nebo místní data se změnila. Nic nebylo převzato; spusť kontrolu znovu.';
+        requestBackgroundRender();
+        return false;
+      }
+      const added = mergeConfirmedRemoteSubscriptionPayments(data);
+      if (added !== 1) return false;
+      // Ponechat householdUiRevision, ostatní pending i skutečné konflikty.
+      touchState();
+      persistStateSnapshot({ immediate: true });
+      subscriptionCloudPullAvailable = false;
+      subscriptionCloudDiagnosticHouseholdId = householdId;
+      subscriptionCloudDiagnosticReport = 'Jedna chybějící platba byla bezpečně převzata z cloudu. Ostatní čekající změny zůstaly zachované.';
+      requestBackgroundRender();
+      return true;
+    } catch (error) {
+      if (state.cloud?.householdId !== householdId) return false;
+      subscriptionCloudPullAvailable = false;
+      subscriptionCloudDiagnosticReport = 'Načtení platby selhalo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Nic nebylo smazáno.';
+      subscriptionCloudDiagnosticHouseholdId = householdId;
+      requestBackgroundRender();
+      return false;
+    }
+  }
 
   async function recoverSingleMissingSubscriptionPayment() {
     if (!cloudReady() || !state.subscriptionsCloud?.pendingAt || cloudHasBlockingConflict()) {
@@ -18618,6 +18671,7 @@
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
         ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
         ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
+        ${subscriptionCloudPullAvailable && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && !state.subscriptionsCloud?.pendingAt ? '<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-pull-subscription-payment">Načíst chybějící platbu z cloudu</button></div>' : ''}
         ${state.subscriptionsCloud?.pendingAt && subscriptionCloudRecoveryAvailable && !cloudHasBlockingConflict() && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-recover-single-subscription-payment">Doplnit 1 chybějící platbu</button></div>' : ''}
       </section>`;
   }
@@ -19967,6 +20021,10 @@
     }
     if (action === 'cloud-diagnose-subscriptions') {
       diagnoseSubscriptionPending();
+      return;
+    }
+    if (action === 'cloud-pull-subscription-payment') {
+      pullConfirmedSubscriptionPaymentFromCloud();
       return;
     }
     if (action === 'cloud-recover-single-subscription-payment') {
@@ -21559,13 +21617,13 @@
   // Local-first: pending změna jedné sekce household UI nesmí zabránit
   // přijetí zcela nových, serverem potvrzených plateb v jiné čisté sekci.
   // Pouze aditivní merge, nikdy výměna již existujících lokálních údajů.
-  function mergeConfirmedRemoteSubscriptionPayments(household) {
+  function planConfirmedRemoteSubscriptionPayments(household) {
     const householdId = String(state.cloud?.householdId || '');
     if (!householdId || String(household?.id || '') !== householdId
-        || state.subscriptionsCloud?.pendingAt) return 0;
+        || state.subscriptionsCloud?.pendingAt) return null;
     const layout = householdUiRemoteLayout(household);
     const keys = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
-    if (!keys.every((key) => Array.isArray(layout[key]))) return 0;
+    if (!keys.every((key) => Array.isArray(layout[key]))) return null;
     const originalPayments = Array.isArray(state.subscriptionPayments) ? state.subscriptionPayments : [];
     const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, originalPayments);
     const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
@@ -21575,34 +21633,40 @@
     if (!keys.every((key) => uniqueIds(layout[key]))
         || !keys.every((key) => uniqueIds(local[key]))
         || !equal(local.subscriptions, remote.subscriptions)
-        || !equal(local.subscriptionPeople, remote.subscriptionPeople)) return 0;
+        || !equal(local.subscriptionPeople, remote.subscriptionPeople)) return null;
     const cloudPaymentById = new Map(remote.subscriptionPayments.map((payment) => [String(payment.id), payment]));
-    if (local.subscriptionPayments.some((payment) => !equal(payment, cloudPaymentById.get(String(payment.id))))) return 0;
+    if (local.subscriptionPayments.some((payment) => !equal(payment, cloudPaymentById.get(String(payment.id))))) return null;
     const localIds = new Set(local.subscriptionPayments.map((payment) => String(payment.id)));
     const extras = layout.subscriptionPayments.filter((payment) => !localIds.has(String(payment.id)));
-    if (!extras.length) return 0;
+    if (!extras.length) return null;
     const services = new Set(remote.subscriptions.map((service) => String(service.id)));
     const people = new Set(remote.subscriptionPeople.map((person) => String(person.id)));
     const originalRemoteCount = remote.subscriptionPayments.length;
     const toAdd = [];
     for (const raw of extras) {
-      if (raw.householdId && String(raw.householdId) !== householdId) return 0;
+      if (raw.householdId && String(raw.householdId) !== householdId) return null;
       const normalized = normalizeSubscriptionPayment(raw);
       if (!raw.id || String(normalized.id) !== String(raw.id)
           || !services.has(String(normalized.subscriptionId))
           || !people.has(String(normalized.personId))
-          || !(normalized.amount > 0)) return 0;
+          || !(normalized.amount > 0)) return null;
       const canonical = canonicalSubscriptionSnapshot([], [], [normalized]).subscriptionPayments[0];
-      if (!canonical || !equal(canonical, cloudPaymentById.get(String(raw.id)))) return 0;
+      if (!canonical || !equal(canonical, cloudPaymentById.get(String(raw.id)))) return null;
       // Pokud server obsahuje jiný záznam s totožným obsahem, jde o možnou duplicitu;
       // bez ručního rozhodnutí nepřidávat.
       const signature = (payment) => JSON.stringify(canonicalComparableJson({ ...payment, id: '' }));
       if (local.subscriptionPayments.some((existing) => signature(existing) === signature(canonical))
-          || toAdd.some((existing) => signature(canonicalSubscriptionSnapshot([], [], [existing]).subscriptionPayments[0]) === signature(canonical))) return 0;
+          || toAdd.some((existing) => signature(canonicalSubscriptionSnapshot([], [], [existing]).subscriptionPayments[0]) === signature(canonical))) return null;
       toAdd.push(normalized);
     }
-    if (toAdd.length + local.subscriptionPayments.length !== originalRemoteCount) return 0;
-    state.subscriptionPayments = [...originalPayments, ...toAdd];
+    if (toAdd.length + local.subscriptionPayments.length !== originalRemoteCount) return null;
+    return toAdd;
+  }
+
+  function mergeConfirmedRemoteSubscriptionPayments(household) {
+    const toAdd = planConfirmedRemoteSubscriptionPayments(household);
+    if (!toAdd?.length) return 0;
+    state.subscriptionPayments = [...(Array.isArray(state.subscriptionPayments) ? state.subscriptionPayments : []), ...toAdd];
     state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: new Date().toISOString() };
     return toAdd.length;
   }
@@ -24474,7 +24538,9 @@
         const remote = { id: hid, dashboard_layout: { subscriptions: [service], subscriptionPeople: [person], subscriptionPayments: [oldPayment, newPayment] } };
         const blockedPending = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
         state.subscriptionsCloud.pendingAt = '';
+        const plannedBefore = planConfirmedRemoteSubscriptionPayments(remote)?.length === 1;
         const accepted = mergeConfirmedRemoteSubscriptionPayments(remote) === 1;
+        const plannedAfter = !planConfirmedRemoteSubscriptionPayments(remote)?.length;
         const once = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
         const localPendingUntouched = state.cloud.householdUiPendingAt === '2026-10-05T12:00:00.000Z';
         const acceptedCount = state.subscriptionPayments.length;
@@ -24485,7 +24551,7 @@
         const foreignBlocked = mergeConfirmedRemoteSubscriptionPayments({ ...remote, id: 'other-household' }) === 0;
         state.subscriptionPayments = [oldPayment, { ...newPayment, id: 'unsent-local-payment', month: '2026-09' }];
         const localOnlyBlocked = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
-        return { blockedPending, accepted, once, localPendingUntouched, acceptedCount, changedBlocked, foreignBlocked, localOnlyBlocked };
+        return { blockedPending, accepted, once, plannedBefore, plannedAfter, localPendingUntouched, acceptedCount, changedBlocked, foreignBlocked, localOnlyBlocked };
       } finally {
         state.subscriptions = before.subscriptions;
         state.subscriptionPeople = before.people;
