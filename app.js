@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_539';
-  const APP_BUILD = 539;
+  const APP_VERSION = 'Domácnost+ v.0.1_540';
+  const APP_BUILD = 540;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18616,7 +18616,7 @@
             <div class="cloud-recovery-error-row"><div><strong>${escapeHtml(entry.label || cloudOutboxCollectionLabel(entry))}</strong><span>${entry.attempts} ${entry.attempts === 1 ? 'pokus' : entry.attempts < 5 ? 'pokusy' : 'pokusů'}${entry.nextRetryAt ? ` · ${escapeHtml(cloudRetryRelativeLabel(entry.nextRetryAt))}` : ' · čeká na kontrolu'}</span></div>${entry.lastError ? `<em>${escapeHtml(cloudErrorFriendlyMessage({ code: entry.lastErrorCode, message: entry.lastError }))}${entry.lastErrorHint ? `<small>${escapeHtml(entry.lastErrorHint)}</small>` : ''}</em>` : ''}</div>`).join('')}</div>
         </details>` : ''}
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
-        ${state.subscriptionsCloud?.pendingAt ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
+        ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
         ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
         ${state.subscriptionsCloud?.pendingAt && subscriptionCloudRecoveryAvailable && !cloudHasBlockingConflict() && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-recover-single-subscription-payment">Doplnit 1 chybějící platbu</button></div>' : ''}
       </section>`;
@@ -21555,6 +21555,58 @@
     return planSingleMissingSubscriptionPayment(local, remote, state.subscriptionPayments || [], state.cloud?.householdId);
   }
 
+
+  // Local-first: pending změna jedné sekce household UI nesmí zabránit
+  // přijetí zcela nových, serverem potvrzených plateb v jiné čisté sekci.
+  // Pouze aditivní merge, nikdy výměna již existujících lokálních údajů.
+  function mergeConfirmedRemoteSubscriptionPayments(household) {
+    const householdId = String(state.cloud?.householdId || '');
+    if (!householdId || String(household?.id || '') !== householdId
+        || state.subscriptionsCloud?.pendingAt) return 0;
+    const layout = householdUiRemoteLayout(household);
+    const keys = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
+    if (!keys.every((key) => Array.isArray(layout[key]))) return 0;
+    const originalPayments = Array.isArray(state.subscriptionPayments) ? state.subscriptionPayments : [];
+    const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, originalPayments);
+    const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
+    const equal = (a, b) => JSON.stringify(canonicalComparableJson(a)) === JSON.stringify(canonicalComparableJson(b));
+    const uniqueIds = (rows) => rows.every((row) => String(row?.id || '') &&
+      rows.filter((other) => String(other?.id || '') === String(row.id)).length === 1);
+    if (!keys.every((key) => uniqueIds(layout[key]))
+        || !keys.every((key) => uniqueIds(local[key]))
+        || !equal(local.subscriptions, remote.subscriptions)
+        || !equal(local.subscriptionPeople, remote.subscriptionPeople)) return 0;
+    const cloudPaymentById = new Map(remote.subscriptionPayments.map((payment) => [String(payment.id), payment]));
+    if (local.subscriptionPayments.some((payment) => !equal(payment, cloudPaymentById.get(String(payment.id))))) return 0;
+    const localIds = new Set(local.subscriptionPayments.map((payment) => String(payment.id)));
+    const extras = layout.subscriptionPayments.filter((payment) => !localIds.has(String(payment.id)));
+    if (!extras.length) return 0;
+    const services = new Set(remote.subscriptions.map((service) => String(service.id)));
+    const people = new Set(remote.subscriptionPeople.map((person) => String(person.id)));
+    const originalRemoteCount = remote.subscriptionPayments.length;
+    const toAdd = [];
+    for (const raw of extras) {
+      if (raw.householdId && String(raw.householdId) !== householdId) return 0;
+      const normalized = normalizeSubscriptionPayment(raw);
+      if (!raw.id || String(normalized.id) !== String(raw.id)
+          || !services.has(String(normalized.subscriptionId))
+          || !people.has(String(normalized.personId))
+          || !(normalized.amount > 0)) return 0;
+      const canonical = canonicalSubscriptionSnapshot([], [], [normalized]).subscriptionPayments[0];
+      if (!canonical || !equal(canonical, cloudPaymentById.get(String(raw.id)))) return 0;
+      // Pokud server obsahuje jiný záznam s totožným obsahem, jde o možnou duplicitu;
+      // bez ručního rozhodnutí nepřidávat.
+      const signature = (payment) => JSON.stringify(canonicalComparableJson({ ...payment, id: '' }));
+      if (local.subscriptionPayments.some((existing) => signature(existing) === signature(canonical))
+          || toAdd.some((existing) => signature(canonicalSubscriptionSnapshot([], [], [existing]).subscriptionPayments[0]) === signature(canonical))) return 0;
+      toAdd.push(normalized);
+    }
+    if (toAdd.length + local.subscriptionPayments.length !== originalRemoteCount) return 0;
+    state.subscriptionPayments = [...originalPayments, ...toAdd];
+    state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), loadedAt: new Date().toISOString() };
+    return toAdd.length;
+  }
+
   function subscriptionPendingDiagnosticSummary(layout = {}) {
     const keys = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
     if (!keys.every((key) => Array.isArray(layout[key]))) {
@@ -22037,6 +22089,10 @@
           resetTrashTrackingBaseline();
           trashTrackingSuppressed = false;
         }
+      } else {
+        // Nesouvisející čekající změny v nastavení domácnosti nesmí blokovat
+        // bezpečné nové platby Předplatného z jiného zařízení.
+        mergeConfirmedRemoteSubscriptionPayments(activeHousehold);
       }
     }
     touchState();
@@ -22396,6 +22452,9 @@
       if (options.acceptConflict !== true && householdUiHasPendingChanges()) await ensureHouseholdUiSyncDependencies();
       const applyRemote = shouldApplyRemoteHouseholdUi(data, { acceptConflict: options.acceptConflict === true });
       if (!applyRemote) {
+        // Read-through přijme pouze cloud-only nové platby, zbytek lokálního
+        // nastavení a skutečné konflikty domácnosti ponechá beze změny.
+        mergeConfirmedRemoteSubscriptionPayments(data);
         touchState();
         persistStateSnapshot({ immediate: true });
         requestBackgroundRender();
@@ -24392,6 +24451,49 @@
     };
 
 
+
+    window.__DOMACNOST_E2E_SUBSCRIPTION_READ_THROUGH__ = () => {
+      const before = {
+        subscriptions: structuredCloneSafe(state.subscriptions || []),
+        people: structuredCloneSafe(state.subscriptionPeople || []),
+        payments: structuredCloneSafe(state.subscriptionPayments || []),
+        subscriptionCloud: structuredCloneSafe(state.subscriptionsCloud || {}),
+        cloud: structuredCloneSafe(state.cloud || {})
+      };
+      try {
+        const hid = 'e2e-subscriptions-household';
+        state.cloud = { ...(state.cloud || {}), householdId: hid, householdUiPendingAt: '2026-10-05T12:00:00.000Z' };
+        const service = { id: 'service-e2e', householdId: hid, name: 'Netflix', serviceKey: 'netflix', price: 100, billingDay: 1, enabled: true };
+        const person = { id: 'person-e2e', householdId: hid, name: 'Test' };
+        const oldPayment = { id: 'payment-existing', householdId: hid, subscriptionId: service.id, personId: person.id, month: '2026-08', amount: 100, paidAt: '2026-08-01' };
+        const newPayment = { ...oldPayment, id: 'payment-cloud-only', month: '2026-10', paidAt: '2026-10-14' };
+        state.subscriptions = [service];
+        state.subscriptionPeople = [person];
+        state.subscriptionPayments = [oldPayment];
+        state.subscriptionsCloud = { pendingAt: '2026-10-14T12:00:00.000Z' };
+        const remote = { id: hid, dashboard_layout: { subscriptions: [service], subscriptionPeople: [person], subscriptionPayments: [oldPayment, newPayment] } };
+        const blockedPending = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
+        state.subscriptionsCloud.pendingAt = '';
+        const accepted = mergeConfirmedRemoteSubscriptionPayments(remote) === 1;
+        const once = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
+        const localPendingUntouched = state.cloud.householdUiPendingAt === '2026-10-05T12:00:00.000Z';
+        const acceptedCount = state.subscriptionPayments.length;
+        state.subscriptionPayments = [oldPayment];
+        const modifiedRemote = structuredCloneSafe(remote);
+        modifiedRemote.dashboard_layout.subscriptionPayments[0].amount = 101;
+        const changedBlocked = mergeConfirmedRemoteSubscriptionPayments(modifiedRemote) === 0;
+        const foreignBlocked = mergeConfirmedRemoteSubscriptionPayments({ ...remote, id: 'other-household' }) === 0;
+        state.subscriptionPayments = [oldPayment, { ...newPayment, id: 'unsent-local-payment', month: '2026-09' }];
+        const localOnlyBlocked = mergeConfirmedRemoteSubscriptionPayments(remote) === 0;
+        return { blockedPending, accepted, once, localPendingUntouched, acceptedCount, changedBlocked, foreignBlocked, localOnlyBlocked };
+      } finally {
+        state.subscriptions = before.subscriptions;
+        state.subscriptionPeople = before.people;
+        state.subscriptionPayments = before.payments;
+        state.subscriptionsCloud = before.subscriptionCloud;
+        state.cloud = before.cloud;
+      }
+    };
     window.__DOMACNOST_E2E_SINGLE_SUBSCRIPTION_PAYMENT_PLAN__ = () => {
       const householdId = state.cloud?.householdId || 'e2e-household';
       const people = [{ id: 'person-1', householdId, name: 'Jméno E2E' }];
