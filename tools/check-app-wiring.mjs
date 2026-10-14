@@ -76,7 +76,8 @@ if (app && finance) {
   expect(finance, "data-form=\"finance-refinance\"", 'finance.js: refinance formulář se renderuje.');
   expect(finance, "{ id: 'loans'", 'finance.js: Půjčky jsou samostatný tab.');
   expect(finance, 'loansPendingAt: now', 'finance.js: změna půjčky se před síťovým zápisem trvale označí jako čekající.');
-  expect(finance, "loansPendingAt: ''", 'finance.js: potvrzená půjčka vyčistí vlastní pending marker.');
+  expectAbsent(finance, "loansPendingAt: ''", 'finance.js: půjčka sama nepředbíhá centrální potvrzení odeslaného snapshotu.');
+  expect(app, "loansPendingAt: ''", 'app.js: potvrzený household snapshot vyčistí pending marker půjčky.');
   expect(app, 'state.financeCloud?.loansPendingAt', 'app.js: household autosync započítává čekající půjčky.');
   expect(app, 'function financeSettingsPendingCount()', 'app.js: Finance nastavení umí rozlišit čekající šablony a půjčky.');
   expect(app, 'function financeRecordsPendingItems()', 'app.js: hlavní Finance pending stav zahrnuje pohyby i finanční účty.');
@@ -348,7 +349,9 @@ if (app) {
   expect(app, 'function canonicalSubscriptionSemanticSnapshot', 'app.js: embedded Předplatné umí bezpečně porovnat význam dat i po změně interních ID.');
   expect(app, 'async function ensureHouseholdUiSyncDependencies', 'app.js: household snapshot sync umí připravit lazy datovou závislost Předplatného.');
   expect(app, "lazySyncModules = new Set(['shopping', 'tasks', 'contracts', 'warranties', 'garage', 'hdo', 'waste', 'calendar', 'finance', 'pool', 'subscriptions'])", 'app.js: čekající Předplatné je zahrnuté do přípravy lazy modulů před autosyncem.');
-  expect(app, /async function cloudSaveHouseholdUiSettings[\s\S]*?await ensureHouseholdUiSyncDependencies\(\);/, 'app.js: každý household zápis připraví Předplatné ještě před serializací payloadu.');
+  expect(app, /async function performCloudSaveHouseholdUiSettings[\s\S]*?await ensureHouseholdUiSyncDependencies\(\);/, 'app.js: serializovaný household zápis připraví Předplatné ještě před payloadem.');
+  expect(app, 'let householdUiSaveQueue = Promise.resolve()', 'app.js: household CAS zápisy mají jedinou serializovanou frontu.');
+  expect(app, 'return enqueueHouseholdUiSave(', 'app.js: každý household zápis prochází frontou.');
   expect(app, /const activeHousehold = households\.find[\s\S]*?householdUiHasPendingChanges\(\)\) await ensureHouseholdUiSyncDependencies\(\);[\s\S]*?shouldApplyRemoteHouseholdUi/, 'app.js: warm start připraví lazy Předplatné před reconciliací staré fronty.');
   expect(app, 'reconcileConfirmedSubscriptionPending(household);', 'app.js: načtení domácnosti ověřuje a odblokuje potvrzené Předplatné před vyhodnocením konfliktu.');
   expect(app, ".select('updated_at, dashboard_layout, weather_location')", 'app.js: ověření celého household snapshotu načítá i weather_location.');

@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_536';
-  const APP_BUILD = 536;
+  const APP_VERSION = 'Domácnost+ v.0.1_537';
+  const APP_BUILD = 537;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -7568,7 +7568,7 @@
     if (!ready) return `<div class="unified-cloud-control offline"><span class="sync-status-dot"></span><div><strong>Cloud není připojený</strong><em>Data jsou zatím jen v tomto zařízení.</em></div><button class="ghost-btn" type="button" data-nav="settings" data-target-tab="cloud">Připojit</button></div>`;
     return `<div class="unified-cloud-control ${failed ? 'error' : waiting || pending ? 'pending' : 'good'}" data-cloud-unified-status>
       <span class="sync-status-dot"></span>
-      <div><strong>${conflict ? 'Změny ze dvou zařízení čekají na rozhodnutí' : disabled ? 'Automatická synchronizace je vypnutá' : waiting ? 'Čekám na internet' : failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'}${conflict ? ' · nic se automaticky nepřepíše' : disabled ? ' · zapnutím se bezpečně odešlou' : waiting ? ' · odešlou se automaticky po připojení' : `${retryText} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}`}</em></div>
+      <div><strong>${conflict ? 'Změny ze dvou zařízení čekají na rozhodnutí' : disabled ? 'Automatická synchronizace je vypnutá' : waiting ? 'Čekám na internet' : failed ? 'Synchronizace potřebuje pozornost' : syncing ? 'Synchronizuji…' : pending ? 'Čekají změny na uložení' : `Synchronizováno ${cloudSyncRelativeLabel()}`}</strong><em>${pending ? `${pending} ${pending === 1 ? 'změna čeká' : pending < 5 ? 'změny čekají' : 'změn čeká'}` : 'Všechny změny jsou uložené'}${conflict ? ' · nic se automaticky nepřepíše' : disabled ? ' · zapnutím se bezpečně odešlou' : waiting ? ' · odešlou se automaticky po připojení' : `${retryText} · živé změny ${realtimeStatusLabel() === 'online' ? 'zapnuté' : 'se připojují'}`}</em></div>
       ${conflict ? '<button class="primary-btn" type="button" data-nav="settings" data-target-tab="cloud">Vyřešit</button>' : failed ? `<button class="primary-btn" type="button" data-action="cloud-sync-unified">${disabled ? 'Zapnout automatiku' : 'Zkusit znovu'}</button>` : ''}
     </div>`;
   }
@@ -21985,7 +21985,25 @@
     };
   }
 
-  async function cloudSaveHouseholdUiSettings(showMessage = false, includeName = false, options = {}) {
+  // Všechny CAS zápisy do jednoho household snapshotu seřadit, aby se
+  // paralelní změny z téhož zařízení nestaly falešným konfliktem.
+  let householdUiSaveQueue = Promise.resolve();
+
+  function enqueueHouseholdUiSave(operation) {
+    const queued = householdUiSaveQueue.catch(() => {}).then(operation);
+    householdUiSaveQueue = queued.catch(() => {});
+    return queued;
+  }
+
+  function cloudSaveHouseholdUiSettings(showMessage = false, includeName = false, options = {}) {
+    const requestedHouseholdId = state.cloud?.householdId;
+    return enqueueHouseholdUiSave(() => {
+      if (state.cloud?.householdId !== requestedHouseholdId) return false;
+      return performCloudSaveHouseholdUiSettings(showMessage, includeName, options);
+    });
+  }
+
+  async function performCloudSaveHouseholdUiSettings(showMessage = false, includeName = false, options = {}) {
     if (!cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
@@ -22016,6 +22034,7 @@
         return true;
       }
       reconcileConfirmedSubscriptionPending(remote);
+      reconcileConfirmedSnapshotSectionPendings(remote);
       if (expectedRevision && remoteRevision && expectedRevision !== remoteRevision) {
         markHouseholdUiConflict(remote, { includeName });
         persistStateSnapshot({ immediate: true });
@@ -24018,6 +24037,20 @@
         runtimeStateRef = originalRuntimeStateRef;
         resetTrashTrackingBaseline();
       }
+    };
+    window.__DOMACNOST_E2E_SERIALIZE_HOUSEHOLD_SAVES__ = async () => {
+      const events = [];
+      const first = enqueueHouseholdUiSave(async () => {
+        events.push('first:start');
+        await Promise.resolve();
+        events.push('first:end');
+      });
+      const second = enqueueHouseholdUiSave(async () => {
+        events.push('second:start');
+        events.push('second:end');
+      });
+      await Promise.all([first, second]);
+      return events.join('|') === 'first:start|first:end|second:start|second:end';
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_SAVE_RACE__ = () => {
       const previous = {
