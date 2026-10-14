@@ -24,14 +24,19 @@ Aktualizováno: 14. 10. 2026. Na začátku nového chatu načíst celý tento so
 5. **Bezpečnost:** zachovat CAS ochranu skutečných konfliktů mezi zařízeními, žádný force-overwrite, žádné plošné mazání pending markerů, storage, outboxu nebo dat uživatele.
 
 ## Ověření a otevřené body
-- [ ] GitHub CI: syntax, release, static, memo, wiring, CSS a forms
-- [ ] Browser E2E včetně testu serializace zápisů
+- [x] GitHub CI: syntax, release, static, memo, wiring, CSS a forms — PASS, run 38565732520
+- [x] Browser E2E včetně testu serializace zápisů — PASS, run 38565732520
 - [ ] Uživatelský fyzický test: Předplatné Netflix 1/2 a OnePlay, čekající změna 29. 6. 2026; po přihlášení nebo restartu ověřit, zda skutečně sedí cloud snapshot; pokud ne, zachovat konflikt a vyžádat anonymizovaný rozdíl
 - [ ] Dvě zařízení: souběžná editace, skutečný konflikt, restart a offline → online
 - [ ] Finance: kompletní P0 audit všech pending markerů a jejich zachování při souběžných úpravách
 - [ ] Mobil Safari iPhone, Android Chrome, desktop; regresní smoke ostatních modulů
 - [ ] Prověřit i `cloudSyncLocalPendingData`, které může aktualizovat `lastSyncAt` během neúplného syncu
 - [ ] Až po fyzickém schválení bezpečně nasadit do produkce
+
+## Odkazy a kontrolní bod
+- Draft PR: https://github.com/martinspadrna/Domacnost/pull/29
+- Úspěšné CI: https://github.com/martinspadrna/Domacnost/actions/runs/38565732520
+- **Zůstává nutný fyzický test konkrétního účtu** před merge; bezpečný snapshot nesmí bez potvrzení vymazat reálnou změnu.
 
 ## Pravidlo pokračování
 Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené etapě doplnit sem přesně: verze, branch/commit, změny, výsledky testů, rizika, stav (%), další konkrétní úkol.
