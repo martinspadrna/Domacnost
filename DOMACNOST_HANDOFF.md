@@ -104,9 +104,7 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `cloudUpdateVehicle`, `cloudUpdateFuelLog`, `cloudUpdateServiceLog` sice ověřují existenci vráceného řádku, ale neporovnávají `updated_at` přes CAS: audit mezizařízení a skutečných konfliktů je nutný před opravou.
 - **Další bezpečný krok:** read-only diagnostika pro každé ze 2 aut (cloudId přítomen?, syncStatus, fallback/schema error, absence/přítomnost rozšířených sloupců). Nic nemaž, nevynucuj přepis. Priorita kořenová příčina, ne smazat pending marker.
 
-## 14. 10. 2026 — Předplatné potvrzeno, další bod Garáž
-- **Fyzický test uživatele: Předplatné na mobilu OK** ve verzi v0.1_541. Uzavřeno konkrétní sdílení platby PC → cloud → iPhone; celkové P0 cloud moduly dosud neuzavřeny.
-- Uživatel zaslal nový stav: čekají už jen **2 položky Garáže (Fabia, Toyota Auris)** od 29. 6. 2026; dřívější Nastavení domácnosti v tomto screenshotu už nečeká. Nezrušit jejich pending bez potvrzení.
-- P0 analýza Garáže: `cloudUpdateVehicle` při nedostupnosti rozšířených sloupců provádí fallback do starého schématu; při úspěchu záměrně ponechá `syncStatus='pending_update'`, protože rozšířené informace nejsou potvrzené. `garageVehicleExtendedColumnsPending` poznamenává potřebu DB migrace/reloadu. Může to vysvětlovat dlouhodobě čekající oba vozy, ale zatím neověřeno proti skutečným cloudovým řádkům.
-- Kandidát **v0.1_542** / větev `fix/p0-garage-pending-audit-542`: tlačítko **Prověřit Garáž** v Cloud domácnosti čte data vozidel pouze přes SELECT a ukáže pro čekající auto: chybějící ID/řádek, chybějící DB sloupce, rozdílné názvy polí, novější vzdálenou revizi, nebo shodu všech odesílaných polí. Nic nezapisuje/nesmaže. E2E prověří všech šest kategorií. Před merge CI + browser E2E; po nasazení fyzický diagnostický výsledek, následně řešit schéma DB nebo bezpečné potvrzení skutečně shodných dat. U reálných rozdílů CAS a ruční konflikt.
-- Poté dokončit P0 Finance `cloudUpdateFinanceAccount` potvrzení skutečné změny řádku a kontrolu konfliktů.
+## P0 Garáž — diagnostika v0.1_542 (PR #35)
+- Bezpečný read-only audit dvou vozidel čekajících od 29.6.2026: přes SELECT ze správné domácnosti zkontrolovat existenci řádku, chybějící databázové sloupce, rozdílné názvy polí a případně novější cloudovou revizi. Žádné UPDATE, force overwrite ani smazání pending markeru.
+- Kandidát v0.1_542, větev `fix/p0-garage-pending-audit-542`, PR https://github.com/martinspadrna/Domacnost/pull/35.
+- Před nasazením CI/E2E. Pak tlačítko **Prověřit Garáž** v Nastavení → Cloud domácnosti. Pokud chybí rozšířené sloupce, řešit databázovou migraci správného projektu; pokud se pole shodují, ověřit potvrzovací tok bez ztráty dat. U vzdálených rozdílů zachovat konflikt bez přepsání.
