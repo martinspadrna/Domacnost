@@ -106,5 +106,7 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 
 ## P0 Garáž — diagnostika v0.1_542 (PR #35)
 - Bezpečný read-only audit dvou vozidel čekajících od 29.6.2026: přes SELECT ze správné domácnosti zkontrolovat existenci řádku, chybějící databázové sloupce, rozdílné názvy polí a případně novější cloudovou revizi. Žádné UPDATE, force overwrite ani smazání pending markeru.
-- Kandidát v0.1_542, větev `fix/p0-garage-pending-audit-542`, PR https://github.com/martinspadrna/Domacnost/pull/35.
-- Před nasazením CI/E2E. Pak tlačítko **Prověřit Garáž** v Nastavení → Cloud domácnosti. Pokud chybí rozšířené sloupce, řešit databázovou migraci správného projektu; pokud se pole shodují, ověřit potvrzovací tok bez ztráty dat. U vzdálených rozdílů zachovat konflikt bez přepsání.
+- **Nasazeno v produkci v0.1_542** přes PR https://github.com/martinspadrna/Domacnost/pull/35; merge `ee6ca7b4a9b4b9b395ad7900e129464bdb7ff6e2`. CI a browser E2E **PASS**: PR run 38628240345 a main run 38628438893; Vercel production READY.
+- **Další fyzický test:** tlačítko **Prověřit Garáž** v Nastavení → Cloud domácnosti. Pokud chybí rozšířené sloupce, řešit databázovou migraci správného projektu; pokud se pole shodují, ověřit potvrzovací tok bez ztráty dat. U vzdálených rozdílů zachovat konflikt bez přepsání.
+
+- **Pozor:** Diagnostika neřeší migraci schématu a není důkazem, že staré změny lze automaticky odstranit. Výsledek reálných aut Fabia/Auris zatím chybí. Po obdržení auditovat konkrétní příčinu a provést malou verzi 0.1_543 jen se správnou opravou, kompatibilní s CAS a ochranou dat.
