@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_542';
-  const APP_BUILD = 542;
+  const APP_VERSION = 'Domácnost+ v.0.1_543';
+  const APP_BUILD = 543;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -16980,38 +16980,61 @@
     if (!vehicle) return false;
     markGarageRecordPending(vehicle);
     const client = getSupabaseClient();
-    if (!client || !vehicle.cloudId || !state.cloud?.householdId) return false;
+    const householdId = state.cloud?.householdId;
+    const cloudId = vehicle.cloudId;
+    if (!client || !cloudId || !householdId) return false;
     const user = await refreshCloudSession(false);
-    if (!user) return false;
+    if (!user || state.cloud?.householdId !== householdId || vehicle.cloudId !== cloudId) return false;
+
     const payload = cloudVehiclePayload(vehicle, user.id, { mode: 'update' });
-    let usedSchemaFallback = false;
-    let { data, error } = await client
-      .from('vehicles')
-      .update(payload)
-      .eq('id', vehicle.cloudId)
-      .eq('household_id', state.cloud.householdId)
-      .select('id')
+    const snapshot = JSON.stringify(payload);
+    const stillCurrent = () =>
+      state.cloud?.householdId === householdId &&
+      vehicle.cloudId === cloudId &&
+      JSON.stringify(cloudVehiclePayload(vehicle, user.id, { mode: 'update' })) === snapshot;
+
+    // Cti drive: stare schema ani novejsi vzdalena revize nesmeji
+    // vyvolat fallback UPDATE nebo prepsat jina cloudova data.
+    const { data: remote, error: readError } = await client.from('vehicles')
+      .select('*')
+      .eq('id', cloudId)
+      .eq('household_id', householdId)
       .maybeSingle();
-    if (error && isGarageVehicleExtendedSchemaError(error)) {
-      markGarageVehicleExtendedSchemaPending();
-      usedSchemaFallback = true;
-      const fallbackPayload = cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false, mode: 'update' });
-      ({ data, error } = await client
-        .from('vehicles')
-        .update(fallbackPayload)
-        .eq('id', vehicle.cloudId)
-        .eq('household_id', state.cloud.householdId)
-        .select('id')
-        .maybeSingle());
+    if (!stillCurrent()) return false;
+    if (readError || !remote) {
+      if (readError) showToast(readError.message || 'Stav auta se nepovedlo overit v cloudu');
+      return false;
     }
-    if (error || !data?.id) {
-      markGarageRecordPending(vehicle);
+
+    const decision = garageVehicleSafeUpdateDecision(vehicle, remote);
+    if (decision === 'schema') {
+      markGarageVehicleExtendedSchemaPending();
+      return false;
+    }
+    if (decision === 'confirmed') {
+      vehicle.syncStatus = '';
+      state.cloud.lastSyncAt = new Date().toISOString();
+      return true;
+    }
+    if (decision !== 'update' || !stillCurrent()) return false;
+
+    // updated_at CAS: nulovy zasah = vzdalena revize se zmenila.
+    const { data, error } = await client.from('vehicles')
+      .update(payload)
+      .eq('id', cloudId)
+      .eq('household_id', householdId)
+      .eq('updated_at', remote.updated_at)
+      .select('*')
+      .maybeSingle();
+    if (error && isGarageVehicleExtendedSchemaError(error)) markGarageVehicleExtendedSchemaPending();
+    if (error || !data?.id || !stillCurrent()) {
       if (error) showToast(error.message || 'Auto se nepovedlo aktualizovat v cloudu');
       return false;
     }
-    vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : '';
+    if (garageVehicleCloudDifference(vehicle, data).type !== 'same') return false;
+    vehicle.syncStatus = '';
     state.cloud.lastSyncAt = new Date().toISOString();
-    return !usedSchemaFallback;
+    return true;
   }
 
   async function cloudDeleteVehicle(vehicle) {
@@ -18488,6 +18511,19 @@
       differentColumns,
       remoteNewer: Number.isFinite(remoteTime) && Number.isFinite(localTime) && remoteTime > localTime
     };
+  }
+
+  // Rozhodnuti je bezpecne i pri novejsim cloudovem updated_at
+  // po drivejsim schema-fallback zapisu, pokud jsou hodnoty totozne.
+  function garageVehicleSafeUpdateDecision(vehicle, remoteRow) {
+    const diff = garageVehicleCloudDifference(vehicle, remoteRow);
+    if (diff.type === 'local' || diff.type === 'missing') return 'missing';
+    if (diff.missingColumns.length) return 'schema';
+    if (!diff.differentColumns.length) return 'confirmed';
+    if (diff.remoteNewer) return 'conflict';
+    if (!Number.isFinite(Date.parse(remoteRow?.updated_at || '')) ||
+        !Number.isFinite(Date.parse(vehicle?.updatedAt || ''))) return 'unversioned';
+    return 'update';
   }
 
   let garageCloudDiagnosticHouseholdId = '';
@@ -24572,7 +24608,12 @@
         changed: changed.type === 'different' && changed.differentColumns.includes('note'),
         newer: newer.remoteNewer,
         missing: garageVehicleCloudDifference(vehicle, null).type === 'missing',
-        local: garageVehicleCloudDifference({ ...vehicle, cloudId: '' }, null).type === 'local'
+        local: garageVehicleCloudDifference({ ...vehicle, cloudId: '' }, null).type === 'local',
+        safeSame: garageVehicleSafeUpdateDecision(vehicle, remote) === 'confirmed',
+        safeSchema: garageVehicleSafeUpdateDecision(vehicle, removedColumn) === 'schema',
+        safeConflict: garageVehicleSafeUpdateDecision(vehicle, { ...remote, note: 'other', updated_at: '2026-10-14T13:00:00.000Z' }) === 'conflict',
+        safeUpdate: garageVehicleSafeUpdateDecision(vehicle, { ...remote, note: 'other' }) === 'update',
+        safeNoRevision: garageVehicleSafeUpdateDecision(vehicle, { ...remote, note: 'other', updated_at: null }) === 'unversioned'
       };
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_DEPENDENCIES__ = async () => {

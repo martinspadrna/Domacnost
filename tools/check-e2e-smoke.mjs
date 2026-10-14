@@ -1924,8 +1924,18 @@ async function run() {
       returnByValue: true
     });
     const garageDiagnostic = garageDiagnosticCheck.result?.value || {};
-    if (!garageDiagnostic.equal || !garageDiagnostic.schema || !garageDiagnostic.changed || !garageDiagnostic.newer || !garageDiagnostic.missing || !garageDiagnostic.local) fail('Cloud Garáž: diagnostika nerozlišuje shodu, schéma, rozdíly ani novější data.');
+    if (!garageDiagnostic.equal || !garageDiagnostic.schema || !garageDiagnostic.changed || !garageDiagnostic.newer || !garageDiagnostic.missing || !garageDiagnostic.local || !garageDiagnostic.safeSame || !garageDiagnostic.safeSchema || !garageDiagnostic.safeConflict || !garageDiagnostic.safeUpdate || !garageDiagnostic.safeNoRevision) fail('Cloud Garáž: diagnostika nerozlišuje shodu, schéma, rozdíly ani novější data.');
     else ok('Cloud Garáž: read-only diagnostika rozlišuje shodu, chybějící DB sloupec a rozdíly.');
+    const garageUpdateStart = appSource.indexOf('async function cloudUpdateVehicle(vehicle)');
+    const garageUpdateEnd = appSource.indexOf('async function cloudDeleteVehicle(vehicle)', garageUpdateStart);
+    const garageWriteBlock = garageUpdateStart >= 0 && garageUpdateEnd > garageUpdateStart
+      ? appSource.slice(garageUpdateStart, garageUpdateEnd) : '';
+    if (!garageWriteBlock.includes(".eq('updated_at', remote.updated_at)") ||
+        garageWriteBlock.includes('includeExtendedFields: false') ||
+        !garageWriteBlock.includes("decision === 'schema'")) {
+      fail('Cloud Garaz: aktualizace auta nema CAS nebo stale dela schema fallback UPDATE.');
+    } else ok('Cloud Garaz: CAS a bezpecne blokovani castecneho zapisu.');
+
 
     const householdBaselineCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,

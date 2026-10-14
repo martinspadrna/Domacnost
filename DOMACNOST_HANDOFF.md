@@ -110,3 +110,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Další fyzický test:** tlačítko **Prověřit Garáž** v Nastavení → Cloud domácnosti. Pokud chybí rozšířené sloupce, řešit databázovou migraci správného projektu; pokud se pole shodují, ověřit potvrzovací tok bez ztráty dat. U vzdálených rozdílů zachovat konflikt bez přepsání.
 
 - **Pozor:** Diagnostika neřeší migraci schématu a není důkazem, že staré změny lze automaticky odstranit. Výsledek reálných aut Fabia/Auris zatím chybí. Po obdržení auditovat konkrétní příčinu a provést malou verzi 0.1_543 jen se správnou opravou, kompatibilní s CAS a ochranou dat.
+
+## 14. 10. 2026 — fyzická diagnostika Garáže, kandidát v0.1_543
+- V produkční v0.1_542: Fabia + Toyota Auris mají **chybějící `vehicles.insurance_contract_id`**, u obou má cloud novější `updated_at`, ale žádné ostatní rozdílné pole nebylo hlášeno. Nadále 2 pending auta, 1 pending Nastavení domácnosti.
+- Kořenová příčina v kódu: `cloudUpdateVehicle` při chybě rozšířeného schématu opakovaně prováděl základní fallback UPDATE bez CAS. Tím mohl sám zvyšovat cloudovou revizi.
+- **Kandidát v0.1_543, branch `fix/p0-garage-schema-cas-543`**: před UPDATE čerstvý SELECT, bez všech sloupců žádný fallback PATCH, při úplné shodě lze potvrdit sync bez UPDATE, rozdílná data s novější remote revizí blokovat, při přenosu použít `updated_at` CAS (0 řádků = konflikt), zabránit potvrzení novější lokální úpravy během requestu. E2E regresní scénáře.
+- Připraven aditivní SQL `sql/garage_insurance_contract_id.sql`. **NEPROVEDENO:** připojený Supabase zpřístupňuje pouze RaK TEST/MAIN, nikoli projekt Domácnost+. Nesmí se omylem provést v RaK.
+- Po PASS CI a schválení lze migrovat jen správnou DB, udělat schema reload a znovu změřit Fabii/Auris z mobilu/PC. **P0 Garáž stále OPEN, pending zachovat.** Produkce v0.1_542 zatím beze změny.
+- Dále 1 pending Nastavení domácnosti a následně P0 Finance, žádné mazání nebo force.
