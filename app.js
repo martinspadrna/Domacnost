@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_541';
-  const APP_BUILD = 541;
+  const APP_VERSION = 'Domácnost+ v.0.1_542';
+  const APP_BUILD = 542;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18457,6 +18457,85 @@
   }
 
 
+
+  // Pouze read-only audit stávajícího cloudového záznamu auta. Nevytváří
+  // novou revizi, neposílá UPDATE a nemaže žádnou pending položku.
+  function garageVehicleCloudDifference(vehicle, remoteRow = null) {
+    if (!vehicle?.cloudId) return { type: 'local', missingColumns: [], differentColumns: [], remoteNewer: false };
+    if (!remoteRow) return { type: 'missing', missingColumns: [], differentColumns: [], remoteNewer: false };
+    const expected = cloudVehiclePayload(vehicle, state.cloud?.userId || '', { mode: 'update' });
+    const missingColumns = [];
+    const differentColumns = [];
+    for (const [key, expectedValue] of Object.entries(expected)) {
+      if (key === 'updated_by') continue;
+      if (!Object.prototype.hasOwnProperty.call(remoteRow, key)) {
+        missingColumns.push(key);
+        continue;
+      }
+      const comparable = (value) => {
+        if (value == null || value === '') return null;
+        if (typeof value === 'number') return String(value);
+        if (typeof value === 'object') return JSON.stringify(canonicalComparableJson(value));
+        return String(value);
+      };
+      if (comparable(expectedValue) !== comparable(remoteRow[key])) differentColumns.push(key);
+    }
+    const remoteTime = Date.parse(remoteRow.updated_at || '');
+    const localTime = Date.parse(vehicle.updatedAt || '');
+    return {
+      type: missingColumns.length ? 'schema' : differentColumns.length ? 'different' : 'same',
+      missingColumns,
+      differentColumns,
+      remoteNewer: Number.isFinite(remoteTime) && Number.isFinite(localTime) && remoteTime > localTime
+    };
+  }
+
+  let garageCloudDiagnosticHouseholdId = '';
+  let garageCloudDiagnosticReport = '';
+
+  async function diagnoseGaragePending() {
+    if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
+    const householdId = state.cloud?.householdId;
+    try {
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Cloudové připojení není dostupné');
+      const { data, error } = await client.from('vehicles').select('*').eq('household_id', householdId);
+      if (state.cloud?.householdId !== householdId) return;
+      if (error) throw error;
+      const byId = new Map((data || []).map((row) => [String(row.id), row]));
+      const pending = (state.vehicles || []).filter((vehicle) =>
+        (!vehicle.cloudId || vehicle.syncStatus) &&
+        (!vehicle.householdId || String(vehicle.householdId) === String(householdId))
+      );
+      const lines = pending.map((vehicle) => {
+        const diff = garageVehicleCloudDifference(vehicle, byId.get(String(vehicle.cloudId || '')));
+        const label = normalizeText(vehicle.name || 'Auto');
+        if (diff.type === 'local') return label + ': není propojené s cloudovým ID; lokální záznam zachován.';
+        if (diff.type === 'missing') return label + ': cloudový řádek s tímto ID chybí; nic nebylo zapsáno.';
+        const details = [
+          diff.missingColumns.length ? 'chybějící DB sloupce: ' + diff.missingColumns.join(', ') : '',
+          diff.differentColumns.length ? 'rozdílná pole: ' + diff.differentColumns.join(', ') : '',
+          diff.remoteNewer ? 'cloud má novější revizi — bez automatického přepisu' : ''
+        ].filter(Boolean);
+        return label + ': ' + (details.join('; ') || 'odesílaná pole se shodují, ale čekající příznak stále existuje.');
+      });
+      if (state.cloud?.garageVehicleExtendedColumnsPending) {
+        lines.unshift('Aplikace eviduje chybějící rozšířené sloupce databáze vozidel nebo dřívější schema fallback.');
+      }
+      garageCloudDiagnosticReport = pending.length
+        ? lines.join(' | ')
+        : 'Toto zařízení nemá žádná neodeslaná auta.';
+      garageCloudDiagnosticHouseholdId = householdId;
+    } catch (error) {
+      if (state.cloud?.householdId !== householdId) return;
+      garageCloudDiagnosticHouseholdId = householdId;
+      garageCloudDiagnosticReport = 'Kontrola Garáže selhala: ' +
+        (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') +
+        '. Lokální data byla zachována.';
+    }
+    requestBackgroundRender();
+  }
+
   let subscriptionCloudDiagnosticReport = '';
   let subscriptionCloudDiagnosticHouseholdId = '';
   let subscriptionCloudRecoveryAvailable = false;
@@ -18628,7 +18707,8 @@
             <div class="cloud-recovery-error-row"><div><strong>${escapeHtml(entry.label || cloudOutboxCollectionLabel(entry))}</strong><span>${entry.attempts} ${entry.attempts === 1 ? 'pokus' : entry.attempts < 5 ? 'pokusy' : 'pokusů'}${entry.nextRetryAt ? ` · ${escapeHtml(cloudRetryRelativeLabel(entry.nextRetryAt))}` : ' · čeká na kontrolu'}</span></div>${entry.lastError ? `<em>${escapeHtml(cloudErrorFriendlyMessage({ code: entry.lastErrorCode, message: entry.lastError }))}${entry.lastErrorHint ? `<small>${escapeHtml(entry.lastErrorHint)}</small>` : ''}</em>` : ''}</div>`).join('')}</div>
         </details>` : ''}
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
-        ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
+        ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button><button class="ghost-btn" type="button" data-action="cloud-diagnose-garage">Prověřit Garáž</button></div>' : ''}
+        ${garageCloudDiagnosticHouseholdId === state.cloud?.householdId && garageCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Garáže:</strong> ' + escapeHtml(garageCloudDiagnosticReport) + '</div>' : ''}
         ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
         ${state.subscriptionsCloud?.pendingAt && subscriptionCloudRecoveryAvailable && !cloudHasBlockingConflict() && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-recover-single-subscription-payment">Doplnit 1 chybějící platbu</button></div>' : ''}
       </section>`;
@@ -19979,6 +20059,10 @@
     }
     if (action === 'cloud-diagnose-subscriptions') {
       diagnoseSubscriptionPending();
+      return;
+    }
+    if (action === 'cloud-diagnose-garage') {
+      diagnoseGaragePending();
       return;
     }
     if (action === 'cloud-recover-single-subscription-payment') {
@@ -24468,6 +24552,29 @@
 
 
 
+    window.__DOMACNOST_E2E_GARAGE_CLOUD_DIAGNOSTIC__ = () => {
+      const vehicle = {
+        cloudId: 'garage-e2e-vehicle', name: 'Testovací auto', plate: 'TEST',
+        fuelType: 'benzín', note: 'lokální poznámka', technicalSpecs: { brand: 'Test' },
+        updatedAt: '2026-10-14T12:00:00.000Z'
+      };
+      const expected = cloudVehiclePayload(vehicle, 'test-user', { mode: 'update' });
+      const remote = { ...structuredCloneSafe(expected), id: vehicle.cloudId, updated_at: '2026-10-14T11:00:00.000Z' };
+      const equal = garageVehicleCloudDifference(vehicle, remote);
+      const removedColumn = { ...remote };
+      delete removedColumn.technical_specs;
+      const schema = garageVehicleCloudDifference(vehicle, removedColumn);
+      const changed = garageVehicleCloudDifference(vehicle, { ...remote, note: 'jiná cloudová poznámka' });
+      const newer = garageVehicleCloudDifference(vehicle, { ...remote, updated_at: '2026-10-14T13:00:00.000Z' });
+      return {
+        equal: equal.type === 'same',
+        schema: schema.type === 'schema' && schema.missingColumns.includes('technical_specs'),
+        changed: changed.type === 'different' && changed.differentColumns.includes('note'),
+        newer: newer.remoteNewer,
+        missing: garageVehicleCloudDifference(vehicle, null).type === 'missing',
+        local: garageVehicleCloudDifference({ ...vehicle, cloudId: '' }, null).type === 'local'
+      };
+    };
     window.__DOMACNOST_E2E_HOUSEHOLD_DEPENDENCIES__ = async () => {
       await ensureHouseholdUiSyncDependencies();
       const payload = householdUiPayload();
