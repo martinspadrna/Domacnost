@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_540';
-  const APP_BUILD = 540;
+  const APP_VERSION = 'Domácnost+ v.0.1_541';
+  const APP_BUILD = 541;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -1159,6 +1159,10 @@
     // Cloud sync proto musí tento malý datový modul připravit i tehdy, když
     // uživatel Předplatné v aktuální relaci vůbec neotevřel.
     if (!moduleCodeReady('subscriptions')) await ensureModuleCode('subscriptions');
+    // Ukládání i načtení celého dashboard_layout pracuje také s vape.
+    // Bez tohoto modulu mohl po úspěšném CAS zápisu spadnout až lokální
+    // potvrzovací krok a zobrazit chybnou zprávu o neuložené platbě.
+    if (!moduleCodeReady('vape')) await ensureModuleCode('vape');
     return true;
   }
 
@@ -18471,6 +18475,13 @@
       if (state.cloud?.householdId !== householdId) return;
       if (error) throw error;
       if (!data) throw new Error('Domácnost v cloudu nenalezena');
+      // Ruční kontrola zároveň dotáhne pouze nové serverem potvrzené platby.
+      // Ostatní pending změny domácnosti zůstanou zcela nedotčené.
+      const importedCount = mergeConfirmedRemoteSubscriptionPayments({ ...data, id: householdId });
+      if (importedCount) {
+        touchState();
+        persistStateSnapshot({ immediate: true });
+      }
       const result = subscriptionPendingDiagnosticSummary(householdUiRemoteLayout(data));
       subscriptionCloudRecoveryAvailable = Boolean(!cloudHasBlockingConflict() && subscriptionPaymentRecoveryCandidate(householdUiRemoteLayout(data)));
       if (result.matched && reconcileConfirmedSubscriptionPending(data)) {
@@ -18480,6 +18491,7 @@
       } else {
         subscriptionCloudDiagnosticReport = result.message;
       }
+      if (importedCount) subscriptionCloudDiagnosticReport = 'Z cloudu bylo do zařízení bezpečně načteno ' + importedCount + ' nových plateb. ' + subscriptionCloudDiagnosticReport;
       if (!result.matched && state.cloud?.householdUiRevision
           && normalizeText(state.cloud.householdUiRevision) !== householdUiRemoteRevision(data)) {
         subscriptionCloudDiagnosticReport += ' Cloudová revize se mezitím změnila; nic nepřepisuji.';
@@ -22081,6 +22093,9 @@
       const applyRemote = shouldApplyRemoteHouseholdUi(activeHousehold);
       state.household = { ...(state.household || {}), id: activeHousehold.id, isConfigured: true };
       if (applyRemote) {
+        // Remote apply normalizuje Předplatné i vape. Na novém zařízení
+        // nesmí spadnout jen proto, že uživatel tyto moduly neotevřel.
+        await ensureHouseholdUiSyncDependencies();
         trashTrackingSuppressed = true;
         try {
           state.household.name = activeHousehold.name || state.household?.name || 'Domácnost';
@@ -22461,6 +22476,7 @@
         if (showMessage && state.cloud?.householdUiConflict) showToast('Cloud má novější změnu. Vyber, která verze má zůstat.');
         return true;
       }
+      await ensureHouseholdUiSyncDependencies();
       trashTrackingSuppressed = true;
       try {
         state.household.name = data.name || state.household.name || 'Domácnost';
@@ -24452,6 +24468,13 @@
 
 
 
+    window.__DOMACNOST_E2E_HOUSEHOLD_DEPENDENCIES__ = async () => {
+      await ensureHouseholdUiSyncDependencies();
+      const payload = householdUiPayload();
+      return moduleCodeReady('subscriptions') && moduleCodeReady('vape')
+        && !!payload?.dashboard_layout?.vape
+        && Array.isArray(payload?.dashboard_layout?.subscriptionPayments);
+    };
     window.__DOMACNOST_E2E_SUBSCRIPTION_READ_THROUGH__ = () => {
       const before = {
         subscriptions: structuredCloneSafe(state.subscriptions || []),
