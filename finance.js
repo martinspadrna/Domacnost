@@ -1457,14 +1457,9 @@
       }
       saveState();
       if (!cloudReady()) return Promise.resolve(true);
+      // Odbavení revize provádí centrální CAS potvrzení skutečně odeslaného snapshotu.
       return cloudSaveHouseholdUiSettings(false)
-          .then((ok) => {
-            if (ok) {
-              getState().financeCloud = { ...(getState().financeCloud || {}), templatesPendingAt: '', templatesLoadedAt: new Date().toISOString() };
-              persistStateSnapshot();
-            }
-            return ok;
-          })
+          .then((ok) => Boolean(ok))
           .catch((error) => {
             persistStateSnapshot();
             console.warn('Finance template autosync failed', error);
@@ -1870,18 +1865,9 @@
       render();
       if (toast) showToast(toast);
       if (!cloudReady()) return Promise.resolve(true);
+      // Při souběžných úpravách nesmazat značku nové lokální změny.
       return cloudSaveHouseholdUiSettings(false)
-          .then((ok) => {
-            if (ok) {
-              getState().financeCloud = {
-                ...(getState().financeCloud || {}),
-                loansPendingAt: '',
-                loansLoadedAt: new Date().toISOString()
-              };
-              persistStateSnapshot();
-            }
-            return Boolean(ok);
-          })
+          .then((ok) => Boolean(ok))
           .catch((error) => {
             persistStateSnapshot();
             console.warn('Finance loans autosync failed', error);

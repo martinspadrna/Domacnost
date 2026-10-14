@@ -1903,6 +1903,14 @@ async function run() {
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_OFFLINE_QUEUE__?.()` });
     await page.send('Runtime.evaluate', { expression: `window.DomacnostModuleLoader?.ensure?.('tasks')`, awaitPromise: true });
 
+    const serializedSaveCheck = await page.send('Runtime.evaluate', {
+      expression: 'window.__DOMACNOST_E2E_SERIALIZE_HOUSEHOLD_SAVES__?.()',
+      awaitPromise: true,
+      returnByValue: true
+    });
+    if (serializedSaveCheck.result?.value !== true) fail('Cloud: household CAS zápisy nebyly serializovány.');
+    else ok('Cloud: souběžné household CAS zápisy proběhly ve správném pořadí.');
+
     const householdBaselineCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => ({
