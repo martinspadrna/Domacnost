@@ -41,3 +41,9 @@ Aktualizováno: 14. 10. 2026. Na začátku nového chatu načíst celý tento so
 
 ## Pravidlo pokračování
 Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené etapě doplnit sem přesně: verze, branch/commit, změny, výsledky testů, rizika, stav (%), další konkrétní úkol.
+
+## 14. 10. 2026 — přetrvávající Předplatné po produkční 537
+- Uživatel potvrdil: problém **stále stejný** i po nasazení 537, nelze považovat P0 Předplatné za dokončené. Nevypínat ochranu CAS ani nemazat pending bez potvrzení.
+- Kandidát **v0.1_538** na `fix/p0-subscription-recovery-538`: v Cloud domácnosti lze tlačítkem **Prověřit Předplatné** bezpečně a read-only porovnat skutečná cloudová data s lokálními. Výpis jen počtů a názvů rozdílných polí; při bezpečně potvrzené shodě může vyčistit starý marker, jinak data zachová.
+- Serverem potvrzený zápis household snapshotu nově odbaví shodné moduly i když se během sítě změnil jiný modul; každý stále rozdílný zůstane ve frontě.
+- Otestovat npm check + browser E2E. **Do main/produkce nepublikovat bez testů a schválení.** Poté vyžádat výsledek diagnostiky z konkrétního zařízení.
