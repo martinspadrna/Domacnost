@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_537';
-  const APP_BUILD = 537;
+  const APP_VERSION = 'Domácnost+ v.0.1_538';
+  const APP_BUILD = 538;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18452,6 +18452,44 @@
     };
   }
 
+
+  let subscriptionCloudDiagnosticReport = '';
+  let subscriptionCloudDiagnosticHouseholdId = '';
+
+  async function diagnoseSubscriptionPending() {
+    if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
+    const householdId = state.cloud.householdId;
+    try {
+      await ensureHouseholdUiSyncDependencies();
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Cloudové spojení není dostupné');
+      // SELECT; žádný cloudový UPDATE, žádný force ani ruční odmazání fronty.
+      const { data, error } = await client.from('households')
+        .select('updated_at, dashboard_layout, weather_location')
+        .eq('id', householdId).maybeSingle();
+      if (state.cloud?.householdId !== householdId) return;
+      if (error) throw error;
+      if (!data) throw new Error('Domácnost v cloudu nenalezena');
+      const result = subscriptionPendingDiagnosticSummary(householdUiRemoteLayout(data));
+      if (result.matched && reconcileConfirmedSubscriptionPending(data)) {
+        touchState();
+        persistStateSnapshot({ immediate: true });
+        subscriptionCloudDiagnosticReport = result.message + ' Původní čekající změna byla bezpečně potvrzena.';
+      } else {
+        subscriptionCloudDiagnosticReport = result.message;
+      }
+      if (!result.matched && state.cloud?.householdUiRevision
+          && normalizeText(state.cloud.householdUiRevision) !== householdUiRemoteRevision(data)) {
+        subscriptionCloudDiagnosticReport += ' Cloudová revize se mezitím změnila; nic nepřepisuji.';
+      }
+    } catch (error) {
+      if (state.cloud?.householdId !== householdId) return;
+      subscriptionCloudDiagnosticReport = 'Ověření selhalo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální data zůstala nedotčená.';
+    }
+    subscriptionCloudDiagnosticHouseholdId = householdId;
+    requestBackgroundRender();
+  }
+
   function renderCloudRecoveryPanel() {
     const pendingItems = cloudSyncPendingItems();
     const outbox = normalizeCloudOutbox(state.cloud?.outbox || []);
@@ -18485,6 +18523,8 @@
             <div class="cloud-recovery-error-row"><div><strong>${escapeHtml(entry.label || cloudOutboxCollectionLabel(entry))}</strong><span>${entry.attempts} ${entry.attempts === 1 ? 'pokus' : entry.attempts < 5 ? 'pokusy' : 'pokusů'}${entry.nextRetryAt ? ` · ${escapeHtml(cloudRetryRelativeLabel(entry.nextRetryAt))}` : ' · čeká na kontrolu'}</span></div>${entry.lastError ? `<em>${escapeHtml(cloudErrorFriendlyMessage({ code: entry.lastErrorCode, message: entry.lastError }))}${entry.lastErrorHint ? `<small>${escapeHtml(entry.lastErrorHint)}</small>` : ''}</em>` : ''}</div>`).join('')}</div>
         </details>` : ''}
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
+        ${state.subscriptionsCloud?.pendingAt ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button></div>' : ''}
+        ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
       </section>`;
   }
 
@@ -19829,6 +19869,10 @@
     }
     if (action === 'cloud-retry-now') {
       runCloudAutosyncNow(true);
+      return;
+    }
+    if (action === 'cloud-diagnose-subscriptions') {
+      diagnoseSubscriptionPending();
       return;
     }
     if (action === 'cloud-dismiss-error') {
@@ -21362,6 +21406,44 @@
     };
   }
 
+
+  // Diagnostika pracuje jen s metadaty rozdílů. Žádné lokální hodnoty neposílá
+  // nikam jinam než přes stávající ověřené rozhraní domácnosti.
+  function subscriptionPendingDiagnosticSummary(layout = {}) {
+    const keys = ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'];
+    if (!keys.every((key) => Array.isArray(layout[key]))) {
+      return { matched: false, complete: false, message: 'Cloudový snapshot Předplatného je neúplný. Nic nebylo smazáno.' };
+    }
+    const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
+    const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
+    const matched = subscriptionSnapshotMatchesRemote(layout);
+    const names = { subscriptions: 'Služby', subscriptionPeople: 'Lidé', subscriptionPayments: 'Platby' };
+    const parts = keys.map((key) => {
+      const localRows = local[key] || [];
+      const cloudRows = remote[key] || [];
+      const remoteIds = new Map(cloudRows.map((item) => [String(item.id || ''), item]));
+      const localIds = new Set(localRows.map((item) => String(item.id || '')));
+      const fields = new Set();
+      let changed = 0;
+      localRows.forEach((item) => {
+        const onCloud = remoteIds.get(String(item.id || ''));
+        if (!onCloud) return;
+        const changedFields = [...new Set([...Object.keys(item), ...Object.keys(onCloud)])]
+          .filter((field) => JSON.stringify(item[field]) !== JSON.stringify(onCloud[field]));
+        if (changedFields.length) changed += 1;
+        changedFields.forEach((field) => fields.add(field));
+      });
+      const onlyLocal = localRows.filter((item) => !remoteIds.has(String(item.id || ''))).length;
+      const onlyCloud = cloudRows.filter((item) => !localIds.has(String(item.id || ''))).length;
+      return names[key] + ': zařízení ' + localRows.length + ', cloud ' + cloudRows.length
+        + ' (jen zařízení ' + onlyLocal + ', jen cloud ' + onlyCloud + ', změněné ' + changed + ')'
+        + (fields.size ? ' · rozdílná pole: ' + [...fields].sort().join(', ') : '');
+    });
+    return { matched, complete: true, message: matched
+      ? 'Předplatné na zařízení a v cloudu se obsahově shoduje.'
+      : 'Předplatné se liší. ' + parts.join(' | ') + '. Změny nebyly přepsány.' };
+  }
+
   function subscriptionSnapshotMatchesRemote(layout = {}) {
     const local = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
     const remote = canonicalSubscriptionSnapshot(layout.subscriptions, layout.subscriptionPeople, layout.subscriptionPayments);
@@ -22140,6 +22222,9 @@
       // Během síťového zápisu mohl uživatel udělat další změnu. Odpověď pak
       // potvrzuje pouze snapshot odeslaný na začátku requestu, ne novější
       // lokální stav. Novější změny proto ponecháme ve frontě a pošleme znovu.
+      // Potvrdit shodné sekce i při změně jiné části během requestu.
+      reconcileConfirmedSubscriptionPending(data);
+      reconcileConfirmedSnapshotSectionPendings(data);
       markHouseholdUiSnapshotChangesSince(updatePayload, syncedAt);
     }
     saveState();
@@ -24158,6 +24243,19 @@
         same: Boolean(local && remote && JSON.stringify(local) === JSON.stringify(remote)),
         changed: Boolean(local && changed && JSON.stringify(local) === JSON.stringify(changed))
       };
+    };
+
+    window.__DOMACNOST_E2E_SUBSCRIPTION_PENDING_DIAGNOSTIC__ = () => {
+      const layout = {
+        subscriptions: structuredCloneSafe(state.subscriptions || []),
+        subscriptionPeople: structuredCloneSafe(state.subscriptionPeople || []),
+        subscriptionPayments: structuredCloneSafe(state.subscriptionPayments || [])
+      };
+      const same = subscriptionPendingDiagnosticSummary(layout);
+      const changed = structuredCloneSafe(layout);
+      changed.subscriptions.push({ id: 'new-remote-only-e2e', name: 'Extra', serviceKey: 'other', price: 99, billingDay: 1, enabled: true });
+      const different = subscriptionPendingDiagnosticSummary(changed);
+      return { same: same.matched, changed: different.matched, reportsDifferent: different.message.includes('jen cloud 1') };
     };
     window.__DOMACNOST_E2E_RECONCILE_SUBSCRIPTION_PENDING__ = () => {
       const previous = structuredCloneSafe(state.subscriptionsCloud || {});
