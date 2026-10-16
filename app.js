@@ -7660,6 +7660,7 @@
   }
 
   function getCloudSyncOverviewItems() {
+    const recoverableFinanceDeletes = recoverableFinanceTrashDeleteIds();
     const snapshotSectionPending = Boolean(
       state.subscriptionsCloud?.pendingAt
       || state.readingsCloud?.pendingAt
@@ -7689,7 +7690,7 @@
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0, pendingAt: state.loyaltyCardsCloud?.pendingAt },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0, pendingAt: state.poolCloud?.pendingAt },
       { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: financeSettingsPendingCount(), pendingAt: financeSettingsPendingAt() },
-      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceTrashDeleteIds().length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => recoverableFinanceTrashDeleteIds().includes(entry.id))?.deletedAt },
+      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceDeletes.length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => recoverableFinanceDeletes.includes(entry.id))?.deletedAt },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending, pendingAt: state.cloud?.householdUiPendingAt }
     ];
     return counters.map((entry) => {
