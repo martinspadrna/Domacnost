@@ -15,12 +15,9 @@ const remoteAccount={id:'account-remote',name:'Původní cloud',account_type:'ba
 const remoteMove={id:'move-remote',type:'expense',title:'Původní cloud',amount:10,transaction_date:'2026-10-16',account_id:'account-remote',updated_at:'2026-10-16T05:00:00Z'};
 function client(){
   return {from(table){
-    let orders=0;
-    const q={select(){return q;},eq(){return q;},order(){
-      orders++;
-      if(table==='finance_accounts'||orders===2) return Promise.resolve({data:table==='finance_accounts'?[remoteAccount]:[remoteMove],error:null});
-      return q;
-    }};
+    const q={select(){return q;},eq(){return q;},order(){return q;},
+      range(){return Promise.resolve({data:table==='finance_accounts'?[remoteAccount]:[remoteMove],error:null,count:1});}
+    };
     return q;
   }};
 }

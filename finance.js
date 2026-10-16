@@ -1324,6 +1324,69 @@
       return ids;
     }
 
+    // Načíst všechny stránky před nahrazením lokálního stavu.
+    async function cloudFinanceFetchAll(client, table, columns, householdId) {
+      const pageSize = 250;
+      const rows = [];
+      const seen = new Set();
+      let offset = 0;
+      let expectedCount = null;
+      while (true) {
+        if (getState().cloud?.householdId !== householdId) {
+          return { data: null, error: { message: 'Během načítání Financí se změnila domácnost' } };
+        }
+        let query = client.from(table).select(columns, { count: 'exact' }).eq('household_id', householdId);
+        if (table === 'finance_accounts') {
+          query = query.eq('is_archived', false).order('name', { ascending: true });
+        } else {
+          query = query.order('transaction_date', { ascending: false })
+            .order('created_at', { ascending: false });
+        }
+        let response;
+        try {
+          // range používá 0-based inclusive konec; id stabilizuje stejné časy/názvy.
+          response = await query.order('id', { ascending: true }).range(offset, offset + pageSize - 1);
+        } catch (error) {
+          return { data: null, error };
+        }
+        if (response?.error || !Array.isArray(response?.data)) {
+          return { data: null, error: response?.error || { message: 'Cloud vrátil neúplná finanční data' } };
+        }
+        if (Number.isInteger(response.count) && response.count >= 0) {
+          if (expectedCount !== null && response.count !== expectedCount) {
+            return { data: null, error: { message: 'Finance se během stránkování v cloudu změnily' } };
+          }
+          expectedCount = response.count;
+        }
+        for (const row of response.data) {
+          const id = String(row?.id || '');
+          if (!id || seen.has(id)) {
+            return { data: null, error: { message: 'Cloud vrátil duplicitní nebo neplatné finanční ID' } };
+          }
+          seen.add(id);
+          rows.push(row);
+        }
+        offset += response.data.length;
+        if (expectedCount !== null) {
+          if (offset > expectedCount) {
+            return { data: null, error: { message: 'Cloud vrátil nekonzistentní počet finančních záznamů' } };
+          }
+          if (offset === expectedCount) break;
+        }
+        // I při serverovém max_rows menším než stránka se nesmí načítání ukončit předčasně.
+        if (!response.data.length) {
+          if (expectedCount !== null) {
+            return { data: null, error: { message: 'Cloud nedodal všechny finanční záznamy' } };
+          }
+          break;
+        }
+      }
+      if (getState().cloud?.householdId !== householdId) {
+        return { data: null, error: { message: 'Během načítání Financí se změnila domácnost' } };
+      }
+      return { data: rows, error: null };
+    }
+
     async function cloudLoadFinance(showMessage = true) {
       const client = getSupabaseClient();
       const requestedHouseholdId = getState().cloud?.householdId;
@@ -1334,12 +1397,11 @@
         accounts: getState().financeAccounts || [],
         transactions: getState().finance || []
       });
-      const { data: accountData, error: accountError } = await client
-        .from('finance_accounts')
-        .select('id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at')
-        .eq('household_id', getState().cloud.householdId)
-        .eq('is_archived', false)
-        .order('name', { ascending: true });
+      const { data: accountData, error: accountError } = await cloudFinanceFetchAll(
+        client, 'finance_accounts',
+        'id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at',
+        requestedHouseholdId
+      );
       if (accountError) {
         showToast(accountError.message || 'Finanční účty se nepovedlo načíst z cloudu');
         return false;
@@ -1365,12 +1427,11 @@
       const stagedAccounts = [...cloudAccounts, ...localAccounts];
       const cloudAccountById = Object.fromEntries(stagedAccounts.filter((account) => account.cloudId).map((account) => [account.cloudId, account]));
 
-      const { data, error } = await client
-        .from('finance_transactions')
-        .select('id,type,title,amount,transaction_date,payment_method,note,created_at,updated_at,account_id,transfer_account_id')
-        .eq('household_id', getState().cloud.householdId)
-        .order('transaction_date', { ascending: false })
-        .order('created_at', { ascending: false });
+      const { data, error } = await cloudFinanceFetchAll(
+        client, 'finance_transactions',
+        'id,type,title,amount,transaction_date,payment_method,note,created_at,updated_at,account_id,transfer_account_id',
+        requestedHouseholdId
+      );
       if (error) {
         showToast(error.message || 'Finance se nepovedlo načíst z cloudu');
         return false;
