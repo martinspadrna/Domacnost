@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_546';
-  const APP_BUILD = 546;
+  const APP_VERSION = 'Domácnost+ v.0.1_547';
+  const APP_BUILD = 547;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -1163,6 +1163,10 @@
     // Bez tohoto modulu mohl po úspěšném CAS zápisu spadnout až lokální
     // potvrzovací krok a zobrazit chybnou zprávu o neuložené platbě.
     if (!moduleCodeReady('vape')) await ensureModuleCode('vape');
+    // householdUiPayload() čte financeTypeFilter() přímo z finance.js.
+    // Při návratu z jiné sekce se před synchronizací nemusí načíst vůbec.
+    if (!moduleCodeReady('finance')) await ensureModuleCode('finance');
+    if (!moduleCodeReady('finance')) throw new Error('finance.js není načtený');
     return true;
   }
 
@@ -18543,6 +18547,70 @@
       localOnly, cloudOnly, changed, weatherChanged };
   }
 
+
+  // Detail pouze pro čtení: nikdy nezobrazuje hodnoty, ID profilů ani názvy
+  // smazaných záznamů. Ke změně konfliktu se tyto souhrny nepoužívají.
+  function householdUiSettingsDiagnosticDetails(localPayload, household, vehicles = state.vehicles || []) {
+    const local = householdUiComparableLayout(localPayload?.dashboard_layout || {});
+    const cloud = householdUiComparableLayout(householdUiRemoteLayout(household));
+    const same = (a, b) => JSON.stringify(canonicalComparableJson(a)) === JSON.stringify(canonicalComparableJson(b));
+    const lines = [];
+    const sectionChanged = (key) => !same(local[key], cloud[key]);
+
+    if (sectionChanged('profileUiSettings')) {
+      const left = local.profileUiSettings && typeof local.profileUiSettings === 'object' ? local.profileUiSettings : {};
+      const right = cloud.profileUiSettings && typeof cloud.profileUiSettings === 'object' ? cloud.profileUiSettings : {};
+      const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+      const changedProfiles = [...keys].filter(key => !same(left[key], right[key]));
+      const allowedFields = new Set(['bottomNavIds', 'dashboardWidgets', 'homeHeroItems', 'homeWidgets',
+        'homeQuickActionIds', 'homeTodayBadgeIds', 'visualSettings']);
+      const fields = new Set();
+      changedProfiles.forEach(key => {
+        const l = left[key] && typeof left[key] === 'object' ? left[key] : {};
+        const r = right[key] && typeof right[key] === 'object' ? right[key] : {};
+        new Set([...Object.keys(l), ...Object.keys(r)]).forEach(field => {
+          if (!same(l[field], r[field])) fields.add(allowedFields.has(field) ? field : 'ostatní');
+        });
+      });
+      lines.push('Nastavení profilů: odlišné profily ' + changedProfiles.length +
+        ' (PC ' + Object.keys(left).length + ', cloud ' + Object.keys(right).length +
+        '); oblasti: ' + ([...fields].sort().join(', ') || 'neuvedeno'));
+    }
+
+    if (sectionChanged('trash')) {
+      const left = Array.isArray(local.trash) ? local.trash : [];
+      const right = Array.isArray(cloud.trash) ? cloud.trash : [];
+      const byId = rows => new Map(rows.filter(row => row && row.id).map(row => [String(row.id), row]));
+      const a = byId(left), b = byId(right);
+      const onlyPC = [...a.keys()].filter(id => !b.has(id)).length;
+      const onlyCloud = [...b.keys()].filter(id => !a.has(id)).length;
+      const changed = [...a.keys()].filter(id => b.has(id) && !same(a.get(id), b.get(id))).length;
+      lines.push('Koš: PC ' + left.length + ', cloud ' + right.length +
+        '; pouze PC ' + onlyPC + ', pouze cloud ' + onlyCloud + ', rozdílné společné ' + changed);
+    }
+
+    for (const [key, defaultValue, label] of [
+      ['vehicleIconColors', 'blue', 'Barvy aut'],
+      ['vehicleIconShapes', 'car', 'Tvary aut']
+    ]) {
+      if (!sectionChanged(key)) continue;
+      const left = local[key] && typeof local[key] === 'object' ? local[key] : {};
+      const right = cloud[key] && typeof cloud[key] === 'object' ? cloud[key] : {};
+      const onlyPC = Object.keys(left).filter(id => !Object.prototype.hasOwnProperty.call(right, id)).length;
+      const onlyCloud = Object.keys(right).filter(id => !Object.prototype.hasOwnProperty.call(left, id)).length;
+      const changed = Object.keys(left).filter(id =>
+        Object.prototype.hasOwnProperty.call(right, id) && left[id] !== right[id]).length;
+      const list = Array.isArray(vehicles) ? vehicles : [];
+      const effective = (map, car) =>
+        [car.cloudId, car.id, normalizeKey(car.name)].filter(Boolean).map(id => map[id]).find(Boolean) || defaultValue;
+      const visiblyDifferent = list.filter(car => effective(left, car) !== effective(right, car)).length;
+      lines.push(label + ': klíče pouze PC ' + onlyPC + ', pouze cloud ' + onlyCloud +
+        ', rozdílné společné ' + changed +
+        (list.length ? '; rozdílný efekt u ' + visiblyDifferent + ' z ' + list.length + ' aut' : ''));
+    }
+    return lines;
+  }
+
   let householdUiDiagnosticHouseholdId = '';
   let householdUiDiagnosticReport = '';
 
@@ -18580,6 +18648,7 @@
         if (diff.localOnly.length) details.push('Chybí v cloudu: ' + list(diff.localOnly));
         if (diff.cloudOnly.length) details.push('Pouze v cloudu: ' + list(diff.cloudOnly));
         if (diff.weatherChanged) details.push('Rozdílné nastavení počasí');
+        details.push(...householdUiSettingsDiagnosticDetails(local, data));
         const known = normalizeText(state.cloud?.householdUiRevision);
         const remote = householdUiRemoteRevision(data);
         if (known && remote && known !== remote) details.push('Cloud má jinou revizi než PC');
@@ -24668,6 +24737,31 @@
 
 
 
+    window.__DOMACNOST_E2E_SETTINGS_DETAIL__ = () => {
+      const local = { dashboard_layout: {
+        profileUiSettings: { 'private-profile-a': { dashboardWidgets: ['one'] } },
+        trash: [{ id: 'hidden-deletion-a', label: 'private-data', records: [{ id: 'x' }] }],
+        vehicleIconColors: { 'hidden-vehicle-id': 'blue' },
+        vehicleIconShapes: { 'hidden-vehicle-id': 'car' }
+      } };
+      const cloud = { dashboard_layout: {
+        profileUiSettings: { 'private-profile-a': { dashboardWidgets: ['two'] } },
+        trash: [{ id: 'hidden-deletion-b', label: 'private-data', records: [{ id: 'y' }] }],
+        vehicleIconColors: { 'hidden-vehicle-id': 'red' },
+        vehicleIconShapes: { 'hidden-vehicle-id': 'truck' }
+      } };
+      const details = householdUiSettingsDiagnosticDetails(local, cloud,
+        [{ cloudId: 'hidden-vehicle-id', id: 'local-car', name: 'auto' }]);
+      const text = details.join(' | ');
+      return {
+        sections: details.length === 4,
+        profile: text.includes('dashboardWidgets'),
+        trash: text.includes('pouze PC 1') && text.includes('pouze cloud 1'),
+        icons: text.includes('rozdílný efekt u 1 z 1 aut'),
+        private: !text.includes('private-data') && !text.includes('private-profile-a') &&
+          !text.includes('hidden-vehicle-id') && !text.includes('hidden-deletion-a')
+      };
+    };
     window.__DOMACNOST_E2E_SETTINGS_DIAGNOSTIC__ = () => {
       const local = { dashboard_layout: { widgets: ['a'], profileUiSettings: {x:{label:'value',updatedAt:'today'}}, updatedAt:'today', appBuild:APP_BUILD }, weather_location:{city:'A'} };
       const remote = { dashboard_layout: { widgets: ['a'], profileUiSettings: {x:{label:'value',updatedAt:'yesterday'}}, updatedAt:'yesterday', appBuild:1 }, weather_location:{city:'A'} };
@@ -24710,7 +24804,7 @@
     window.__DOMACNOST_E2E_HOUSEHOLD_DEPENDENCIES__ = async () => {
       await ensureHouseholdUiSyncDependencies();
       const payload = householdUiPayload();
-      return moduleCodeReady('subscriptions') && moduleCodeReady('vape')
+      return moduleCodeReady('subscriptions') && moduleCodeReady('vape') && moduleCodeReady('finance')
         && !!payload?.dashboard_layout?.vape
         && Array.isArray(payload?.dashboard_layout?.subscriptionPayments);
     };
