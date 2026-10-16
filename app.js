@@ -2735,7 +2735,7 @@
       if (entry.collection === 'finance' && !entry.expectedRevision) {
         // Bez původní revize nedovolíme nehlídané mazání finančního pohybu.
         const checked = await client.from(entry.table)
-          .select('id,updated_at').eq('id', entry.cloudId)
+          .select('*').eq('id', entry.cloudId)
           .eq('household_id', state.cloud.householdId).maybeSingle();
         if (checked.error) error = checked.error;
         else if (checked.data) {
