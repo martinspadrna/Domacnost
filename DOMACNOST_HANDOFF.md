@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_550** (merge PR #40 `30813254daa4f8deb73fdcad4b130862ea62eeb3`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_551** (merge PR #41 `fea59007eafbde2a10e267ede7569a1d3ef4e434`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -226,3 +226,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Ověřit kompletní CI + browser E2E a regresní chování ostatních modulů; až po PASS merge do main/produkce dle trvalého souhlasu uživatele a ověřit READY. Fyzický cross-device a offline→online test stále chybí.
 
 - **Stav po přípravě PR #41:** P0 cloud sync **rozpracováno (pracovní odhad 60 %)**; P0 Finance **rozpracováno**, účetní INSERT race čeká na CI a nasazení. Ověřovat pouze konkrétní PASS run z posledního commit SHA (starší run při změně testů nepostačí).
+
+### 16. 10. 2026 — v0.1_551 PRODUKCE, P0 Finance III
+- PR #41 https://github.com/martinspadrna/Domacnost/pull/41 **MERGED** do `main` (squash SHA `fea59007eafbde2a10e267ede7569a1d3ef4e434`).
+- **PR full CI + browser E2E PASS**, final head `af5d496309776947a599c729e2285d47c15a0e82`, run https://github.com/martinspadrna/Domacnost/actions/runs/38870423071; cílené Node testy pro single-flight / pending race PASS.
+- Vercel produkce **READY**, deployment `dpl_DNsqqWy8yasiF5keSH1VMr4eqP52`, SHA = merge, alias `domacnost-plus.vercel.app`, žádná chyba aliasu. Build marker 551.
+- **Hotovo v této etapě:** ochrana proti duplicitnímu vytváření stejného účtu souběžnými voláními v jedné běžící instanci a zachování neodeslané úpravy během INSERT. Bez DB migrace, bez mazání dat, PWA verze konzistentní.
+- **Zbývající P0 Finance (OPEN):** DB-level idempotentní INSERT a rozpoznání úspěchu po ztracené odpovědi, account-level CAS po ověření reálného schématu, bezpečné delete/outbox, šablony a půjčky; následně 2 zařízení, restart a offline→online. Supabase get_project/list_tables pro Domácnost+ stále permission denied — žádné neověřené SQL ani force overwrite.
+- **Fyzické potvrzení uživatelem této funkce ještě chybí.** P0 celkově rozpracováno (pracovní odhad 60 %); P1–P4 dosud čekají.
