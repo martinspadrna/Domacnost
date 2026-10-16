@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_549** (merge PR #39 `85216e494c535292738763af4ec993edd25d4bcc`, Vercel READY, CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_550** (merge PR #40 `30813254daa4f8deb73fdcad4b130862ea62eeb3`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -209,3 +209,10 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Kandidát v0.1_550: `ensureFinanceTransactionAccounts` vyžaduje existující lokální účty a potvrzená cloud ID, kontroluje i přepnutí domácnosti; `financeTransactionAccountsBound` blokuje neúplný účet nebo převod před INSERT i UPDATE. Při chybě se ponechá pending a v UI zobrazí zpráva. **Neprovádí DB migraci, force overwrite ani mazání záznamů**.
 - Browser E2E: 6 scénářů povoleného/nepovoleného odeslání, statické kontroly INSERT a UPDATE. Po PASS CI automaticky main + produkce dle výslovného souhlasu uživatele.
 - Dále P0: anti-race potvrzení account INSERT, idempotentní ochrana před duplicitním INSERT po ztracené odpovědi, account-level CAS po ověření DB a bezpečné delete/outbox. Finance pořád **IN PROGRESS**.
+
+### 16.10.2026 — v0.1_550 nasazení potvrzeno, P0 Finance II
+- PR #40 https://github.com/martinspadrna/Domacnost/pull/40 sloučen do main `30813254daa4f8deb73fdcad4b130862ea62eeb3`, PR full CI + browser E2E **PASS** run https://github.com/martinspadrna/Domacnost/actions/runs/38868616118 .
+- Vercel produkce **READY** `dpl_9ZhPVuRjYrQ7z4emuZWhw9rMGeWm`, SHA přesně odpovídá main, release.json = build 550.
+- Opraveny vazby pohybů na účty před INSERT i UPDATE, bez cloud account ID se transakce neodešle a pending se zachová. Žádné změny DB ani mazání dat.
+- Přístup ke schématu Supabase Domácnost+ stále nemá oprávnění. Account-level CAS a správnou idempotenci add operací **nepovažovat za hotové**. Další P0: účet při změně během pending INSERT, kontrola chybných/dvojitých INSERT, bezpečné delete/outbox, šablony a půjčky.
+- Uživatel dosud neprovedl fyzický test této úpravy mezi PC a mobilem, automatické CI neznamená fyzické potvrzení.
