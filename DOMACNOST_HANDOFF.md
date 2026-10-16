@@ -349,3 +349,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Test `tools/check-finance-cloud-link.mjs` kryje nepřipravenou relaci, přesné pending před persist, zabránění přepsání cloud načtením, účty/pohyby/kopie, čistě lokální režim i čas syncu. Navazuje na kompletní finance a browser E2E regresní sady.
 - **Před produkcí:** full GitHub CI včetně browser E2E PASS na posledním PR SHA, poté merge dle dřívějšího souhlasu a Vercel READY/alias. Fyzický PC↔mobil/offline→online test až po širší etapě, jak uživatel požádal.
 - P0 nadále **IN PROGRESS cca 85 %**; ztracené ACK INSERT a account-level CAS bez ověřeného backendu nejsou vyřešené.
+
+### 16. 10. 2026 — v0.1_558 PRODUKCE, P0 Finance X
+- PR #48 https://github.com/martinspadrna/Domacnost/pull/48 **MERGED**, squash commit `af90f45a57ac533ed9bbcee8edac436481e5a355` na `main`.
+- Kompletní **CI a browser E2E PASS**: PR `38884574167` na `2ca23e23881979886b49c7e4b07c3e5a210e7d9b`; main `38884682912` na squash `af90f45a57ac533ed9bbcee8edac436481e5a355`.
+- Vercel produkce **READY**, deployment `dpl_75HF3xLvZv65mEFVb2ixB64uMvvP`, commit souhlasí s main; alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Nasazeno trvalé pending Finance u cloudově propojené domácnosti při nepřipravené relaci, nové pohyby čekají již před prvním uložením, kopie nedědí cloudovou revizi, konfliktní účet se neodesílá automaticky, jednotlivý Finance ACK neposouvá čas úspěchu celé synchronizace.
+- **Fyzicky ještě nepotvrzeno na reálných zařízeních.** P0 stále IN PROGRESS přibližně **85 %** (orientační, po ověření klientské vrstvy).
+- **Další krok:** nepřidávat další spekulativní změny. U správného Supabase projektu Domácnost+ zajistit oprávněný schema audit `finance_accounts` pro účetní CAS a server-side INSERT idempotency. Do té doby jen konzervativní klientské opravy při konkrétní reprodukované chybě. Po uzavření backendu připravit jeden souhrnný fyzický test PC↔mobil: účet/pohyb create/edit/delete/Undo, 2 souběžné editace stejného záznamu, přepnutí domácnosti, offline→online, restart PWA a obnova outboxu/Koše; porovnat počty i hodnoty a zkontrolovat `lastSyncAt`/pending/konflikty. Žádné force, migrace či mazání bez ověření.
