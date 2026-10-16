@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Poslední potvrzená produkční verze: v0.1_560** (PR #50, následný main CI PASS, Vercel READY); v0.1_561 je zatím kandidát, dokud neprojde CI a nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_561** (PR #51, merge `724f6e67b085b2b9b60ff3cdd051cc86aaf6402c`, Vercel READY, PR CI a browser E2E PASS). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -394,3 +394,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Oprava uzamyká identitu domácnosti + uživatele pro jeden replay, explicitně scope-uje všechny HTTP dotazy na původní domácnost, po každé odpovědi kontroluje aktuální workspace a přítomnost odpovídající outbox položky. Při změně domácnosti/revize fronty se bezpečně zastaví **bez zápisu do nové fronty**. Při ACK/FAIL vždy složí frontu z jejího aktuálního stavu, takže dodatečně vytvořená mazání nezmizí.
 - Nový vykonatelný test `tools/check-cloud-outbox-race.mjs` simuluje reálné asynchronní odpovědi: přepnutí během archivace Finance Account, přidání dalšího DELETE při prvním await, chybovou odpověď a finance read-before-delete při změně domácnosti. Bez potřeby přístupu k produkční DB; žádná migrace ani úprava RLS.
 - Verze a PWA cache sjednocena na v0.1_561. **Před nasazením** plné CI + Chrome browser E2E PASS, poté merge a Vercel READY / alias. P0 stále **IN PROGRESS ~85 %**, správné Supabase oprávnění, účetní CAS/idempotentní INSERT a fyzický PC↔mobil test zůstávají otevřené.
+
+### 16. 10. 2026 — v0.1_561 PRODUKCE, P0 Finance XII
+- PR #51 https://github.com/martinspadrna/Domacnost/pull/51 **MERGED**, squash commit `724f6e67b085b2b9b60ff3cdd051cc86aaf6402c` na `main`.
+- PR full checks a browser E2E **PASS** na head `eeb683397c31ba956d04bfd1f8b18e893b5c4905`, run `38910893824`. Starší statický Finance restart test byl upraven na nové bezpečné pořadí potvrzování ACK.
+- Vercel produkce **READY**: deployment `dpl_BEN9aghsT6NoibpPF1aoQgtZ1Af9`, commit souhlasí s main; `domacnost-plus.vercel.app` alias přidělen a `aliasError=null`.
+- Scoped DELETE outbox: žádné přepsání fronty nové domácnosti pozdním ACK ze staré, žádná ztráta dalších DELETE vzniklých během síťového požadavku. Testováno se simulovaným network await, chybovou odpovědí a změnou domácnosti; uživatelský fyzický test není dosud hotový.
+- **Main CI**: run `38911025385` zahájen pro merge SHA; ověřit konečný PASS po doběhnutí, případné selhání rozebrat podle logu.
+- **P0 IN PROGRESS cca 85 %.** Blokátor posledního kroku je autorizovaný přístup k projektu Supabase Domácnost+ kvůli DB account CAS a serverové idempotenci INSERT. Žádné DB zásahy bez ověření schématu a práv. Až poté souhrnný PC↔mobil/offline/restart test. Nepřidávat spekulativní klientské změny bez konkrétního rizika.
