@@ -1916,8 +1916,8 @@ async function run() {
       awaitPromise: true,
       returnByValue: true
     });
-    if (dependencyCheck.result?.value !== true) fail('Cloud: household snapshot vyžaduje lazy Předplatné a vape i bez otevřeného modulu.');
-    else ok('Cloud: všechny lazy závislosti household snapshotu jsou načtené před synchronizací.');
+    if (dependencyCheck.result?.value !== true) fail('Cloud: household snapshot vyžaduje lazy Předplatné, Vape a Finance i bez otevřeného modulu.');
+    else ok('Cloud: Předplatné, Vape i Finance se načtou před snapshot synchronizací.');
 
     const householdDiagnosticCheck = await page.send('Runtime.evaluate', {
       expression: 'window.__DOMACNOST_E2E_SETTINGS_DIAGNOSTIC__?.()',
@@ -1927,6 +1927,16 @@ async function run() {
     if (!householdDiagnostics.same || !householdDiagnostics.changed || !householdDiagnostics.missing || !householdDiagnostics.extra || !householdDiagnostics.weather)
       fail('Cloud Nastavení: read-only diagnostika nerozlišuje shodu a změny jednotlivých sekcí.');
     else ok('Cloud Nastavení: diagnostika rozlišuje obsahové rozdíly a ignoruje technické časové údaje.');
+
+    const settingsDetailCheck = await page.send('Runtime.evaluate', {
+      expression: 'window.__DOMACNOST_E2E_SETTINGS_DETAIL__?.()',
+      returnByValue: true
+    });
+    const settingsDetail = settingsDetailCheck.result?.value || {};
+    if (!settingsDetail.sections || !settingsDetail.profile || !settingsDetail.trash ||
+        !settingsDetail.icons || !settingsDetail.private)
+      fail('Cloud Nastavení: detail nesmí zobrazit citlivé hodnoty a musí rozlišit čtyři sekce.');
+    else ok('Cloud Nastavení: detail sekcí a soukromí potvrzeny.');
 
     const garageDiagnosticCheck = await page.send('Runtime.evaluate', {
       expression: 'window.__DOMACNOST_E2E_GARAGE_CLOUD_DIAGNOSTIC__?.()',
