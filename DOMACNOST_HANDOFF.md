@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_554** (merge PR #44 `aef0754deb53e1eb1d0d32cb958c6aa6b7d92444`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_555** (merge PR #45 `e4a5c7cef80e7b0bcc10f61e1b459b8fe7b033f2`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -298,3 +298,10 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Testy:** nový čistě lokální vykonatelný `tools/check-finance-restart.mjs` ověřuje restart po pádu Undo, opakovanou obnovu (idempotence), potvrzení DELETE a přežití ACK v Koši, jinou domácnost, aktivní Undo i starou cloud kopii Koše. Spouští se v `npm run check` s předchozími Finance regresními testy. Žádné DB migrace nebo zásahy do uživatelských dat.
 - **Limity:** bez potvrzeného `cloudId` po ztracené odpovědi serveru nelze dokončit delete bez DB idempotency; account-level CAS také závisí na přístupu ke schématu Supabase. Fyzický PC↔mobil test bude až po dalších opravách dle uživatele. P0 pracovní odhad ~80 % po CI/produkci, nikoli fyzicky potvrzené dokončení.
 - **Před main:** úplné GitHub CI + browser E2E PASS. Po sloučení ověřit poslední Vercel deployment READY, odpovídající git SHA a alias.
+
+### 16. 10. 2026 — v0.1_555 PRODUKCE, P0 Finance VII
+- PR #45 https://github.com/martinspadrna/Domacnost/pull/45 **MERGED**, squash `e4a5c7cef80e7b0bcc10f61e1b459b8fe7b033f2`.
+- **Full CI + browser E2E PASS** na PR SHA `73c6a40a912a68c87821fc2d1f8e0b78c55fab34`: https://github.com/martinspadrna/Domacnost/actions/runs/38879826076. První CI run selhal kvůli starému testovacímu source extractor podpisu (ne produkčnímu kódu), poté opraven a kompletně PASS.
+- **Produkční Vercel READY** `dpl_Ci9mZyNTy4YTbKQuAfvRfgrfaB2h`, SHA odpovídá release, alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Trvalý Koš po pádu/uzavření PWA během Undo nyní obnovuje bezpečně ztracené čekající smazání Finance do outboxu. Smazání čeká na Undo (~8s), hlídá domácnost i živé záznamy; potvrzené serverové DELETE/archivace mají persistentní `cloudDeleteConfirmedAt` a neopakují se. Příjem staršího Koše z cloudu tento marker neodstraňuje.
+- P0 IN PROGRESS cca **80 % (orientační)**. Uživatelský fyzický test až při dokončení širší etapy; stále OPEN serverová idempotence INSERT po ztracené odpovědi, account-level CAS po ověření DB, kompletní cross-device/offline restart. Uživatele neobtěžovat testováním po každém releasu.
