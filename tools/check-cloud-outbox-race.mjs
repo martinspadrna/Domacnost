@@ -14,7 +14,8 @@ assert(begin >= 0 && end > begin, 'Missing cloud outbox function');
 const functionSource = source.slice(begin, end).trim();
 const mk = (id, collection = 'financeAccounts') => ({
   id, collection, table: collection === 'financeAccounts' ? 'finance_accounts' : 'finance_transactions',
-  cloudId: id + '-remote', operation: 'delete', expectedRevision: ''
+  cloudId: id + '-remote', operation: 'delete', expectedRevision: '',
+  attempts: 0, lastError: '', createdAt: '2026-10-16T12:00:00.000Z'
 });
 let state, pending, persisted, confirmed, conflicts, scope;
 function setup() {
