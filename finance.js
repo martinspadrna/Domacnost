@@ -1508,6 +1508,7 @@
       showToast(cloudReady() ? 'Účet uložen, cloud se doposílá na pozadí' : 'Účet uložen');
       if (!cloudReady()) return;
       cloudAddFinanceAccount(account).then((saved) => {
+        if (!(getState().financeAccounts || []).includes(account)) return;
         if (financeAccountInsertConfirmed(account, saved)) {
           account.cloudId = saved.id;
           account.syncStatus = '';
@@ -1523,6 +1524,7 @@
         requestRender();
       }).catch((error) => {
         console.warn('Cloud sync (účet) na pozadí selhal', error);
+        if (!(getState().financeAccounts || []).includes(account)) return;
         account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('add-finance-account-failed');
         persistStateSnapshot();
@@ -1566,6 +1568,7 @@
       Promise.all(accounts.map(async (account) => {
         try {
           const saved = await cloudAddFinanceAccount(account);
+          if (!(getState().financeAccounts || []).includes(account)) return false;
           if (financeAccountInsertConfirmed(account, saved)) {
             account.cloudId = saved.id;
             account.syncStatus = '';
@@ -1574,7 +1577,7 @@
         } catch (error) {
           console.warn('Cloud sync (spravovaný účet) na pozadí selhal', error);
         }
-        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
+        if ((getState().financeAccounts || []).includes(account)) account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         return false;
       })).then((results) => {
         if (results.some((ok) => !ok)) markFinanceCloudPending('add-managed-finance-accounts-failed');
@@ -1794,12 +1797,13 @@
       if (cloudReady()) {
         for (const item of copies) {
           const saved = await cloudAddFinance(item);
-          if (saved?.id) {
+          if (!(getState().finance || []).includes(item)) continue;
+          if (financeTransactionInsertConfirmed(item, saved)) {
             item.cloudId = saved.id;
             item.syncStatus = '';
             cloudCount += 1;
           } else {
-            item.syncStatus = 'pending_add';
+            item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
           }
           await yieldToMainThread();
         }
@@ -1839,7 +1843,8 @@
       window.setTimeout(async () => {
         try {
           const saved = await cloudAddFinance(item);
-          if (saved?.id) {
+          if (!(getState().finance || []).includes(item)) return;
+          if (financeTransactionInsertConfirmed(item, saved)) {
             item.cloudId = saved.id;
             item.syncStatus = '';
             clearFinanceCloudPendingIfClean();
@@ -1849,14 +1854,16 @@
             showToast('Finance uloženy do cloudu');
             return;
           }
-          item.syncStatus = 'pending_add';
+          if (!(getState().finance || []).includes(item)) return;
+          item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
           markFinanceCloudPending('add-finance-failed');
           persistStateSnapshot();
           requestRender();
           showToast('Finance zůstaly lokálně a čekají na cloud');
         } catch (error) {
           console.warn('Finance background cloud add failed', error);
-          item.syncStatus = 'pending_add';
+          if (!(getState().finance || []).includes(item)) return;
+          item.syncStatus = item.cloudId ? 'pending_update' : 'pending_add';
           markFinanceCloudPending('add-finance-failed');
           persistStateSnapshot();
           requestRender();
@@ -1974,7 +1981,8 @@
       }
       if (cloudReady() && !next.cloudId) {
         const saved = await cloudAddFinance(next);
-        if (saved?.id) {
+        if (!(getState().finance || []).includes(next)) return;
+        if (financeTransactionInsertConfirmed(next, saved)) {
           next.cloudId = saved.id;
           next.syncStatus = '';
           clearFinanceCloudPendingIfClean();
@@ -1984,7 +1992,7 @@
           showToast('Pohyb uložen do cloudu');
           return;
         }
-        next.syncStatus = 'pending_add';
+        next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('update-finance-local');
         persistStateSnapshot();
         requestRender();
@@ -2027,6 +2035,7 @@
       } catch (error) {
         console.warn('Cloud sync (úprava účtu) na pozadí selhal', error);
       }
+      if (!(getState().financeAccounts || []).includes(next)) return;
       if (ok === true || financeAccountInsertConfirmed(next, ok)) {
         next.syncStatus = '';
         clearFinanceCloudPendingIfClean();
@@ -2175,6 +2184,7 @@
       const account = getState().financeAccounts.find((entry) => entry.id === id);
       if (!account) return;
       const saved = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
+      if (!(getState().financeAccounts || []).includes(account)) return;
       if (!financeAccountInsertConfirmed(account, saved) && saved !== true) {
         account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('sync-finance-account-failed');
@@ -2202,6 +2212,7 @@
       let count = 0;
       for (const account of local) {
         const ok = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
+        if (!(getState().financeAccounts || []).includes(account)) continue;
         if (ok === true || financeAccountInsertConfirmed(account, ok)) {
           account.syncStatus = '';
           count += 1;
@@ -2223,7 +2234,7 @@
       const item = getState().finance.find((entry) => entry.id === id);
       if (!item) return;
       const ok = item.cloudId ? await cloudUpdateFinance(item) : await cloudAddFinance(item);
-      if (!ok?.id && ok !== true) return;
+      if (!(getState().finance || []).includes(item) || (!financeTransactionInsertConfirmed(item, ok) && ok !== true)) return;
       item.syncStatus = '';
       clearFinanceCloudPendingIfClean();
       touchState();
@@ -2245,7 +2256,8 @@
       let count = 0;
       for (const item of local) {
         const ok = item.cloudId ? await cloudUpdateFinance(item) : await cloudAddFinance(item);
-        if (ok?.id || ok === true) {
+        if (!(getState().finance || []).includes(item)) continue;
+        if (financeTransactionInsertConfirmed(item, ok) || ok === true) {
           item.syncStatus = '';
           count += 1;
         } else if (ok !== 'conflict') {
