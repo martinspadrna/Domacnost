@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_551** (merge PR #41 `fea59007eafbde2a10e267ede7569a1d3ef4e434`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_552** (merge PR #42 `a1d1f4d80f39a2eededcc60e4e212e8c3236cee8`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -243,3 +243,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Testy `tools/check-finance-trash.mjs` + dřívější `tools/check-finance-account-insert.mjs` jsou v `npm run check`. PWA release surface v0.1_552 konzistentně navýšena; žádné DB migrace, mazání uživatelských dat ani force overwrite.
 - **Známá omezení:** Koš synchronizovaný přes household snapshot/CAS může být na druhém zařízení blokovaný nesouvisejícím pending konfliktem; poté je smazání fyzicky potvrzeno outboxem, ale vizuální stav druhého zařízení se projeví až po plném načtení či vyřešení konfliktu. U archivace účtu dosud není DB account-level CAS (Supabase schema permission denied), proto zahrnout fyzický cross-device test. Finance templates/loans používají existující snapshot/CAS; jejich souběžné úpravy a skutečné mazání dále OPEN.
 - **Před nasazením:** plné PR CI, browser E2E, testy stabilního startu, domácností a release cache. Po PASS dle svolení automaticky main + produkce, ověřit alias/commit. P0 rozpracováno, pracovní odhad po implementaci 65 % (fyzické potvrzení chybí).
+
+### 16.10.2026 — v0.1_552 PRODUKCE, P0 Finance IV
+- PR #42 https://github.com/martinspadrna/Domacnost/pull/42 **MERGED**, main commit `a1d1f4d80f39a2eededcc60e4e212e8c3236cee8`.
+- CI full check (včetně Finance INSERT race + Finance trash/outbox) a browser E2E **PASS**: https://github.com/martinspadrna/Domacnost/actions/runs/38871510870, PR head `a863566d1e374a2b134df0e68b96da1229180f27`.
+- Produkční Vercel **READY**, deployment `dpl_AssJSsFo4HRnirMGjudSLHTr2LHs`, git SHA odpovídá merge, alias `domacnost-plus.vercel.app`, žádný aliasError.
+- Finance pohyby/účty nyní používají existující Koš + cloud outbox, místo okamžitého paralelního DB DELETE/archivu; lokálně smazaná ID jsou filtrovaná při cloud načtení; account outbox archivuje a ověřuje ACK; transaction delete bez revize přechází do conflict místo nehlídaného mazání; obnovování Undo nevolá cloud INSERT během stále běžícího outboxu.
+- Šablony a půjčky nadále používají snapshot CAS, ale **nejsou tímto releasem fyzicky ani race-testem kompletně uzavřené**. Další otevřené priority: financeTemplates/Loans cross-device konflikt/smazání, account-level CAS po DB schématu, idempotence po ztracené odpovědi INSERT, account/transaction INSERT×DELETE race a offline→online na reálných zařízeních. Pro P0 další práce vytvořit širší stabilizační balík, ale neodstraňovat data naslepo.
+- Celkové P0 **IN PROGRESS ~65 % (pracovní odhad)**. Uživatelský fyzický test této release zatím chybí.
