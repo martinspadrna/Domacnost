@@ -160,3 +160,8 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Kódový root prvního problému: `householdUiPayload()` volá `financeTypeFilter()` → `getFinanceModule()` vyžaduje `finance.js`, ale `ensureHouseholdUiSyncDependencies()` načítala jen subscriptions a vape. Diagnostika i příprava cloud save tím mohly selhat ještě před validací.
 - Kandidát **v0.1_547**, větev `fix/p0-household-lazy-finance-diff-547`: před každým household snapshotem zajistit také lazy Finance, po neúspěšném načtení zachovat pending; v read-only diagnostice doplnit souhrn počtu změněných profilů a pojmenování oblastí (bez osobních ID), počty položek koše na PC/cloud a porovnání klíčů ikon a jejich výsledného efektu u lokálně známých aut. **Bez UPDATE/DELETE, bez mazání pending, bez změny CAS nebo merge politiky.**
 - Doplň E2E regresi pro lazy Finance a nové diagnostické souhrny včetně zákazu prozrazení názvů/ID záznamů; všechny verze/asset klíče navýšit. Po PASS PR držet mimo produkci do schválení; teprve následný fyzický PC test umožní bezpečnou per-section opravu konfliktu. P0 Finance následuje.
+
+### 16.10.2026 – v0.1_547 CI dokončeno
+- PR #38: https://github.com/martinspadrna/Domacnost/pull/38, kandidát pro opravu lazy Finance a podrobnou read-only diagnostiku.
+- Full check + browser E2E **PASS** v GitHub Actions: https://github.com/martinspadrna/Domacnost/actions/runs/38854818417, commit `713495135e02c68820022bfcded1470507c16d89`.
+- Zatím pouze branch/draft PR, main/produkce v0.1_546. Konečné řešení PC konfliktu musí vycházet z diagnostických počtů na původním PC. Nepoužívat force overwrite.
