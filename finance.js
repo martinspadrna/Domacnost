@@ -870,6 +870,14 @@
       return (getState().finance || []).filter((item) => !item.cloudId || item.syncStatus).length + (getState().financeAccounts || []).filter((item) => !item.cloudId || item.syncStatus).length;
     }
 
+    // Cloudově navázaná domácnost potřebuje trvalé pending i bez připravené relace.
+    // cloudReady() vyžaduje userId; během odhlášení/obnovy relace však zůstává
+    // household ID a lokální úpravy nesmějí zmizet při dalším cloud SELECT.
+    function financeCloudLinked() {
+      const cloud = getState().cloud || {};
+      return cloud.provider === 'supabase' && Boolean(cloud.householdId);
+    }
+
     function markFinanceCloudPending(reason = 'finance') {
       getState().financeCloud = { ...(getState().financeCloud || {}), pendingAt: new Date().toISOString(), pendingReason: reason };
     }
@@ -1050,7 +1058,6 @@
         const unchanged = JSON.stringify(cloudFinanceAccountPayload(live, user.id)) === sentSnapshot;
         live.syncStatus = unchanged ? '' : 'pending_update';
         if (!unchanged) markFinanceCloudPending('finance-account-changed-during-insert');
-        getState().cloud.lastSyncAt = new Date().toISOString();
         persistStateSnapshot();
         return unchanged ? data : null;
       })();
@@ -1099,7 +1106,6 @@
             delete current.created_by;
             return current;
           })()) !== snapshot) return false;
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -1213,7 +1219,6 @@
         const unchanged = JSON.stringify(cloudFinancePayload(live, user.id)) === sentSnapshot;
         live.syncStatus = unchanged ? '' : 'pending_update';
         if (!unchanged) markFinanceCloudPending('finance-transaction-changed-during-insert');
-        getState().cloud.lastSyncAt = new Date().toISOString();
         persistStateSnapshot({ immediate: true });
         return unchanged ? data : null;
       })();
@@ -1291,7 +1296,6 @@
       item.cloudUpdatedAt = data.updated_at || nextRevision;
       item.updatedAt = item.cloudUpdatedAt;
       item.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -1441,7 +1445,6 @@
         }
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -1514,7 +1517,7 @@
         note: normalizeText(data.note)
       };
       if (!account.name) return showToast('Doplň název účtu');
-      if (cloudReady()) {
+      if (financeCloudLinked()) {
         account.syncStatus = 'pending_add';
         markFinanceCloudPending('add-finance-account');
       }
@@ -1573,9 +1576,9 @@
         openingBalance: draft.openingBalance,
         includeInTotal,
         note: draft.note,
-        syncStatus: cloudReady() ? 'pending_add' : ''
+        syncStatus: financeCloudLinked() ? 'pending_add' : ''
       }));
-      if (cloudReady()) markFinanceCloudPending('add-managed-finance-accounts');
+      if (financeCloudLinked()) markFinanceCloudPending('add-managed-finance-accounts');
       accounts.forEach((account) => getState().financeAccounts.push(account));
       touchState();
       saveState();
@@ -1795,7 +1798,8 @@
           ...source,
           id: uid(),
           cloudId: '',
-          syncStatus: '',
+          cloudUpdatedAt: '',
+          syncStatus: financeCloudLinked() ? 'pending_add' : '',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           date: dateInFinanceMonth(monthKey, day),
@@ -1806,7 +1810,7 @@
       getState().finance.push(...copies);
       getState().financeCloud = { ...(getState().financeCloud || {}), monthFilter: firstMonth };
       setFinanceCopyId('');
-      if (cloudReady()) markFinanceCloudPending('copy-finance');
+      if (financeCloudLinked()) markFinanceCloudPending('copy-finance');
       touchState();
       saveState();
       form?.reset?.();
@@ -1915,9 +1919,12 @@
         note: normalizeText(data.note)
       };
       if (!item.title || !Number(item.amount)) return showToast('Doplň název a částku');
+      if (financeCloudLinked()) {
+        item.syncStatus = 'pending_add';
+        markFinanceCloudPending('add-finance');
+      }
       getState().finance.push(item);
       getState().financeCloud = { ...(getState().financeCloud || {}), monthFilter: String(item.date || todayISO()).slice(0, 7) };
-      if (cloudReady()) markFinanceCloudPending('add-finance');
       touchState();
       saveState();
       form.reset();
@@ -1968,7 +1975,7 @@
       getState().finance[index] = next;
       getState().financeCloud = { ...(getState().financeCloud || {}), monthFilter: String(next.date || todayISO()).slice(0, 7) };
       setFinanceEditId('');
-      if (cloudReady() && next.cloudId) {
+      if (financeCloudLinked() && next.cloudId) {
         next.syncStatus = 'pending_update';
         markFinanceCloudPending('update-finance');
       }
@@ -2033,7 +2040,7 @@
         note: normalizeText(data.note)
       };
       if (!next.name) return showToast('Doplň název účtu');
-      if (cloudReady()) {
+      if (financeCloudLinked()) {
         next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('update-finance-account');
       }
@@ -2200,7 +2207,7 @@
 
     async function cloudSyncFinanceAccountById(id) {
       const account = getState().financeAccounts.find((entry) => entry.id === id);
-      if (!account) return;
+      if (!account || account.syncStatus === 'conflict') return;
       const saved = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
       if (!(getState().financeAccounts || []).includes(account)) return;
       if (!financeAccountInsertConfirmed(account, saved) && saved !== true) {
@@ -2218,7 +2225,8 @@
     }
 
     async function cloudSyncLocalFinanceAccounts() {
-      const local = (getState().financeAccounts || []).filter((item) => !item.cloudId || item.syncStatus);
+      const local = (getState().financeAccounts || []).filter((item) =>
+        (!item.cloudId || item.syncStatus) && item.syncStatus !== 'conflict');
       if (!local.length) {
         if (clearFinanceCloudPendingIfClean()) {
           touchState();
