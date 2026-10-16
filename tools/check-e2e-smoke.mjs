@@ -1972,8 +1972,11 @@ async function run() {
     else ok('Finance: account INSERT je single-flight a změny během požadavku zůstávají pending.');
 
     const financeAddSource = financeSource.split('async function cloudAddFinance(item) {')[1]?.split('async function cloudFinanceRow(cloudId)')[0] || '';
-    if (!financeAddSource.includes('await ensureFinanceTransactionAccounts(item, householdId)') ||
-        !financeAddSource.includes('financeTransactionAccountsBound(item, payload)') ||
+    if (!financeAddSource.includes('await ensureFinanceTransactionAccounts(current, householdId)') ||
+        !financeAddSource.includes('financeTransactionAccountsBound(current, payload)') ||
+        !financeAddSource.includes('financeTransactionInsertInFlight.has(flightKey)') ||
+        !financeAddSource.includes('financeTransactionInsertInFlight.set(flightKey, job)') ||
+        !financeAddSource.includes("linkFinanceLateInsertToTrash('finance', item.id, householdId, data)") ||
         financeAddSource.includes('insert(cloudFinancePayload(item, user.id))'))
       fail('Finance: nový pohyb může odejít bez propojeného účtu.');
     else ok('Finance: INSERT čeká na potvrzená ID všech propojených účtů.');
