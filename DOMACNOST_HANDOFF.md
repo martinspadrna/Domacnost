@@ -110,3 +110,38 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Další fyzický test:** tlačítko **Prověřit Garáž** v Nastavení → Cloud domácnosti. Pokud chybí rozšířené sloupce, řešit databázovou migraci správného projektu; pokud se pole shodují, ověřit potvrzovací tok bez ztráty dat. U vzdálených rozdílů zachovat konflikt bez přepsání.
 
 - **Pozor:** Diagnostika neřeší migraci schématu a není důkazem, že staré změny lze automaticky odstranit. Výsledek reálných aut Fabia/Auris zatím chybí. Po obdržení auditovat konkrétní příčinu a provést malou verzi 0.1_543 jen se správnou opravou, kompatibilní s CAS a ochranou dat.
+
+## 14. 10. 2026 — fyzická diagnostika Garáže, kandidát v0.1_543
+- V produkční v0.1_542: Fabia + Toyota Auris mají **chybějící `vehicles.insurance_contract_id`**, u obou má cloud novější `updated_at`, ale žádné ostatní rozdílné pole nebylo hlášeno. Nadále 2 pending auta, 1 pending Nastavení domácnosti.
+- Kořenová příčina v kódu: `cloudUpdateVehicle` při chybě rozšířeného schématu opakovaně prováděl základní fallback UPDATE bez CAS. Tím mohl sám zvyšovat cloudovou revizi.
+- **Kandidát v0.1_543, branch `fix/p0-garage-schema-cas-543`**: před UPDATE čerstvý SELECT, bez všech sloupců žádný fallback PATCH, při úplné shodě lze potvrdit sync bez UPDATE, rozdílná data s novější remote revizí blokovat, při přenosu použít `updated_at` CAS (0 řádků = konflikt), zabránit potvrzení novější lokální úpravy během requestu. E2E regresní scénáře.
+- Připraven aditivní SQL `sql/garage_insurance_contract_id.sql`. **NEPROVEDENO:** připojený Supabase zpřístupňuje pouze RaK TEST/MAIN, nikoli projekt Domácnost+. Nesmí se omylem provést v RaK.
+- Po PASS CI a schválení lze migrovat jen správnou DB, udělat schema reload a znovu změřit Fabii/Auris z mobilu/PC. **P0 Garáž stále OPEN, pending zachovat.** Produkce v0.1_542 zatím beze změny.
+- Dále 1 pending Nastavení domácnosti a následně P0 Finance, žádné mazání nebo force.
+
+### 14. 10. 2026 — ověřena a provedena DB migrace Garáže
+- Správný projekt Supabase nalezen dle URL aplikace: **Domácnost+**, ref `hyyehcskthqmncqlechi`, ACTIVE_HEALTHY; předchozí seznam Supabase ukazoval jen RaK, ale přímý `get_project` správný projekt zpřístupnil.
+- Před změnou: 151 vozidel; `insurance_contract_id` chyběl; `contracts.id` i `vehicles.id` typu UUID; RLS u `vehicles` zapnuto.
+- Aditivní migrace `domacnost_garage_insurance_contract_link_20261014` přes Supabase `apply_migration` **SUCCESS**. Přidán nullable `public.vehicles.insurance_contract_id uuid` a proveden PostgREST schema reload.
+- Po změně ověřeno SQL: **151 vozidel**, sloupec UUID dostupný, 0 existujících nenulových vazeb, RLS stále TRUE. Žádné přepsání dat či mazání.
+- PR #36 pro klientský bezpečný CAS guard: https://github.com/martinspadrna/Domacnost/pull/36 ; commit `e811bca911a31c54dc408c44dcd8343da9d9d4de`. **CI PASS**, run https://github.com/martinspadrna/Domacnost/actions/runs/38630467510 .
+- Pozor: migrace **nepotvrzuje** odstranění 2 pending na uživatelském iPhone. Na produkční v0.1_542 je nutný fyzický test **Zkusit uložit teď → Prověřit Garáž**, restart a ověření druhého zařízení. Pokud zůstane rozdíl, neposílat force a zkontrolovat konkrétní sloupce. Klientská v0.1_543 zatím pouze draft PR a není na main.
+- Security Advisor hlásí existující obecné upozornění na 4 veřejně volatelné SECURITY DEFINER funkce a vypnutou kontrolu kompromitovaných hesel; nesouvisí přímo s novým sloupcem. Auditovat zvlášť, nezasahovat bez kontroly současných RLS/funkčních vazeb.
+
+## 16. 10. 2026 — potvrzení Garáže a další krok P0 Nastavení
+- Uživatel: mobil bez čekajících změn, Garáž Fabia a Auris po migraci `vehicles.insurance_contract_id` již nezůstává ve frontě. **PC má 1 pending „Nastavení domácnosti“ od 14.10.** Stav se opakovaně pokouší synchronizovat.
+- Produkce main stále v0.1_542, bezpečnostní klientský CAS Garáže v draft PR #36 v0.1_543. DB migrace projektu Domácnost+ byla provedena a ověřena (151 vozidel beze změny, RLS zachováno).
+- `householdUiPendingAt` je fallback značka pro celý snapshot. Sama neříká, zda se změnila konkrétní sekce, profilový UI stav, počasí, anebo jde jen o technický marker. Existující porovnání `reconcileConfirmedHouseholdUiPending` bezpečně potvrzuje výhradně identický snapshot.
+- **Kandidát v0.1_544** navazuje na v0.1_543: v Nastavení → Cloud domácnosti tlačítko **Prověřit Nastavení**. Jen SELECT podle aktivního household, srovnání semantického snapshotu na úrovni top-level sekcí bez hodnot, informace o jiné revizi; ochrana změny během SELECT; žádný UPDATE, force či mazání pending. Browser E2E ověřuje shodu, odlišná pole, chybějící pole a počasí.
+- Bez fyzického výsledku diagnostiky na PC **kořenová příčina posledního čekajícího markeru není prokázaná**. Nesnažit se ho odstranit naslepo. Po diagnostice malá cílená oprava, potom P0 Finance.
+
+### 16.10.2026 — CI korekce kandidáta
+- První CI pro v0.1_544 selhalo pouze v `tools/check-e2e-smoke.mjs`: duplicitní lokální `settingsCheck` v jednom bloku. Syntaktická kontrola `app.js` prošla. Kandidát navýšen na v0.1_545 a testovací proměnné dostaly jedinečná jména; opakovat celé CI včetně browser E2E. Žádný merge/produkce zatím.
+
+### 16. 10. 2026 — oprava E2E reference, kandidát v0.1_546
+- v0.1_545 statické CI PASS, browser E2E FAIL kvůli chybnému pojmenování testovací proměnné v původním testu Nastavení. Opraven výhradně E2E test: starý `settingsCheck` zachován, nová kontrola používá `householdDiagnosticCheck`. Znovu spustit kompletní CI. Produkce main stále v0.1_542.
+
+### 16.10.2026 — v0.1_546 validace dokončena
+- Kandidát v0.1_546 na PR #37: https://github.com/martinspadrna/Domacnost/pull/37. **CI full check + browser E2E PASS** na commit `c6f9f9207fb34a72d3c5d12e3cb0b74259e30f4e`, run https://github.com/martinspadrna/Domacnost/actions/runs/38850789241.
+- Nadbytečný PR #36 (v0.1_543) **uzavřen bez merge**, jeho změny obsahuje PR #37. Produkční main zůstává `v0.1_542`, žádný nový release zatím nebyl nasazen.
+- Reálný výsledek PC pending se nedá spolehlivě zjistit z preview na jiné doméně, protože se pending ukládá k původnímu zařízení/originu. Po uživatelském odsouhlasení bezpečně nasadit diagnostiku, pak na PC `Prověřit Nastavení` a teprve podle výsledku řešit konkrétní rozdíly, bez force overwrite.
