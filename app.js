@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_559';
-  const APP_BUILD = 559;
+  const APP_VERSION = 'Domácnost+ v.0.1_560';
+  const APP_BUILD = 560;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -4231,8 +4231,10 @@
     }
     const overlayHtml = renderOverlaySurface();
     const changed = overlayHtml !== lastRenderedOverlayHtml;
+    const searchFocus = changed ? captureGlobalSearchFocus() : null;
     document.body.classList.toggle('overview-open', Boolean(activeOverview || hasOpenAppModal()));
     if (changed) overlays.innerHTML = overlayHtml;
+    restoreGlobalSearchFocus(searchFocus);
     lastRenderedOverlayHtml = overlayHtml;
     app.dataset.lastRenderSurface = changed ? 'overlay' : 'none';
     app.dataset.lastRenderScope = 'overlay-only';
@@ -4281,6 +4283,7 @@
 
     const renderStartedAt = performance?.now ? performance.now() : Date.now();
     const formSnapshot = captureFormStabilitySnapshot();
+    const searchFocusSnapshot = captureGlobalSearchFocus();
     renderInProgress = true;
     try {
       applyVisualSettings();
@@ -4299,6 +4302,7 @@
     } finally {
       restoreSessionFormDrafts();
       restoreFormStabilitySnapshot(formSnapshot);
+      restoreGlobalSearchFocus(searchFocusSnapshot);
       renderInProgress = false;
       if (!renderDeferDepth && renderDeferredPending) {
         const quiet = renderDeferredQuietPending;
@@ -4331,6 +4335,7 @@
     const renderStartedAt = performance?.now ? performance.now() : Date.now();
     const renderModuleIdAtStart = activeModule || 'home';
     const formSnapshot = captureFormStabilitySnapshot();
+    const searchFocusSnapshot = captureGlobalSearchFocus();
     renderInProgress = true;
     try {
       applyVisualSettings();
@@ -4468,6 +4473,7 @@
     } finally {
       restoreSessionFormDrafts();
       restoreFormStabilitySnapshot(formSnapshot);
+      restoreGlobalSearchFocus(searchFocusSnapshot);
       renderInProgress = false;
       if (!renderDeferDepth && renderDeferredPending) {
         const quiet = renderDeferredQuietPending;
@@ -5165,6 +5171,31 @@
         <strong>${escapeHtml(item.title)}</strong>
         <em>${escapeHtml(item.meta)}</em>
       </button>`).join('');
+  }
+
+  // Globální hledání je mimo <form>, takže běžný form stability snapshot
+  // neochrání fokus při přestavbě overlaye/full shellu (např. cloud render).
+  function captureGlobalSearchFocus() {
+    const input = globalSearchOpen ? document.activeElement : null;
+    if (!input?.matches?.('[data-global-search-input]')) return null;
+    let start = null;
+    let end = null;
+    try {
+      start = typeof input.selectionStart === 'number' ? input.selectionStart : null;
+      end = typeof input.selectionEnd === 'number' ? input.selectionEnd : null;
+    } catch {}
+    return { start, end, scrollLeft: input.scrollLeft };
+  }
+
+  function restoreGlobalSearchFocus(snapshot) {
+    if (!snapshot || !globalSearchOpen) return;
+    const input = app?.querySelector?.('[data-global-search-input]');
+    if (!input) return;
+    try { input.focus({ preventScroll: true }); } catch { input.focus(); }
+    if (snapshot.start !== null && snapshot.end !== null) {
+      try { input.setSelectionRange(snapshot.start, snapshot.end); } catch {}
+    }
+    if (Number.isFinite(snapshot.scrollLeft)) input.scrollLeft = snapshot.scrollLeft;
   }
 
   function focusGlobalSearchInput() {
@@ -24573,6 +24604,29 @@
 
   if (state.meta?.mode === 'e2e-smoke' || ['127.0.0.1', 'localhost'].includes(window.location.hostname)) {
     window.__DOMACNOST_E2E_SCROLL_POSITIONS__ = () => Object.fromEntries(moduleScrollPositions.entries());
+    // Vynutit skutečnou DOM náhradu search overlaye ve všech render cestách.
+    // Pouze testovací hook; nezasahuje do uživatelských dat ani cloudu.
+    window.__DOMACNOST_E2E_SEARCH_FOCUS_RENDER__ = () => {
+      const input = app.querySelector('[data-global-search-input]');
+      if (!input) return { available: false };
+      input.focus({ preventScroll: true });
+      try { input.setSelectionRange(2, 5); } catch {}
+      const check = () => ({
+        focused: document.activeElement === app.querySelector('[data-global-search-input]'),
+        query: app.querySelector('[data-global-search-input]')?.value || '',
+        start: app.querySelector('[data-global-search-input]')?.selectionStart ?? null
+      });
+      lastRenderedOverlayHtml = '';
+      renderOverlaysOnly();
+      const overlay = check();
+      lastRenderedOverlayHtml = '';
+      renderActiveModuleOnly();
+      const module = check();
+      lastRenderedOverlayHtml = '';
+      render();
+      const full = check();
+      return { available: true, overlay, module, full };
+    };
     window.__DOMACNOST_E2E_NAV__ = async (moduleId, tab = '') => {
       const nextModule = String(moduleId || 'home');
       await ensureModuleCode(nextModule);

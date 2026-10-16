@@ -922,6 +922,18 @@ async function run() {
       expression: `(() => { const input = document.querySelector('[data-global-search-input]'); if (input) { input.value = 'Smoke nákup'; input.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'Smoke nákup', inputType: 'insertText' })); } })()`
     });
     await waitForExpression(page, `Boolean(document.querySelector('.global-search-result'))`, 2200, 40);
+    // Reálná výměna DOM u overlay, module i full renderu nesmí ztratit fokus,
+    // hodnotu ani pozici kurzoru právě rozepsaného globálního hledání.
+    const searchRenderCheck = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `window.__DOMACNOST_E2E_SEARCH_FOCUS_RENDER__?.()`
+    });
+    const searchRender = searchRenderCheck.result?.value || {};
+    const renderStages = [searchRender.overlay, searchRender.module, searchRender.full];
+    if (!searchRender.available || !renderStages.every((x) =>
+      x?.focused && x.query === 'Smoke nákup' && x.start === 2)) {
+      fail(`Globální hledání ztratilo fokus nebo rozepsanou hodnotu při re-renderu (${JSON.stringify(searchRender)}).`);
+    } else ok('Globální hledání: overlay/module/full render zachovává fokus, dotaz a kurzor.');
     const globalToolsCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
