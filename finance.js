@@ -1239,9 +1239,35 @@
       return true;
     }
 
+    // Koš a cloud outbox jsou zdrojem pravdy pro smazání.
+    // Při reloadu nesmí SELECT vrátit lokálně odstraněný záznam zpět do UI.
+    function financeHiddenCloudIds(collection) {
+      const householdId = getState().cloud?.householdId;
+      const ids = new Set();
+      if (!householdId) return ids;
+      (getState().trash || []).forEach((entry) => {
+        if (Date.parse(entry?.expiresAt || '') <= Date.now()) return;
+        (entry?.records || []).forEach((deleted) => {
+          if (deleted?.collection !== collection) return;
+          const record = deleted.record;
+          if (record?.cloudId &&
+              (!record.householdId || String(record.householdId) === String(householdId))) {
+            ids.add(String(record.cloudId));
+          }
+        });
+      });
+      (getState().cloud?.outbox || []).forEach((entry) => {
+        if (entry?.collection === collection && entry?.operation === 'delete' && entry.cloudId) {
+          ids.add(String(entry.cloudId));
+        }
+      });
+      return ids;
+    }
+
     async function cloudLoadFinance(showMessage = true) {
       const client = getSupabaseClient();
-      if (!client || !getState().cloud?.householdId) return false;
+      const requestedHouseholdId = getState().cloud?.householdId;
+      if (!client || !requestedHouseholdId) return false;
       const { data: accountData, error: accountError } = await client
         .from('finance_accounts')
         .select('id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at')
@@ -1252,9 +1278,12 @@
         showToast(accountError.message || 'Finanční účty se nepovedlo načíst z cloudu');
         return false;
       }
-      const localAccounts = (getState().financeAccounts || []).filter((item) => !item.cloudId || item.syncStatus);
+      const hiddenAccountIds = financeHiddenCloudIds('financeAccounts');
+      const hiddenTransactionIds = financeHiddenCloudIds('finance');
+      const localAccounts = (getState().financeAccounts || []).filter((item) =>
+        (!item.cloudId || item.syncStatus) && !hiddenAccountIds.has(String(item.cloudId)));
       const pendingAccountCloudIds = new Set(localAccounts.map((item) => item.cloudId).filter(Boolean));
-      const cloudAccounts = (accountData || []).filter((item) => !pendingAccountCloudIds.has(item.id)).map((item) => ({
+      const cloudAccounts = (accountData || []).filter((item) => !pendingAccountCloudIds.has(item.id) && !hiddenAccountIds.has(String(item.id))).map((item) => ({
         id: getState().financeAccounts.find((entry) => entry.cloudId === item.id)?.id || `finance-account-cloud-${item.id}`,
         householdId: currentHouseholdId(),
         profileId: currentProfileId(),
@@ -1267,8 +1296,8 @@
         note: item.note || '',
         createdAt: item.created_at || new Date().toISOString()
       }));
-      getState().financeAccounts = [...cloudAccounts, ...localAccounts];
-      const cloudAccountById = Object.fromEntries(getState().financeAccounts.filter((account) => account.cloudId).map((account) => [account.cloudId, account]));
+      const stagedAccounts = [...cloudAccounts, ...localAccounts];
+      const cloudAccountById = Object.fromEntries(stagedAccounts.filter((account) => account.cloudId).map((account) => [account.cloudId, account]));
 
       const { data, error } = await client
         .from('finance_transactions')
@@ -1280,9 +1309,10 @@
         showToast(error.message || 'Finance se nepovedlo načíst z cloudu');
         return false;
       }
-      const localOnly = (getState().finance || []).filter((item) => !item.cloudId || item.syncStatus);
+      const localOnly = (getState().finance || []).filter((item) =>
+        (!item.cloudId || item.syncStatus) && !hiddenTransactionIds.has(String(item.cloudId)));
       const pendingFinanceCloudIds = new Set(localOnly.map((item) => item.cloudId).filter(Boolean));
-      const cloudItems = (data || []).filter((item) => !pendingFinanceCloudIds.has(item.id)).map((item) => ({
+      const cloudItems = (data || []).filter((item) => !pendingFinanceCloudIds.has(item.id) && !hiddenTransactionIds.has(String(item.id))).map((item) => ({
         id: getState().finance.find((entry) => entry.cloudId === item.id)?.id || `finance-cloud-${item.id}`,
         householdId: currentHouseholdId(),
         profileId: currentProfileId(),
@@ -1300,11 +1330,13 @@
         updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
         cloudUpdatedAt: item.updated_at || ''
       }));
+      if (getState().cloud?.householdId !== requestedHouseholdId) return false;
+      getState().financeAccounts = stagedAccounts;
       getState().finance = [...cloudItems, ...localOnly];
       getState().financeCloud = { ...(getState().financeCloud || {}), accountsLoadedAt: new Date().toISOString(), loadedAt: new Date().toISOString() };
       clearFinanceCloudPendingIfClean();
       touchState();
-      saveState();
+      saveState({ skipTrashTracking: true });
       render();
       if (showMessage) showToast('Cloud finance načtené');
       return true;
@@ -2185,73 +2217,42 @@
       return Number(accounts || 0) + Number(transactions || 0);
     }
 
+    // Smazání jde přes společný Koš (30 dní). showUndoToast po uplynutí
+    // možnosti „Vrátit zpět“ předá tombstone existujícímu cloud outboxu.
+    // Nesmíme současně mazat přímo v Supabase — vznikal race a ztráta obnovy.
     async function deleteFinanceTransaction(id) {
-      const item = getState().finance.find((entry) => entry.id === id);
+      const item = (getState().finance || []).find((entry) => entry.id === id);
       if (!item) return;
-      getState().finance = getState().finance.filter((entry) => entry.id !== id);
+      getState().finance = (getState().finance || []).filter((entry) => entry.id !== id);
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      const deleteSync = cloudDeleteFinance(item).catch((error) => {
-        console.warn('Cloud sync (smazání pohybu) na pozadí selhal', error);
-        return false;
-      });
       showUndoToast('Záznam smazán', async () => {
         if ((getState().finance || []).some((entry) => entry.id === item.id)) return;
-        const restored = { ...item };
-        getState().finance = [...(getState().finance || []), restored];
+        getState().finance = [...(getState().finance || []), item];
         touchState();
-        saveState();
-        render();
-        const deletedInCloud = await deleteSync;
-        if (deletedInCloud && item.cloudId) {
-          restored.cloudId = '';
-          restored.syncStatus = 'pending';
-          markFinanceCloudPending('undo-delete');
-          const saved = await cloudAddFinance(restored);
-          if (!saved?.id) restored.syncStatus = 'pending';
-        }
-        clearFinanceCloudPendingIfClean();
-        touchState();
-        saveState();
+        saveState({ immediate: true });
         render();
         showToast('Záznam obnoven');
       });
     }
 
     async function deleteFinanceAccount(id) {
-      const account = getState().financeAccounts.find((entry) => entry.id === id);
+      const account = (getState().financeAccounts || []).find((entry) => entry.id === id);
       if (!account) return;
       if ((getState().finance || []).some((item) => item.accountId === id || item.transferAccountId === id)) {
         showToast('Účet má pohyby. Nejdřív smaž nebo přesuň záznamy.');
         return;
       }
-      getState().financeAccounts = getState().financeAccounts.filter((entry) => entry.id !== id);
+      getState().financeAccounts = (getState().financeAccounts || []).filter((entry) => entry.id !== id);
       touchState();
-      saveState();
+      saveState({ immediate: true });
       render();
-      const deleteSync = cloudDeleteFinanceAccount(account).catch((error) => {
-        console.warn('Cloud sync (smazání účtu) na pozadí selhal', error);
-        return false;
-      });
       showUndoToast('Účet smazán', async () => {
-        if (!(getState().financeAccounts || []).some((entry) => entry.id === account.id)) {
-          getState().financeAccounts = [...(getState().financeAccounts || []), account];
-        }
+        if ((getState().financeAccounts || []).some((entry) => entry.id === account.id)) return;
+        getState().financeAccounts = [...(getState().financeAccounts || []), account];
         touchState();
-        saveState();
-        render();
-        const archivedInCloud = await deleteSync;
-        if (archivedInCloud && account.cloudId) {
-          account.syncStatus = 'pending_update';
-          markFinanceCloudPending('undo-delete-account');
-          const restored = await cloudUpdateFinanceAccount(account);
-          if (restored === true) account.syncStatus = '';
-          else markFinanceCloudPending('undo-delete-account-failed');
-          clearFinanceCloudPendingIfClean();
-        }
-        touchState();
-        saveState();
+        saveState({ immediate: true });
         render();
         showToast('Účet obnoven');
       });
