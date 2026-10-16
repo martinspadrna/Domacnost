@@ -136,14 +136,18 @@
         startDate: normalizeText(loan.startDate),
         nextPaymentDate: normalizeText(loan.nextPaymentDate),
         earlyRepaymentFee: Math.max(0, decimalValue(loan.earlyRepaymentFee ?? loan.payoffFee)),
-        note: normalizeText(loan.note)
+        note: normalizeText(loan.note),
+        deleted: Boolean(loan.deleted)
       };
     }
 
     function normalizeFinanceLoans(loans = []) {
-      return (Array.isArray(loans) ? loans : [])
-        .map(normalizeFinanceLoan)
-        .filter((loan) => loan.name && (loan.currentBalance > 0 || loan.monthlyPayment > 0 || loan.principal > 0));
+      const byId = new Map();
+      (Array.isArray(loans) ? loans : []).map(normalizeFinanceLoan)
+        // Tombstones musí přežít restart i s nulovým zůstatkem.
+        .filter((loan) => loan.deleted || (loan.name && (loan.currentBalance > 0 || loan.monthlyPayment > 0 || loan.principal > 0)))
+        .forEach((loan) => byId.set(String(loan.id), loan));
+      return [...byId.values()];
     }
 
     function mergeFinanceLoans(localLoans = [], cloudLoans = [], options = {}) {
@@ -169,7 +173,7 @@
 
     function getFinanceLoans() {
       getState().financeLoans = normalizeFinanceLoans(getState().financeLoans || []);
-      return [...getState().financeLoans].sort((a, b) => Number(b.currentBalance || 0) - Number(a.currentBalance || 0) || a.name.localeCompare(b.name, 'cs'));
+      return getState().financeLoans.filter((loan) => !loan.deleted).sort((a, b) => Number(b.currentBalance || 0) - Number(a.currentBalance || 0) || a.name.localeCompare(b.name, 'cs'));
     }
 
     function financeLoanMonthlyPayment(balance, annualRate, months) {
@@ -1588,7 +1592,7 @@
 
     function persistFinanceTemplatesState() {
       touchState();
-      if (cloudReady()) {
+      if (cloudReady() || (getState().cloud?.provider === 'supabase' && getState().cloud?.householdId)) {
         getState().financeCloud = { ...(getState().financeCloud || {}), templatesPendingAt: new Date().toISOString() };
       }
       saveState();
@@ -1668,28 +1672,27 @@
       const template = financeTemplateById(id);
       if (!template) return showToast('Šablona nenalezená');
       if (!window.confirm(`Smazat šablonu ${template.name}?`)) return;
-      const current = normalizeFinanceTemplates(getState().financeTemplates || []).filter((item) => String(item.id) !== String(id));
-      const isDefaultTemplate = DEFAULT_FINANCE_TEMPLATES.some((item) => String(item.id) === String(id));
-      if (template.system || isDefaultTemplate) {
-        current.push(normalizeFinanceTemplate({ ...template, id: template.id, deleted: true, system: false, updatedAt: new Date().toISOString() }));
-      }
+      // Tombstone pro vlastní i výchozí šablonu; jinak starý cloud vrátí záznam.
+      const current = normalizeFinanceTemplates(getState().financeTemplates || [])
+        .filter((item) => String(item.id) !== String(id));
+      current.push(normalizeFinanceTemplate({
+        ...template, id: template.id, deleted: true, system: false, updatedAt: new Date().toISOString()
+      }));
       getState().financeTemplates = normalizeFinanceTemplates(current);
       if (getFinanceTemplateEditId() === id) setFinanceTemplateEditId('');
-      const deleteSync = persistFinanceTemplatesState();
+      persistFinanceTemplatesState();
       render();
       showUndoToast('Šablona smazaná', async () => {
-        const restored = normalizeFinanceTemplates(getState().financeTemplates || []).filter((item) => String(item.id) !== String(template.id));
-        if (!template.system && !isDefaultTemplate) restored.push(normalizeFinanceTemplate({ ...template, deleted: false }));
+        const restored = normalizeFinanceTemplates(getState().financeTemplates || [])
+          .filter((item) => String(item.id) !== String(template.id));
+        restored.push(normalizeFinanceTemplate({
+          ...template, deleted: false, system: false, updatedAt: new Date().toISOString()
+        }));
         getState().financeTemplates = normalizeFinanceTemplates(restored);
-        touchState();
-        saveState();
-        render();
-        await Promise.resolve(deleteSync).catch(() => false);
         await persistFinanceTemplatesState();
         showToast('Šablona obnovená');
       });
     }
-
     function setFinanceCopy(id) {
       const item = (getState().finance || []).find((entry) => entry.id === id);
       if (!item) return showToast('Pohyb se nepovedlo najít');
@@ -1990,7 +1993,7 @@
 
     function persistFinanceLoans(toast = '') {
       const now = new Date().toISOString();
-      if (cloudReady()) {
+      if (cloudReady() || (getState().cloud?.provider === 'supabase' && getState().cloud?.householdId)) {
         getState().financeCloud = {
           ...(getState().financeCloud || {}),
           loansPendingAt: now
@@ -2023,8 +2026,9 @@
     }
 
     function updateFinanceLoanFromForm(id, data, form) {
-      const list = getFinanceLoans();
-      const index = list.findIndex((loan) => loan.id === id);
+      // Editace aktivní půjčky nesmí ztratit tombstones jiných půjček.
+      const list = normalizeFinanceLoans(getState().financeLoans || []);
+      const index = list.findIndex((loan) => loan.id === id && !loan.deleted);
       if (index < 0) return showToast('Půjčku se nepovedlo najít');
       const current = list[index];
       const next = normalizeFinanceLoan({
@@ -2057,23 +2061,22 @@
       const loan = getFinanceLoans().find((item) => item.id === id);
       if (!loan) return;
       if (typeof window !== 'undefined' && !window.confirm(`Smazat půjčku „${loan.name}“?`)) return;
-      getState().financeLoans = getFinanceLoans().filter((item) => item.id !== id);
+      const current = normalizeFinanceLoans(getState().financeLoans || [])
+        .filter((item) => String(item.id) !== String(id));
+      current.push(normalizeFinanceLoan({ ...loan, deleted: true, updatedAt: new Date().toISOString() }));
+      getState().financeLoans = normalizeFinanceLoans(current);
       if (financeLoanEditId === id) financeLoanEditId = '';
       getState().financeRefinanceResult = null;
-      const deleteSync = persistFinanceLoans();
+      persistFinanceLoans();
       showUndoToast('Půjčka smazaná', async () => {
-        if (!(getState().financeLoans || []).some((item) => item.id === loan.id)) {
-          getState().financeLoans = normalizeFinanceLoans([...(getState().financeLoans || []), loan]);
-        }
-        touchState();
-        saveState({ immediate: true });
-        render();
-        await Promise.resolve(deleteSync).catch(() => false);
+        const restored = normalizeFinanceLoans(getState().financeLoans || [])
+          .filter((item) => String(item.id) !== String(loan.id));
+        restored.push(normalizeFinanceLoan({ ...loan, deleted: false, updatedAt: new Date().toISOString() }));
+        getState().financeLoans = normalizeFinanceLoans(restored);
         await persistFinanceLoans();
         showToast('Půjčka obnovená');
       });
     }
-
     function calculateFinanceRefinance(data, form) {
       const selectedIds = Array.isArray(data.loanIds) ? data.loanIds : data.loanIds ? [data.loanIds] : [];
       const selected = getFinanceLoans().filter((loan) => selectedIds.includes(loan.id));
