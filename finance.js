@@ -997,20 +997,59 @@
       };
     }
 
+    // Souběžný formulář / sync fronta nesmí pro jedno lokální ID vytvořit dva účty.
+    // Ochrana platí pro jednu běžící instanci; serverovou idempotenci řešit zvlášť.
+    const financeAccountInsertInFlight = new Map();
+
+    function financeAccountInsertConfirmed(account, saved) {
+      return Boolean(saved?.id && account?.cloudId === saved.id &&
+        (getState().financeAccounts || []).includes(account) && !account.syncStatus);
+    }
+
     async function cloudAddFinanceAccount(account) {
       const client = getSupabaseClient();
-      if (!client || !getState().cloud?.householdId) return null;
-      const user = await refreshCloudSession(false);
-      if (!user) return null;
-      const { data, error } = await client.from('finance_accounts').insert(cloudFinanceAccountPayload(account, user.id)).select('id').single();
-      if (error) {
-        showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
-        return null;
+      const householdId = getState().cloud?.householdId;
+      if (!client || !householdId || !account?.id) return null;
+      const flightKey = [householdId, account.id].join(':');
+      if (financeAccountInsertInFlight.has(flightKey)) return financeAccountInsertInFlight.get(flightKey);
+      if (account.cloudId) return null;
+
+      const job = (async () => {
+        const user = await refreshCloudSession(false);
+        if (!user || getState().cloud?.householdId !== householdId) return null;
+        // Po obnovení relace vycházíme z nejnovější lokální verze účtu.
+        const current = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
+        if (!current || current.cloudId) return null;
+        const payload = cloudFinanceAccountPayload(current, user.id);
+        if (payload.household_id !== householdId) return null;
+        const sentSnapshot = JSON.stringify(payload);
+        const { data, error } = await client.from('finance_accounts').insert(payload).select('id').single();
+        if (error) {
+          showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
+          return null;
+        }
+        if (!data?.id) return null;
+        if (getState().cloud?.householdId !== householdId) return null;
+        const live = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
+        if (!live || (live.cloudId && live.cloudId !== data.id)) return null;
+        // ID uložit i tehdy, když uživatel během INSERT změnil hodnoty.
+        // Další synchronizace pak provede UPDATE, ne duplicitní INSERT.
+        live.cloudId = data.id;
+        account.cloudId = data.id;
+        const unchanged = JSON.stringify(cloudFinanceAccountPayload(live, user.id)) === sentSnapshot;
+        live.syncStatus = unchanged ? '' : 'pending_update';
+        if (!unchanged) markFinanceCloudPending('finance-account-changed-during-insert');
+        getState().cloud.lastSyncAt = new Date().toISOString();
+        persistStateSnapshot();
+        return unchanged ? data : null;
+      })();
+
+      financeAccountInsertInFlight.set(flightKey, job);
+      try {
+        return await job;
+      } finally {
+        if (financeAccountInsertInFlight.get(flightKey) === job) financeAccountInsertInFlight.delete(flightKey);
       }
-      account.cloudId = data.id;
-      account.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
-      return data;
     }
 
     function financeCloudUpdateAcknowledged(data, expectedId) {
@@ -1380,7 +1419,7 @@
       showToast(cloudReady() ? 'Účet uložen, cloud se doposílá na pozadí' : 'Účet uložen');
       if (!cloudReady()) return;
       cloudAddFinanceAccount(account).then((saved) => {
-        if (saved?.id) {
+        if (financeAccountInsertConfirmed(account, saved)) {
           account.cloudId = saved.id;
           account.syncStatus = '';
           clearFinanceCloudPendingIfClean();
@@ -1389,13 +1428,13 @@
           requestRender();
           return;
         }
-        account.syncStatus = 'pending_add';
+        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('add-finance-account-failed');
         persistStateSnapshot();
         requestRender();
       }).catch((error) => {
         console.warn('Cloud sync (účet) na pozadí selhal', error);
-        account.syncStatus = 'pending_add';
+        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('add-finance-account-failed');
         persistStateSnapshot();
         requestRender();
@@ -1438,7 +1477,7 @@
       Promise.all(accounts.map(async (account) => {
         try {
           const saved = await cloudAddFinanceAccount(account);
-          if (saved?.id) {
+          if (financeAccountInsertConfirmed(account, saved)) {
             account.cloudId = saved.id;
             account.syncStatus = '';
             return true;
@@ -1446,7 +1485,7 @@
         } catch (error) {
           console.warn('Cloud sync (spravovaný účet) na pozadí selhal', error);
         }
-        account.syncStatus = 'pending_add';
+        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         return false;
       })).then((results) => {
         if (results.some((ok) => !ok)) markFinanceCloudPending('add-managed-finance-accounts-failed');
@@ -1900,7 +1939,7 @@
       } catch (error) {
         console.warn('Cloud sync (úprava účtu) na pozadí selhal', error);
       }
-      if (ok?.id || ok === true) {
+      if (ok === true || financeAccountInsertConfirmed(next, ok)) {
         next.syncStatus = '';
         clearFinanceCloudPendingIfClean();
         touchState();
@@ -2048,7 +2087,7 @@
       const account = getState().financeAccounts.find((entry) => entry.id === id);
       if (!account) return;
       const saved = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
-      if (!saved?.id && saved !== true) {
+      if (!financeAccountInsertConfirmed(account, saved) && saved !== true) {
         account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('sync-finance-account-failed');
         persistStateSnapshot();
@@ -2075,7 +2114,7 @@
       let count = 0;
       for (const account of local) {
         const ok = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
-        if (ok?.id || ok === true) {
+        if (ok === true || financeAccountInsertConfirmed(account, ok)) {
           account.syncStatus = '';
           count += 1;
         } else {
