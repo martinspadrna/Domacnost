@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_554';
-  const APP_BUILD = 554;
+  const APP_VERSION = 'Domácnost+ v.0.1_555';
+  const APP_BUILD = 555;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2448,6 +2448,34 @@
       .slice(0, TRASH_MAX_ENTRIES);
   }
 
+  // Household snapshot může obsahovat starší kopii Koše (např. z mobilu).
+  // Vzdálená verze nesmí zahodit lokálně potvrzené cloud ID ani ACK mazání.
+  function mergeFinanceTrashReceipts(localTrash = [], remoteTrash = []) {
+    const localByEntry = new Map((localTrash || []).map(entry => [String(entry.id), entry]));
+    return (remoteTrash || []).map(entry => {
+      const local = localByEntry.get(String(entry.id));
+      if (!local) return entry;
+      const records = (entry.records || []).map(deleted => {
+        if (!['finance', 'financeAccounts'].includes(deleted.collection)) return deleted;
+        const prior = (local.records || []).find(item =>
+          item.collection === deleted.collection &&
+          String(item.record?.id || '') === String(deleted.record?.id || ''));
+        if (!prior) return deleted;
+        const a = prior.record || {}, b = deleted.record || {};
+        if (b.cloudId && a.cloudId && String(a.cloudId) !== String(b.cloudId)) return deleted;
+        return {
+          ...deleted, record: {
+            ...b,
+            cloudId: b.cloudId || a.cloudId || '',
+            cloudUpdatedAt: b.cloudUpdatedAt || a.cloudUpdatedAt || '',
+            cloudDeleteConfirmedAt: b.cloudDeleteConfirmedAt || a.cloudDeleteConfirmedAt || ''
+          }
+        };
+      });
+      return { ...entry, records };
+    });
+  }
+
   function resetTrashTrackingBaseline() {
     trashCollectionBaseline = new Map();
     trashTrackableCollectionNames().forEach((collection) => {
@@ -2679,13 +2707,17 @@
     return true;
   }
 
-  function enqueueTrashCloudDeletes(trashIds = []) {
+  function enqueueTrashCloudDeletes(trashIds = [], options = {}) {
     const ids = new Set(trashIds.map(String));
     const additions = [];
     (state.trash || []).filter((entry) => ids.has(String(entry.id))).forEach((entry) => {
       entry.records.forEach(({ collection, record }) => {
         const table = CLOUD_DELETE_TABLES[collection];
         if (!table || !record?.cloudId) return;
+        if (options.collections && !options.collections.includes(collection)) return;
+        // Bezpečnost mezi domácnostmi a po dokončeném smazání Finance.
+        if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
+        if (['finance', 'financeAccounts'].includes(collection) && record.cloudDeleteConfirmedAt) return;
         if (collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)) return;
         if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(record.cloudId))) return;
         additions.push({
@@ -2700,7 +2732,58 @@
     state.cloud.localPendingCount = cloudLocalPendingCount();
     persistStateSnapshot({ immediate: true });
     requestBackgroundRender();
-    scheduleCloudAutosync('delete-outbox', { force: true, delayMs: 500 });
+    if (options.skipSchedule !== true) scheduleCloudAutosync('delete-outbox', { force: true, delayMs: 500 });
+  }
+
+  // Pozdní potvrzení DELETE/archivace se ukládá přímo ke kopii v Koši,
+  // takže po restartu nevytváříme stejný outbox znovu.
+  function confirmFinanceTrashCloudDelete(entry) {
+    if (!['finance', 'financeAccounts'].includes(entry?.collection) || !entry?.cloudId) return false;
+    let changed = false;
+    for (const trash of state.trash || []) {
+      for (const deleted of trash.records || []) {
+        if (deleted.collection !== entry.collection ||
+            String(deleted.record?.cloudId || '') !== String(entry.cloudId)) continue;
+        if (deleted.record.cloudDeleteConfirmedAt) continue;
+        deleted.record.cloudDeleteConfirmedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  // Recovery z persistentního Koše: zavření stránky během Undo může zrušit
+  // JS timer před tím, než dojde k zařazení cloudového DELETE do outboxu.
+  function recoverFinanceTrashCloudDeletes() {
+    if (!cloudReady() || !state.cloud?.householdId) return 0;
+    const householdId = String(state.cloud.householdId);
+    const existing = new Set(normalizeCloudOutbox(state.cloud.outbox || [])
+      .map((entry) => entry.table + ':' + entry.cloudId));
+    const now = Date.now();
+    const recoverIds = [];
+    for (const entry of state.trash || []) {
+      if (!entry?.id || !Number.isFinite(Date.parse(entry.deletedAt || '')) ||
+          Date.parse(entry.deletedAt) + 8000 > now ||
+          activeUndoTrashIds.has(entry.id) || pendingUndoTrashIds.has(entry.id)) continue;
+      const remaining = (entry.records || []).some(({ collection, record }) => {
+        if (!['finance', 'financeAccounts'].includes(collection) ||
+            !record?.cloudId || record.cloudDeleteConfirmedAt ||
+            (record.householdId && String(record.householdId) !== householdId)) return false;
+        const table = CLOUD_DELETE_TABLES[collection];
+        if (!table || existing.has(table + ':' + String(record.cloudId))) return false;
+        // Nikdy nemaž aktivní řádek (může jít o obnovu, která zanechala Koš).
+        const live = Array.isArray(state[collection]) ? state[collection] : [];
+        return !live.some(item => String(item.id) === String(record.id) ||
+          (item.cloudId && String(item.cloudId) === String(record.cloudId)));
+      });
+      if (remaining) recoverIds.push(entry.id);
+    }
+    if (!recoverIds.length) return 0;
+    enqueueTrashCloudDeletes(recoverIds, {
+      collections: ['finance', 'financeAccounts'],
+      skipSchedule: true
+    });
+    return recoverIds.length;
   }
 
   function cloudErrorIsTransient(error) {
@@ -2853,6 +2936,7 @@
           return false;
         }
       }
+      confirmFinanceTrashCloudDelete(entry);
       queue = queue.slice(1);
       state.cloud.outbox = queue;
       persistStateSnapshot({ immediate: true });
@@ -14758,6 +14842,7 @@
       if (!Array.isArray(state[collection])) state[collection] = [];
       if (state[collection].some((item) => String(item.id) === String(record.id))) return;
       const restored = sanitizeTrashRecord(record);
+      delete restored.cloudDeleteConfirmedAt;
       if (restored.cloudId) {
         // Obnova po definitivním zařazení do outboxu potřebuje nový cloud INSERT.
         // Koš po 30 dní zachovává kopii, takže originál nikdy neztrácíme.
@@ -19025,6 +19110,8 @@
       return;
     }
     if (cloudAutosyncRunning || cloudRealtimeReloading || suppressToastDepth > 0) return;
+    // Před vyhodnocením počtu pending obnovit ztracenou Finance delete frontu.
+    recoverFinanceTrashCloudDeletes();
     const pending = cloudLocalPendingCount();
     state.cloud.localPendingCount = pending;
     if (!pending) {
@@ -19104,6 +19191,7 @@
       if (showMessage) showToast('Bez internetu. Změny zůstávají uložené a odešlou se po připojení.');
       return false;
     }
+    recoverFinanceTrashCloudDeletes();
     const before = cloudLocalPendingCount();
     state.cloud.localPendingCount = before;
     if (!before) {
@@ -22476,7 +22564,8 @@
     if (remoteRevision) state.cloud.householdUiRevision = remoteRevision;
     const layout = household.dashboardLayout || household.dashboard_layout || {};
     if (Array.isArray(layout.trash)) {
-      const byId = new Map([...(state.trash || []), ...layout.trash].map((entry) => [String(entry.id || ''), entry]));
+      const remoteTrash = mergeFinanceTrashReceipts(state.trash || [], layout.trash);
+      const byId = new Map([...(state.trash || []), ...remoteTrash].map((entry) => [String(entry.id || ''), entry]));
       state.trash = normalizeTrashEntries([...byId.values()]);
     }
     const weatherLocation = household.weatherLocation || household.weather_location || {};

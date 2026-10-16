@@ -22,7 +22,7 @@ const activeUndoTrashIds=new Set(),pendingUndoTrashIds=new Set();
 let snapshots=0,notif=0;
 const link=new Function(
   'state','normalizeTrashEntries','persistStateSnapshot','activeUndoTrashIds','pendingUndoTrashIds','enqueueTrashCloudDeletes',
-  cut(app,'  function linkFinanceLateInsertToTrash(collection, localId, householdId, receipt) {','  function enqueueTrashCloudDeletes(trashIds = []) {')+
+  cut(app,'  function linkFinanceLateInsertToTrash(collection, localId, householdId, receipt) {','  function enqueueTrashCloudDeletes(trashIds = [], options = {}) {')+
   '\nreturn linkFinanceLateInsertToTrash;'
 )(
  state,v=>v,()=>{snapshots++;},activeUndoTrashIds,pendingUndoTrashIds,ids=>{
