@@ -1720,7 +1720,7 @@ async function run() {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('settings', 'data') : document.querySelector('[data-nav="settings"]')?.click()`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 800));
-    const householdDiagnosticCheck = await page.send('Runtime.evaluate', {
+    const settingsCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
         const settings = document.querySelector('.settings-tabbed[data-tab-area="settings"]');
@@ -1919,7 +1919,7 @@ async function run() {
     if (dependencyCheck.result?.value !== true) fail('Cloud: household snapshot vyžaduje lazy Předplatné a vape i bez otevřeného modulu.');
     else ok('Cloud: všechny lazy závislosti household snapshotu jsou načtené před synchronizací.');
 
-    const settingsCheck = await page.send('Runtime.evaluate', {
+    const householdDiagnosticCheck = await page.send('Runtime.evaluate', {
       expression: 'window.__DOMACNOST_E2E_SETTINGS_DIAGNOSTIC__?.()',
       returnByValue: true
     });
