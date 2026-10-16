@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_556';
-  const APP_BUILD = 556;
+  const APP_VERSION = 'Domácnost+ v.0.1_557';
+  const APP_BUILD = 557;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2754,8 +2754,8 @@
 
   // Recovery z persistentního Koše: zavření stránky během Undo může zrušit
   // JS timer před tím, než dojde k zařazení cloudového DELETE do outboxu.
-  function recoverFinanceTrashCloudDeletes() {
-    if (!cloudReady() || !state.cloud?.householdId) return 0;
+  function recoverableFinanceTrashDeleteIds() {
+    if (!cloudReady() || !state.cloud?.householdId) return [];
     const householdId = String(state.cloud.householdId);
     const existing = new Set(normalizeCloudOutbox(state.cloud.outbox || [])
       .map((entry) => entry.table + ':' + entry.cloudId));
@@ -2778,6 +2778,11 @@
       });
       if (remaining) recoverIds.push(entry.id);
     }
+    return recoverIds;
+  }
+
+  function recoverFinanceTrashCloudDeletes() {
+    const recoverIds = recoverableFinanceTrashDeleteIds();
     if (!recoverIds.length) return 0;
     enqueueTrashCloudDeletes(recoverIds, {
       collections: ['finance', 'financeAccounts'],
@@ -7684,7 +7689,7 @@
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0, pendingAt: state.loyaltyCardsCloud?.pendingAt },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0, pendingAt: state.poolCloud?.pendingAt },
       { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: financeSettingsPendingCount(), pendingAt: financeSettingsPendingAt() },
-      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt },
+      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceTrashDeleteIds().length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => recoverableFinanceTrashDeleteIds().includes(entry.id))?.deletedAt },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending, pendingAt: state.cloud?.householdUiPendingAt }
     ];
     return counters.map((entry) => {
@@ -19791,6 +19796,8 @@
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
         return;
       }
+      // I ruční synchronizace musí před prvním replay obnovit ztracený DELETE po pádu Undo.
+      recoverFinanceTrashCloudDeletes();
       const syncers = [
         { run: replayCloudOutbox },
         { run: cloudSyncLocalProfiles },
