@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_557** (merge PR #47 `2adcc3e65cc2c36d2707afb207a91cbe080ccad3`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Poslední potvrzená produkční verze: v0.1_560** (PR #50, následný main CI PASS, Vercel READY); v0.1_561 je zatím kandidát, dokud neprojde CI a nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -387,3 +387,10 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Globální hledání zachovává fokus/selection při změně innerHTML overlaye, modulového renderu i plného shell renderu. Chrome E2E nyní cíleně vynucuje všechny tři DOM náhrady a potvrzuje fokus, text i kurzor.
 - Fyzické ověření iPhone/Android uživatelem čeká na závěrečnou etapu. P0 Finance stále **IN PROGRESS ~85 %** orientačně; autoritativní DB account CAS a idempotentní INSERT po ztracené odpovědi nejsou bez oprávněného přístupu do Supabase projektu Domácnost+ uzavřené. Neprovádět migrace ani force přepisy naslepo.
 - Další krok: ověřit oprávnění ke správnému Supabase projektu Domácnost+ pro read-only schema/revize, bezpečně navrhnout server-side ochrany. Teprve potom širší fyzické PC↔mobil/offline/restart/konfliktové testy. Další klientské zásahy dělat jen při konkrétním reprodukovaném problému.
+
+### 16. 10. 2026 — P0 Finance XII: izolace cloud outboxu při přepnutí domácnosti, kandidát v0.1_561
+- Vychází z produkční v0.1_560, `main` `0c4786e0166ba0dd4df7372e5556dcee131bfc49`.
+- **Reprodukovaná logická race v `replayCloudOutbox`:** po zahájení DELETE v domácnosti A může uživatel přepnout do domácnosti B; pozdní ACK pak původně mohl přepsat B `state.cloud.outbox`, případně vyznačit cizí smazání za potvrzené. Stejně tak vložení dalšího DELETE během HTTP await mohlo být ztraceno použitím zastaralé `queue.slice(1)`.
+- Oprava uzamyká identitu domácnosti + uživatele pro jeden replay, explicitně scope-uje všechny HTTP dotazy na původní domácnost, po každé odpovědi kontroluje aktuální workspace a přítomnost odpovídající outbox položky. Při změně domácnosti/revize fronty se bezpečně zastaví **bez zápisu do nové fronty**. Při ACK/FAIL vždy složí frontu z jejího aktuálního stavu, takže dodatečně vytvořená mazání nezmizí.
+- Nový vykonatelný test `tools/check-cloud-outbox-race.mjs` simuluje reálné asynchronní odpovědi: přepnutí během archivace Finance Account, přidání dalšího DELETE při prvním await, chybovou odpověď a finance read-before-delete při změně domácnosti. Bez potřeby přístupu k produkční DB; žádná migrace ani úprava RLS.
+- Verze a PWA cache sjednocena na v0.1_561. **Před nasazením** plné CI + Chrome browser E2E PASS, poté merge a Vercel READY / alias. P0 stále **IN PROGRESS ~85 %**, správné Supabase oprávnění, účetní CAS/idempotentní INSERT a fyzický PC↔mobil test zůstávají otevřené.

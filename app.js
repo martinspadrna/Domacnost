@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_560';
-  const APP_BUILD = 560;
+  const APP_VERSION = 'Domácnost+ v.0.1_561';
+  const APP_BUILD = 561;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2826,18 +2826,45 @@
     if (!queue.length || !cloudReady() || !browserAppearsOnline()) return queue.length === 0;
     const client = getSupabaseClient();
     if (!client) return false;
+    // Pozdní odpověď z původní domácnosti nesmí poškodit outbox té nové.
+    const replayHouseholdId = state.cloud?.householdId;
+    const replayUserId = state.cloud?.userId;
+    const scopeIsCurrent = () => Boolean(replayHouseholdId)
+      && state.cloud?.householdId === replayHouseholdId
+      && state.cloud?.userId === replayUserId
+      && cloudReady();
+    const entryIsCurrent = (entry) => scopeIsCurrent()
+      && (state.cloud?.outbox || []).some((item) =>
+        item.id === entry.id && item.table === entry.table && item.cloudId === entry.cloudId
+        && item.expectedRevision === entry.expectedRevision);
+    const finishEntry = (entry) => {
+      if (!entryIsCurrent(entry)) return false;
+      // Zachovat i DELETE vložené do fronty během právě běžícího requestu.
+      queue = normalizeCloudOutbox((state.cloud?.outbox || []).filter((item) => item.id !== entry.id));
+      state.cloud.outbox = queue;
+      return true;
+    };
+    const persistFailedEntry = (entry) => {
+      if (!entryIsCurrent(entry)) return false;
+      queue = normalizeCloudOutbox((state.cloud?.outbox || []).map((item) =>
+        item.id === entry.id ? { ...item, ...entry } : item));
+      state.cloud.outbox = queue;
+      return true;
+    };
     while (queue.length) {
+      if (!scopeIsCurrent()) return false;
       const entry = queue[0];
+      if (!entryIsCurrent(entry)) return false;
       if (entry.collection === 'calendar' && entry.operation === 'delete' && !calendarSyncRecordIsProviderManaged(entry.localRecord)) {
         const { data: calendarRemote, error: calendarRemoteError } = await client
           .from(entry.table)
           .select('id,source_id,provider_event_id,updated_at')
           .eq('id', entry.cloudId)
-          .eq('household_id', state.cloud.householdId)
+          .eq('household_id', replayHouseholdId)
           .maybeSingle();
+        if (!entryIsCurrent(entry)) return false;
         if (!calendarRemoteError && calendarSyncRecordIsProviderManaged(entry.localRecord, calendarRemote)) {
-          queue = queue.slice(1);
-          state.cloud.outbox = queue;
+          if (!finishEntry(entry)) return false;
           state.cloud.recordConflicts = cloudRecordConflicts().filter((conflict) => !(conflict.table === entry.table && conflict.cloudId === entry.cloudId));
           persistStateSnapshot({ immediate: true });
           await yieldToMainThread();
@@ -2852,7 +2879,8 @@
         // Bez původní revize nedovolíme nehlídané mazání finančního pohybu.
         const checked = await client.from(entry.table)
           .select('*').eq('id', entry.cloudId)
-          .eq('household_id', state.cloud.householdId).maybeSingle();
+          .eq('household_id', replayHouseholdId).maybeSingle();
+        if (!entryIsCurrent(entry)) return false;
         if (checked.error) error = checked.error;
         else if (checked.data) {
           registerCloudRecordConflict({
@@ -2869,23 +2897,26 @@
       } else if (entry.collection === 'financeAccounts') {
         const archived = await client.from('finance_accounts')
           .update({ is_archived: true }).eq('id', entry.cloudId)
-          .eq('household_id', state.cloud.householdId).eq('is_archived', false)
+          .eq('household_id', replayHouseholdId).eq('is_archived', false)
           .select('id').maybeSingle();
+        if (!entryIsCurrent(entry)) return false;
         data = archived.data;
         error = archived.error;
         if (!error && !data) {
           const existing = await client.from('finance_accounts')
             .select('id,is_archived').eq('id', entry.cloudId)
-            .eq('household_id', state.cloud.householdId).maybeSingle();
+            .eq('household_id', replayHouseholdId).maybeSingle();
+          if (!entryIsCurrent(entry)) return false;
           if (existing.error) error = existing.error;
           else if (existing.data?.is_archived === true) data = { id: entry.cloudId };
           else error = { message: 'Archivaci finančního účtu nebylo možné potvrdit', code: 'FINANCE_ARCHIVE_UNCONFIRMED' };
         }
       } else {
         let deleteQuery = client.from(entry.table).delete()
-          .eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
+          .eq('id', entry.cloudId).eq('household_id', replayHouseholdId);
         if (entry.expectedRevision) deleteQuery = deleteQuery.eq('updated_at', entry.expectedRevision);
         const result = await deleteQuery.select('id').maybeSingle();
+        if (!entryIsCurrent(entry)) return false;
         data = result.data;
         error = result.error;
       }
@@ -2898,7 +2929,7 @@
         entry.nextRetryAt = cloudErrorIsTransient(error) ? new Date(Date.now() + Math.min(300000, 3000 * (2 ** Math.min(entry.attempts, 6)))).toISOString() : '';
         state.cloud.lastAutosyncError = cloudErrorFriendlyMessage(error);
         state.cloud.autosyncStatus = cloudErrorIsTransient(error) ? 'pending' : 'blocked';
-        state.cloud.outbox = normalizeCloudOutbox(queue);
+        if (!persistFailedEntry(entry)) return false;
         persistStateSnapshot({ immediate: true });
         return false;
       }
@@ -2907,8 +2938,9 @@
           .from(entry.table)
           .select('*')
           .eq('id', entry.cloudId)
-          .eq('household_id', state.cloud.householdId)
+          .eq('household_id', replayHouseholdId)
           .maybeSingle();
+        if (!entryIsCurrent(entry)) return false;
         if (remoteError) {
           console.error('Cloud outbox revision check failed', remoteError);
           entry.attempts += 1;
@@ -2918,13 +2950,12 @@
           entry.nextRetryAt = cloudErrorIsTransient(remoteError) ? new Date(Date.now() + Math.min(300000, 3000 * (2 ** Math.min(entry.attempts, 6)))).toISOString() : '';
           state.cloud.lastAutosyncError = cloudErrorFriendlyMessage(remoteError);
           state.cloud.autosyncStatus = cloudErrorIsTransient(remoteError) ? 'pending' : 'blocked';
-          state.cloud.outbox = normalizeCloudOutbox(queue);
+          if (!persistFailedEntry(entry)) return false;
           persistStateSnapshot({ immediate: true });
           return false;
         }
         if (remoteRow) {
-          queue = queue.slice(1);
-          state.cloud.outbox = queue;
+          if (!finishEntry(entry)) return false;
           if (entry.collection === 'calendar' && calendarSyncRecordIsProviderManaged(entry.localRecord, remoteRow)) {
             state.cloud.recordConflicts = cloudRecordConflicts().filter((conflict) => !(conflict.table === entry.table && conflict.cloudId === entry.cloudId));
             persistStateSnapshot({ immediate: true });
@@ -2941,9 +2972,8 @@
           return false;
         }
       }
+      if (!finishEntry(entry)) return false;
       confirmFinanceTrashCloudDelete(entry);
-      queue = queue.slice(1);
-      state.cloud.outbox = queue;
       persistStateSnapshot({ immediate: true });
       await yieldToMainThread();
     }
