@@ -191,3 +191,6 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - E2E testuje kladné/záporné případy potvrzení ID a staticky střeží account SELECT i povinnou CAS revizi u transakcí.
 - **Zůstává otevřené pro další P0:** finance_accounts nemá v lokálním modelu sledovanou serverovou revizi; ověřit skutečné DB schéma `finance_accounts` a navrhnout bezpečný CAS (nepřidávat naslepo sloupce bez přístupu/schématu). Dále add/update závislosti účtů, delete/outbox, simultánní editace, Finance loans/templates a cross-device/offline testy.
 - Handoff aktuálně DONE: Předplatné/Garáž/Nastavení domácnosti potvrzené uživatelem. Nevyvozovat z toho DONE všech Financí.
+
+### 16.10.2026 — kandidát posunut na v0.1_549
+- Oprava před CI: E2E finance source check používal neimportované `readFile`; přepnuto na existující `readFileSync(join(projectRoot, 'finance.js'), 'utf8')`. Verze navýšena konzistentně. Čeká full CI včetně reálného Chrome E2E.

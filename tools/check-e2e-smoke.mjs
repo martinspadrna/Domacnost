@@ -1947,7 +1947,7 @@ async function run() {
       fail('Finance: zápis bez potvrzeného ID nesmí být považován za úspěšný.');
     else ok('Finance: chybějící / nesprávná DB odpověď není úspěšný zápis.');
 
-    const financeSource = await readFile(new URL('../finance.js', import.meta.url), 'utf8');
+    const financeSource = readFileSync(join(projectRoot, 'finance.js'), 'utf8');
     const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
     const txUpdateSource = financeSource.split('async function cloudUpdateFinance(item, options = {}) {')[1]?.split('async function cloudLoadFinance(showMessage = true)')[0] || '';
     if (!accountUpdateSource.includes(".select('id')") ||
