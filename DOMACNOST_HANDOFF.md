@@ -1,11 +1,16 @@
 # Domácnost+ — centrální handoff
 
-Aktualizováno: 14. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
+Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_541** (merge PR #33 `abf6a62ddb625ee9a31f7ff85bf19767ab4ccad2`, Vercel READY, CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_547** (merge PR #38 `77768772c6e7feb803803369953254aef228f374`, Vercel READY). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
+
+## Pravidlo nasazování (výslovné přání uživatele, 16. 10. 2026)
+- **Po úspěšných CI, browser E2E a kontrole kompatibility rovnou slučuj ověřené opravy do `main` a nasazuj na produkci bez další otázky.** Uživatel doslova napsal: „rovnou to tam davej vzdy“. Po nasazení ověř Vercel READY, správný commit/alias a produkční main CI; výsledek sděl.
+- Automatický souhlas **není souhlas k destruktivním DB migracím, mazání uživatelských dat, přepsání konfliktujících změn, vypnutí RLS, force push nebo jiným vysoce rizikovým nevratným zásahům**. Ty musí mít zvláštní kontrolu a případně potvrzení.
+- I při automatickém release zachovej `pending` a CAS bez silového sloučení. Každá funkční změna navýší verzi ve všech relevantních souborech, průběh a následné testy zapiš sem.
 
 ## Plán projektu
 | Fáze | Popis | Stav |
@@ -165,3 +170,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - PR #38: https://github.com/martinspadrna/Domacnost/pull/38, kandidát pro opravu lazy Finance a podrobnou read-only diagnostiku.
 - Full check + browser E2E **PASS** v GitHub Actions: https://github.com/martinspadrna/Domacnost/actions/runs/38854818417, commit `713495135e02c68820022bfcded1470507c16d89`.
 - Zatím pouze branch/draft PR, main/produkce v0.1_546. Konečné řešení PC konfliktu musí vycházet z diagnostických počtů na původním PC. Nepoužívat force overwrite.
+
+### 16. 10. 2026 — v0.1_547 nasazena na produkci
+- Uživatel výslovně povolil automatické nasazování dalších bezpečně ověřených verzí, bez pokaždé dalšího dotazu: „rovnou to tam davej vzdy“. Nové trvalé pravidlo zapsáno výše.
+- PR #38 **sloučen do main**: https://github.com/martinspadrna/Domacnost/pull/38, merge `77768772c6e7feb803803369953254aef228f374`.
+- Kandidát měl **full CI + browser E2E PASS** v PR po aktualizaci handoffu (run `38854905692`). Produkční Vercel `domacnost-plus.vercel.app`: deployment `dpl_AcwVrvdXoLd1z8hsozyMy5LpDHhQ` je **READY** na stejném SHA.
+- Obsah v0.1_547: oprava lazy Finance před household snapshot sync, konzervativní read-only detail diagnostiky profilového UI, Koše a ikon vozidel. **Konflikt 1× Nastavení domácnosti na PC zůstává otevřený**, nesmí se mazat naslepo.
+- Fyzický test: na PC ve stejné produkční doméně po aktualizaci aplikace kliknout `Prověřit Nastavení` **bez předchozího otevření Financí**. Získat podrobné počty profilů, Koše a ikon. Při skutečných rozdílech a novější revizi cloudu zachovat obě verze a navrhnout per-section řešení bez force overwrite.
+- Dále P0 Finance: audit false-success guard / potvrzení serverových UPDATE a CAS, prioritně bankovní účty a transakce.
