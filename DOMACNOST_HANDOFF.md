@@ -216,3 +216,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Opraveny vazby pohybů na účty před INSERT i UPDATE, bez cloud account ID se transakce neodešle a pending se zachová. Žádné změny DB ani mazání dat.
 - Přístup ke schématu Supabase Domácnost+ stále nemá oprávnění. Account-level CAS a správnou idempotenci add operací **nepovažovat za hotové**. Další P0: účet při změně během pending INSERT, kontrola chybných/dvojitých INSERT, bezpečné delete/outbox, šablony a půjčky.
 - Uživatel dosud neprovedl fyzický test této úpravy mezi PC a mobilem, automatické CI neznamená fyzické potvrzení.
+
+### 16.10.2026 — P0 Finance III, kandidát v0.1_551 (čeká CI)
+- Navazuje na produkční v0.1_550 / HEAD hlavní větve `020f0ce9068f337adb9b595465e57bc47a875ced`. Pracovní větev `fix/p0-finance-account-insert-551`, zatím **bez nasazení**.
+- V `finance.js` přidán per-household/per-account single-flight na `cloudAddFinanceAccount`: souběžné odeslání stejného lokálního účtu z formuláře a synchronizační fronty sdílí jeden probíhající INSERT.
+- Před odesláním i při odpovědi se znovu kontroluje aktivní domácnost a aktuální lokální účet. Po potvrzeném INSERT se uchová cloudové ID a při mezitímní změně dat zůstává `pending_update`, aby navazoval UPDATE místo duplicitního INSERT. Volající mohou čistit marker pouze po potvrzeném, nezměněném záznamu.
+- Přidána statická kontrola v browser E2E smoke; aktualizována release surface `package.json`, `release.json`, `index.html`, `app.js`, `module-loader.js`, `sw.js` na 551.
+- **Omezení:** single-flight funguje pouze během běžící instance. Při ztracené odpovědi serveru, přepnutí domácnosti po úspěšném INSERT nebo odstranění účtu během requestu nelze bez DB idempotency key zaručit automatické dohledání vytvořeného řádku; nenasazovat spekulativní SQL. Supabase přístup ke schématu `finance_accounts` zůstává permission denied. Account-level CAS a bezpečné mazání/outbox stále **OPEN**.
+- Ověřit kompletní CI + browser E2E a regresní chování ostatních modulů; až po PASS merge do main/produkce dle trvalého souhlasu uživatele a ověřit READY. Fyzický cross-device a offline→online test stále chybí.
