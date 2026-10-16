@@ -1960,6 +1960,17 @@ async function run() {
 
     const financeSource = readFileSync(join(projectRoot, 'finance.js'), 'utf8');
     const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
+    const accountInsertSource = financeSource.split('async function cloudAddFinanceAccount(account) {')[1]?.split('function financeCloudUpdateAcknowledged')[0] || '';
+    if (!accountInsertSource.includes('financeAccountInsertInFlight.has(flightKey)') ||
+        !accountInsertSource.includes('financeAccountInsertInFlight.set(flightKey, job)') ||
+        !accountInsertSource.includes('getState().cloud?.householdId !== householdId') ||
+        !accountInsertSource.includes('live.cloudId = data.id') ||
+        !accountInsertSource.includes("live.syncStatus = unchanged ? '' : 'pending_update'") ||
+        !accountInsertSource.includes('persistStateSnapshot()') ||
+        !financeSource.includes('financeAccountInsertConfirmed(account, saved)'))
+      fail('Finance: účet může při souběžném INSERT ztratit ID nebo pending úpravu.');
+    else ok('Finance: account INSERT je single-flight a změny během požadavku zůstávají pending.');
+
     const financeAddSource = financeSource.split('async function cloudAddFinance(item) {')[1]?.split('async function cloudFinanceRow(cloudId)')[0] || '';
     if (!financeAddSource.includes('await ensureFinanceTransactionAccounts(item, householdId)') ||
         !financeAddSource.includes('financeTransactionAccountsBound(item, payload)') ||
