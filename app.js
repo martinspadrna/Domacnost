@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_552';
-  const APP_BUILD = 552;
+  const APP_VERSION = 'Domácnost+ v.0.1_553';
+  const APP_BUILD = 553;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -8569,10 +8569,16 @@
         name: normalizeText(loan.name || loan.title) || 'Půjčka', lender: normalizeText(loan.lender), loanType: normalizeText(loan.loanType || loan.type) || 'consumer',
         principal, currentBalance: Math.max(0, decimalValue(loan.currentBalance ?? loan.balance ?? principal)), interestRate: Math.max(0, decimalValue(loan.interestRate ?? loan.apr)),
         monthlyPayment: Math.max(0, decimalValue(loan.monthlyPayment ?? loan.payment)), remainingMonths: Math.max(0, Math.round(Number(loan.remainingMonths ?? loan.monthsLeft ?? 0)) || 0),
-        startDate: normalizeText(loan.startDate), nextPaymentDate: normalizeText(loan.nextPaymentDate), earlyRepaymentFee: Math.max(0, decimalValue(loan.earlyRepaymentFee ?? loan.payoffFee)), note: normalizeText(loan.note)
+        startDate: normalizeText(loan.startDate), nextPaymentDate: normalizeText(loan.nextPaymentDate), earlyRepaymentFee: Math.max(0, decimalValue(loan.earlyRepaymentFee ?? loan.payoffFee)), note: normalizeText(loan.note), deleted: Boolean(loan.deleted)
       };
     };
-    const normalizeFinanceLoans = (loans = []) => (Array.isArray(loans) ? loans : []).map(normalizeFinanceLoan).filter((item) => item.name && (item.currentBalance > 0 || item.monthlyPayment > 0 || item.principal > 0));
+    const normalizeFinanceLoans = (loans = []) => {
+      const byId = new Map();
+      (Array.isArray(loans) ? loans : []).map(normalizeFinanceLoan)
+        .filter((loan) => loan.deleted || (loan.name && (loan.currentBalance > 0 || loan.monthlyPayment > 0 || loan.principal > 0)))
+        .forEach((loan) => byId.set(String(loan.id), loan));
+      return [...byId.values()];
+    };
     const mergeByFreshness = (normalizer, localItems, cloudItems, options = {}) => {
       const byId = new Map();
       const put = (item, source) => {
@@ -14663,7 +14669,8 @@
     if ([...changed].some((key) => ['subscriptions', 'subscriptionPeople', 'subscriptionPayments'].includes(key))) state.subscriptionsCloud = { ...(state.subscriptionsCloud || {}), pendingAt: timestamp };
     if (changed.has('loyaltyCards')) state.loyaltyCardsCloud = { ...(state.loyaltyCardsCloud || {}), pendingAt: timestamp };
     if (changed.has('pools')) state.poolCloud = { ...(state.poolCloud || {}), pendingAt: timestamp };
-    if ([...changed].some((key) => ['financeLoans', 'financeTemplates'].includes(key))) state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: timestamp };
+    if (changed.has('financeTemplates')) state.financeCloud = { ...(state.financeCloud || {}), templatesPendingAt: timestamp };
+    if (changed.has('financeLoans')) state.financeCloud = { ...(state.financeCloud || {}), loansPendingAt: timestamp };
     state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || timestamp;
   }
 
@@ -22502,12 +22509,19 @@
     if (layout.visualSettings && typeof layout.visualSettings === 'object') {
       if (mergeVisualSettings(layout.visualSettings)) saveLocalVisualSettings();
     }
+    // Cloudový snapshot je autoritativní jen pro sekce bez lokálního pending.
+    // Starý union merge vracel smazané půjčky/šablony z druhého zařízení.
+    // Pokud pending existuje, ponecháme celé lokální sekce a CAS rozhodne o konfliktu.
     if (Array.isArray(layout.financeTemplates)) {
-      state.financeTemplates = mergeFinanceTemplates(state.financeTemplates || [], layout.financeTemplates, { preferLocal: Boolean(state.financeCloud?.templatesPendingAt) });
+      if (!state.financeCloud?.templatesPendingAt) {
+        state.financeTemplates = normalizeFinanceTemplates(layout.financeTemplates);
+      }
       state.financeCloud = { ...(state.financeCloud || {}), templatesLoadedAt: new Date().toISOString() };
     }
     if (Array.isArray(layout.financeLoans)) {
-      state.financeLoans = mergeFinanceLoans(state.financeLoans || [], layout.financeLoans);
+      if (!state.financeCloud?.loansPendingAt) {
+        state.financeLoans = normalizeFinanceLoans(layout.financeLoans);
+      }
       state.financeCloud = { ...(state.financeCloud || {}), loansLoadedAt: new Date().toISOString() };
     }
     if (Array.isArray(layout.pools)) {
