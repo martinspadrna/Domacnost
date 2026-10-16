@@ -379,3 +379,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Cílená oprava `captureGlobalSearchFocus` / `restoreGlobalSearchFocus`: pouze při skutečném fokusovaném globálním hledání zachovat fokus, selection start/end a horizontální scroll při náhradě overlaye, renderu aktivního modulu i plném renderu. Úmyslný blur do jiného prvku nesmí vyvolat automatické znovuzaměření, a zavření hledání se nemění. Původní formulářová ochrana je zachována.
 - Nový reálný Chrome E2E scénář v `tools/check-e2e-smoke.mjs` přes pouze testovací `__DOMACNOST_E2E_SEARCH_FOCUS_RENDER__` vynucuje DOM přestavbu ve všech třech render větvích, ověřuje fokus, dotaz a pozici kurzoru. Stávající hledání a navigace zůstávají testované. PWA/release v0.1_560 sjednocena.
 - Čeká full check + browser E2E PASS na posledním head a následné merge/produkce dle trvalého souhlasu uživatele. DB CAS/idempotence Finance nadále otevřené bez správného Supabase oprávnění. Celkové P0 stále ~85 % orientačně; fyzický cross-device test odložen na závěr.
+
+### 16. 10. 2026 — v0.1_560 PRODUKCE, globální hledání / render
+- PR #50 https://github.com/martinspadrna/Domacnost/pull/50 **MERGED**, squash `c4ad05cd3c1aeff3ecf6f8c16c72cd782d454ceb` do main.
+- **Full check i skutečný Chrome browser E2E PASS**: PR run `38909062530` (head `15e1f312a4e6cfa5bc1012bdef6cf4937865a38e`), produkční main run `38909184022` (merge SHA).
+- Vercel produkce **READY**, deployment `dpl_4d6tH6njapj72Ga2d6GpacmR3Lc3`, git SHA přesně odpovídá merge; produkční alias `domacnost-plus.vercel.app` bez aliasError.
+- Globální hledání zachovává fokus/selection při změně innerHTML overlaye, modulového renderu i plného shell renderu. Chrome E2E nyní cíleně vynucuje všechny tři DOM náhrady a potvrzuje fokus, text i kurzor.
+- Fyzické ověření iPhone/Android uživatelem čeká na závěrečnou etapu. P0 Finance stále **IN PROGRESS ~85 %** orientačně; autoritativní DB account CAS a idempotentní INSERT po ztracené odpovědi nejsou bez oprávněného přístupu do Supabase projektu Domácnost+ uzavřené. Neprovádět migrace ani force přepisy naslepo.
+- Další krok: ověřit oprávnění ke správnému Supabase projektu Domácnost+ pro read-only schema/revize, bezpečně navrhnout server-side ochrany. Teprve potom širší fyzické PC↔mobil/offline/restart/konfliktové testy. Další klientské zásahy dělat jen při konkrétním reprodukovaném problému.
