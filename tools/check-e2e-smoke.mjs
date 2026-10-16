@@ -1938,6 +1938,17 @@ async function run() {
       fail('Cloud Nastavení: detail nesmí zobrazit citlivé hodnoty a musí rozlišit čtyři sekce.');
     else ok('Cloud Nastavení: detail sekcí a soukromí potvrzeny.');
 
+    const financeLinkCheck = await page.send('Runtime.evaluate', {
+      expression: 'window.__DOMACNOST_E2E_FINANCE_LINKED_ACCOUNTS__?.()',
+      returnByValue: true
+    });
+    const financeLink = financeLinkCheck.result?.value || {};
+    if (!financeLink.allowedNoAccount || !financeLink.blockedMissingAccount ||
+        !financeLink.allowedAccount || !financeLink.blockedTransferNoTarget ||
+        !financeLink.allowedTransfer || !financeLink.blockedInvalidTransfer)
+      fail('Finance: pohyb nelze odeslat bez ID jeho navázaných účtů.');
+    else ok('Finance: při chybějící vazbě účtu ani při neúplném převodu nevznikne osiřelý pohyb.');
+
     const financeAckCheck = await page.send('Runtime.evaluate', {
       expression: 'window.__DOMACNOST_E2E_FINANCE_WRITE_ACK__?.()',
       returnByValue: true
@@ -1949,11 +1960,20 @@ async function run() {
 
     const financeSource = readFileSync(join(projectRoot, 'finance.js'), 'utf8');
     const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
+    const financeAddSource = financeSource.split('async function cloudAddFinance(item) {')[1]?.split('async function cloudFinanceRow(cloudId)')[0] || '';
+    if (!financeAddSource.includes('await ensureFinanceTransactionAccounts(item, householdId)') ||
+        !financeAddSource.includes('financeTransactionAccountsBound(item, payload)') ||
+        financeAddSource.includes('insert(cloudFinancePayload(item, user.id))'))
+      fail('Finance: nový pohyb může odejít bez propojeného účtu.');
+    else ok('Finance: INSERT čeká na potvrzená ID všech propojených účtů.');
+
     const txUpdateSource = financeSource.split('async function cloudUpdateFinance(item, options = {}) {')[1]?.split('async function cloudLoadFinance(showMessage = true)')[0] || '';
     if (!accountUpdateSource.includes(".select('id')") ||
         !accountUpdateSource.includes('financeCloudUpdateAcknowledged(data, cloudId)') ||
         !accountUpdateSource.includes('if (!client || !cloudId || !householdId) return false;') ||
         !txUpdateSource.includes('if (!expectedRevision') ||
+        !txUpdateSource.includes('await ensureFinanceTransactionAccounts(item, householdId)') ||
+        !txUpdateSource.includes('financeTransactionAccountsBound(item, payload)') ||
         !txUpdateSource.includes('financeCloudUpdateAcknowledged(data, cloudId)') ||
         !txUpdateSource.includes('if (!client || !cloudId || !householdId) return false;'))
       fail('Finance: account nebo transaction UPDATE stále může potvrdit neuloženou změnu.');

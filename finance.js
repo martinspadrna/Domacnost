@@ -1077,20 +1077,48 @@
       };
     }
 
+    // Finanční pohyb navázaný na účet nesmí odejít do cloudu bez jeho ID.
+    // Pouze kontrola existence reference, žádné sloučení nebo mazání záznamů.
+    function financeTransactionAccountsBound(item, payload) {
+      if (!item || !payload) return false;
+      if (item.type === 'transfer' && (!item.accountId || !item.transferAccountId ||
+          item.accountId === item.transferAccountId)) return false;
+      return (!item.accountId || Boolean(payload.account_id)) &&
+        (!item.transferAccountId || Boolean(payload.transfer_account_id));
+    }
+
+    async function ensureFinanceTransactionAccounts(item, householdId) {
+      if (!householdId || getState().cloud?.householdId !== householdId || !item) return false;
+      const accountIds = [...new Set([item.accountId, item.transferAccountId].filter(Boolean))];
+      if (item.type === 'transfer' && (accountIds.length !== 2)) return false;
+      for (const id of accountIds) {
+        if (getState().cloud?.householdId !== householdId) return false;
+        const account = financeAccountById(id);
+        if (!account) return false;
+        if (!account.cloudId) {
+          const saved = await cloudAddFinanceAccount(account);
+          if (!saved?.id || account.cloudId !== saved.id) return false;
+        }
+        if (getState().cloud?.householdId !== householdId ||
+            financeAccountById(id) !== account || !account.cloudId) return false;
+      }
+      return getState().cloud?.householdId === householdId;
+    }
+
     async function cloudAddFinance(item) {
       const client = getSupabaseClient();
-      if (!client || !getState().cloud?.householdId) return null;
+      const householdId = getState().cloud?.householdId;
+      if (!client || !householdId) return null;
       const user = await refreshCloudSession(false);
-      if (!user) return null;
-      if (item.accountId) {
-        const account = financeAccountById(item.accountId);
-        if (account && !account.cloudId) await cloudAddFinanceAccount(account);
+      if (!user || getState().cloud?.householdId !== householdId) return null;
+      if (!(await ensureFinanceTransactionAccounts(item, householdId))) {
+        showToast('Pohyb čeká na uložení souvisejících účtů do cloudu');
+        return null;
       }
-      if (item.transferAccountId) {
-        const target = financeAccountById(item.transferAccountId);
-        if (target && !target.cloudId) await cloudAddFinanceAccount(target);
-      }
-      const { data, error } = await client.from('finance_transactions').insert(cloudFinancePayload(item, user.id)).select('id,updated_at').single();
+      const payload = cloudFinancePayload(item, user.id);
+      if (!financeTransactionAccountsBound(item, payload) ||
+          getState().cloud?.householdId !== householdId) return null;
+      const { data, error } = await client.from('finance_transactions').insert(payload).select('id,updated_at').single();
       if (error) {
         showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
         return null;
@@ -1121,15 +1149,13 @@
       if (!client || !cloudId || !householdId) return false;
       const user = await refreshCloudSession(false);
       if (!user) return false;
-      if (item.accountId) {
-        const account = financeAccountById(item.accountId);
-        if (account && !account.cloudId) await cloudAddFinanceAccount(account);
-      }
-      if (item.transferAccountId) {
-        const target = financeAccountById(item.transferAccountId);
-        if (target && !target.cloudId) await cloudAddFinanceAccount(target);
+      if (!(await ensureFinanceTransactionAccounts(item, householdId))) {
+        showToast('Úprava pohybu čeká na uložení souvisejících účtů');
+        return false;
       }
       const payload = cloudFinancePayload(item, user.id);
+      if (!financeTransactionAccountsBound(item, payload) ||
+          getState().cloud?.householdId !== householdId || item.cloudId !== cloudId) return false;
       delete payload.created_by;
       const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
       const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
@@ -2204,6 +2230,7 @@
       financeCloudPendingCount,
       reconcileFinanceCloudPendingState,
       financeCloudUpdateAcknowledged,
+      financeTransactionAccountsBound,
       mergeFinanceTemplates,
       normalizeFinanceTemplates,
       mergeFinanceLoans,

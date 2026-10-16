@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_549';
-  const APP_BUILD = 549;
+  const APP_VERSION = 'Domácnost+ v.0.1_550';
+  const APP_BUILD = 550;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -24672,6 +24672,23 @@
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
     window.__DOMACNOST_E2E_PENDING_MODULE_IDS__ = (items = null) => pendingCloudModuleIds(items);
+    window.__DOMACNOST_E2E_FINANCE_LINKED_ACCOUNTS__ = () => {
+      const check = getFinanceModule().financeTransactionAccountsBound;
+      return {
+        allowedNoAccount: check({ type: 'expense', accountId: '', transferAccountId: '' },
+          { account_id: null, transfer_account_id: null }),
+        blockedMissingAccount: !check({ type: 'expense', accountId: 'local-id' },
+          { account_id: null, transfer_account_id: null }),
+        allowedAccount: check({ type: 'expense', accountId: 'local-id' },
+          { account_id: 'remote-id', transfer_account_id: null }),
+        blockedTransferNoTarget: !check({ type: 'transfer', accountId: 'a', transferAccountId: 'b' },
+          { account_id: 'a-cloud', transfer_account_id: null }),
+        allowedTransfer: check({ type: 'transfer', accountId: 'a', transferAccountId: 'b' },
+          { account_id: 'a-cloud', transfer_account_id: 'b-cloud' }),
+        blockedInvalidTransfer: !check({ type: 'transfer', accountId: 'a', transferAccountId: 'a' },
+          { account_id: 'a-cloud', transfer_account_id: 'a-cloud' })
+      };
+    };
     window.__DOMACNOST_E2E_FINANCE_WRITE_ACK__ = () => {
       const confirm = getFinanceModule().financeCloudUpdateAcknowledged;
       return {
