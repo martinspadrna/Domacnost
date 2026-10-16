@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_553';
-  const APP_BUILD = 553;
+  const APP_VERSION = 'Domácnost+ v.0.1_554';
+  const APP_BUILD = 554;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -1356,6 +1356,8 @@
   let undoToastTimer = null;
   let undoToastAction = null;
   let undoToastExpireAction = null;
+  // Smazané položky v aktivním Undo toastu nesmí odejít do outboxu předčasně.
+  let activeUndoTrashIds = new Set();
   let now = new Date();
   let supabaseClientInstance = null;
   // PWA stav se od v0.1_323 drží v pwa.js modulu (deferredInstallPrompt,
@@ -2648,6 +2650,32 @@
     }
     touchState();
     saveState({ immediate: true, skipTrashTracking: true });
+    return true;
+  }
+
+
+  // Pozdní ACK INSERTu při smazání během requestu: doplnit serverové ID
+  // do již uloženého Koše. Do outboxu předat až po vypršení možnosti Undo.
+  function linkFinanceLateInsertToTrash(collection, localId, householdId, receipt) {
+    if (!['finance', 'financeAccounts'].includes(collection) || !localId || !receipt?.id ||
+        !householdId || state.cloud?.householdId !== householdId) return false;
+    const matchingIds = [];
+    for (const entry of state.trash || []) {
+      for (const deleted of entry.records || []) {
+        const record = deleted.record;
+        if (deleted.collection !== collection || String(record?.id || '') !== String(localId) ||
+            (record.householdId && String(record.householdId) !== String(householdId))) continue;
+        if (record.cloudId && String(record.cloudId) !== String(receipt.id)) return false;
+        record.cloudId = receipt.id;
+        if (collection === 'finance' && receipt.updated_at) record.cloudUpdatedAt = receipt.updated_at;
+        matchingIds.push(entry.id);
+      }
+    }
+    if (!matchingIds.length) return false;
+    state.trash = normalizeTrashEntries(state.trash || []);
+    persistStateSnapshot({ immediate: true });
+    const ready = matchingIds.filter(id => !activeUndoTrashIds.has(id) && !pendingUndoTrashIds.has(id));
+    if (ready.length) enqueueTrashCloudDeletes(ready);
     return true;
   }
 
@@ -8853,6 +8881,7 @@
       touchState,
       showToast,
       showUndoToast,
+      linkFinanceLateInsertToTrash,
       currentHouseholdId,
       currentProfileId,
       cloudReady,
@@ -23750,6 +23779,7 @@
     undoToastAction = null;
     const expire = undoToastExpireAction;
     undoToastExpireAction = null;
+    activeUndoTrashIds = new Set();
     document.getElementById('undo-toast')?.remove();
     if (runExpire && typeof expire === 'function') {
       Promise.resolve().then(expire).catch((error) => console.warn('Dokončení smazání selhalo', error));
@@ -23760,6 +23790,7 @@
     if (typeof action !== 'function') return showToast(text);
     hideUndoToast({ runExpire: true });
     const trashIds = claimPendingUndoTrashIds();
+    activeUndoTrashIds = new Set(trashIds);
     const toast = document.createElement('div');
     toast.id = 'undo-toast';
     toast.className = 'undo-toast';
