@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_547** (merge PR #38 `77768772c6e7feb803803369953254aef228f374`, Vercel READY). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_549** (merge PR #39 `85216e494c535292738763af4ec993edd25d4bcc`, Vercel READY, CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -194,3 +194,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 
 ### 16.10.2026 — kandidát posunut na v0.1_549
 - Oprava před CI: E2E finance source check používal neimportované `readFile`; přepnuto na existující `readFileSync(join(projectRoot, 'finance.js'), 'utf8')`. Verze navýšena konzistentně. Čeká full CI včetně reálného Chrome E2E.
+
+### 16.10.2026 — v0.1_549 PRODUKCE, P0 Finance audit I
+- PR #39: https://github.com/martinspadrna/Domacnost/pull/39, merge commit `85216e494c535292738763af4ec993edd25d4bcc`.
+- **Full CI + browser E2E PASS**: PR run https://github.com/martinspadrna/Domacnost/actions/runs/38862724679 a main run https://github.com/martinspadrna/Domacnost/actions/runs/38862874116.
+- **Vercel produkce READY**, deployment `dpl_64hX6aCMUjawUB5GsWL2djLG6E4M`, alias `domacnost-plus.vercel.app`, commit odpovídá main.
+- `finance.js`: update účtu teď potvrzuje skutečný řádek s očekávaným ID, nedostupný cloud už není „success“, kontroluje household i nezměněný odeslaný lokální payload. U update finančního pohybu zamezen nehlídaný UPDATE bez známé CAS revize; výsledná odpověď a lokální hodnoty se kontrolují před vymazáním pending.
+- **NEDOKONČENÉ P0 FINANCE:** account-level CAS proti souběžné editaci z více zařízení — reálné DB schéma `finance_accounts.updated_at` nejprve ověřit (Supabase přímý přístup v tomto chatu nefungoval); opravit vazby při neúspěšném vytvoření účtu, bezpečné mazání/transakční outbox; následně financeTemplates/Loans a offline→online + cross-device. Bez bezpečné migrace naslepo.
+- Uživatelský fyzický test této konkrétní verze zatím nebyl proveden. Předplatné, Garáž a Nastavení domácnosti z předchozích kroků uživatelsky OK. Automatické nasazování dalších ověřených oprav nadále povoleno.
