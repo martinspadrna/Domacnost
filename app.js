@@ -2448,6 +2448,34 @@
       .slice(0, TRASH_MAX_ENTRIES);
   }
 
+  // Household snapshot může obsahovat starší kopii Koše (např. z mobilu).
+  // Vzdálená verze nesmí zahodit lokálně potvrzené cloud ID ani ACK mazání.
+  function mergeFinanceTrashReceipts(localTrash = [], remoteTrash = []) {
+    const localByEntry = new Map((localTrash || []).map(entry => [String(entry.id), entry]));
+    return (remoteTrash || []).map(entry => {
+      const local = localByEntry.get(String(entry.id));
+      if (!local) return entry;
+      const records = (entry.records || []).map(deleted => {
+        if (!['finance', 'financeAccounts'].includes(deleted.collection)) return deleted;
+        const prior = (local.records || []).find(item =>
+          item.collection === deleted.collection &&
+          String(item.record?.id || '') === String(deleted.record?.id || ''));
+        if (!prior) return deleted;
+        const a = prior.record || {}, b = deleted.record || {};
+        if (b.cloudId && a.cloudId && String(a.cloudId) !== String(b.cloudId)) return deleted;
+        return {
+          ...deleted, record: {
+            ...b,
+            cloudId: b.cloudId || a.cloudId || '',
+            cloudUpdatedAt: b.cloudUpdatedAt || a.cloudUpdatedAt || '',
+            cloudDeleteConfirmedAt: b.cloudDeleteConfirmedAt || a.cloudDeleteConfirmedAt || ''
+          }
+        };
+      });
+      return { ...entry, records };
+    });
+  }
+
   function resetTrashTrackingBaseline() {
     trashCollectionBaseline = new Map();
     trashTrackableCollectionNames().forEach((collection) => {
@@ -14814,6 +14842,7 @@
       if (!Array.isArray(state[collection])) state[collection] = [];
       if (state[collection].some((item) => String(item.id) === String(record.id))) return;
       const restored = sanitizeTrashRecord(record);
+      delete restored.cloudDeleteConfirmedAt;
       if (restored.cloudId) {
         // Obnova po definitivním zařazení do outboxu potřebuje nový cloud INSERT.
         // Koš po 30 dní zachovává kopii, takže originál nikdy neztrácíme.
@@ -22535,7 +22564,8 @@
     if (remoteRevision) state.cloud.householdUiRevision = remoteRevision;
     const layout = household.dashboardLayout || household.dashboard_layout || {};
     if (Array.isArray(layout.trash)) {
-      const byId = new Map([...(state.trash || []), ...layout.trash].map((entry) => [String(entry.id || ''), entry]));
+      const remoteTrash = mergeFinanceTrashReceipts(state.trash || [], layout.trash);
+      const byId = new Map([...(state.trash || []), ...remoteTrash].map((entry) => [String(entry.id || ''), entry]));
       state.trash = normalizeTrashEntries([...byId.values()]);
     }
     const weatherLocation = household.weatherLocation || household.weather_location || {};
