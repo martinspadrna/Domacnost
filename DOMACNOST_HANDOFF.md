@@ -140,3 +140,8 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 
 ### 16. 10. 2026 — oprava E2E reference, kandidát v0.1_546
 - v0.1_545 statické CI PASS, browser E2E FAIL kvůli chybnému pojmenování testovací proměnné v původním testu Nastavení. Opraven výhradně E2E test: starý `settingsCheck` zachován, nová kontrola používá `householdDiagnosticCheck`. Znovu spustit kompletní CI. Produkce main stále v0.1_542.
+
+### 16.10.2026 — v0.1_546 validace dokončena
+- Kandidát v0.1_546 na PR #37: https://github.com/martinspadrna/Domacnost/pull/37. **CI full check + browser E2E PASS** na commit `c6f9f9207fb34a72d3c5d12e3cb0b74259e30f4e`, run https://github.com/martinspadrna/Domacnost/actions/runs/38850789241.
+- Nadbytečný PR #36 (v0.1_543) **uzavřen bez merge**, jeho změny obsahuje PR #37. Produkční main zůstává `v0.1_542`, žádný nový release zatím nebyl nasazen.
+- Reálný výsledek PC pending se nedá spolehlivě zjistit z preview na jiné doméně, protože se pending ukládá k původnímu zařízení/originu. Po uživatelském odsouhlasení bezpečně nasadit diagnostiku, pak na PC `Prověřit Nastavení` a teprve podle výsledku řešit konkrétní rozdíly, bez force overwrite.
