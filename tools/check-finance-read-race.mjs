@@ -19,16 +19,11 @@ const createClient=()=>{
   requests=[];
   return {from(table){
     assert(['finance_accounts','finance_transactions'].includes(table));
-    let orderCount=0, resolveRequest;
+    let resolveRequest;
     const result=new Promise(resolve=>{resolveRequest=resolve;});
     const query={
-      select(){return query;},eq(){return query;},
-      order(){
-        orderCount++;
-        const expected=table==='finance_accounts'?1:2;
-        if(orderCount===expected){requests.push({table,resolve:resolveRequest});return result;}
-        return query;
-      }
+      select(){return query;},eq(){return query;},order(){return query;},
+      range(start,end){requests.push({table,start,end,resolve:resolveRequest});return result;}
     };
     return query;
   }};
@@ -36,7 +31,7 @@ const createClient=()=>{
 const factory=new Function('getSupabaseClient','getState','showToast',
   'financeHiddenCloudIds','currentHouseholdId','currentProfileId','todayISO',
   'clearFinanceCloudPendingIfClean','touchState','saveState','render',
-  between(financeSource,'    async function cloudLoadFinance(showMessage = true) {',
+  between(financeSource,'    async function cloudFinanceFetchAll(',
     '    async function cloudDeleteFinance(item, options = {}) {')+
   '\nreturn cloudLoadFinance;');
 let client=createClient();
@@ -69,14 +64,14 @@ const reset=()=>{
 reset();
 let promise=load(false);
 assert.equal(requests.length,1);
-requests.shift().resolve({data:[accountRow],error:null});
+requests.shift().resolve({data:[accountRow],error:null,count:1});
 await tick();
 assert.equal(requests.length,1);
 state.financeAccounts.push({
   id:'local-account', householdId:household,name:'Novější lokální účet',
   syncStatus:'pending_add'
 });
-requests.shift().resolve({data:[txRow],error:null});
+requests.shift().resolve({data:[txRow],error:null,count:1});
 assert.equal(await promise,false);
 assert.equal(state.financeAccounts.length,1);
 assert.equal(state.financeAccounts[0].name,'Novější lokální účet');
@@ -87,9 +82,9 @@ assert.equal(saves,0);
 // A normal, unchanged read still commits cloud rows and preserves account linkage.
 reset();
 promise=load(false);
-requests.shift().resolve({data:[accountRow],error:null});
+requests.shift().resolve({data:[accountRow],error:null,count:1});
 await tick();
-requests.shift().resolve({data:[txRow],error:null});
+requests.shift().resolve({data:[txRow],error:null,count:1});
 assert.equal(await promise,true);
 assert.equal(state.financeAccounts[0].cloudId,'acct-cloud');
 assert.equal(state.finance[0].cloudId,'tx-cloud');
@@ -100,12 +95,12 @@ assert.equal(renders,1);
 // Recheck tombstones immediately before committing staged remote data.
 reset();
 promise=load(false);
-requests.shift().resolve({data:[accountRow],error:null});
+requests.shift().resolve({data:[accountRow],error:null,count:1});
 await tick();
 state.trash=[{records:[{collection:'finance',record:{
   id:'deleted-local',cloudId:'tx-cloud',householdId:household
 }}]}];
-requests.shift().resolve({data:[txRow],error:null});
+requests.shift().resolve({data:[txRow],error:null,count:1});
 assert.equal(await promise,true);
 assert.equal(state.finance.length,0,'deleted cloud row should not resurrect');
 assert.equal(state.financeAccounts.length,1);
