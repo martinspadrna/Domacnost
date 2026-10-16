@@ -1720,7 +1720,7 @@ async function run() {
       expression: `typeof window.__DOMACNOST_E2E_NAV__ === 'function' ? window.__DOMACNOST_E2E_NAV__('settings', 'data') : document.querySelector('[data-nav="settings"]')?.click()`
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 800));
-    const settingsCheck = await page.send('Runtime.evaluate', {
+    const householdDiagnosticCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
         const settings = document.querySelector('.settings-tabbed[data-tab-area="settings"]');
@@ -1923,8 +1923,8 @@ async function run() {
       expression: 'window.__DOMACNOST_E2E_SETTINGS_DIAGNOSTIC__?.()',
       returnByValue: true
     });
-    const settings = settingsCheck.result?.value || {};
-    if (!settings.same || !settings.changed || !settings.missing || !settings.extra || !settings.weather)
+    const householdDiagnostics = householdDiagnosticCheck.result?.value || {};
+    if (!householdDiagnostics.same || !householdDiagnostics.changed || !householdDiagnostics.missing || !householdDiagnostics.extra || !householdDiagnostics.weather)
       fail('Cloud Nastavení: read-only diagnostika nerozlišuje shodu a změny jednotlivých sekcí.');
     else ok('Cloud Nastavení: diagnostika rozlišuje obsahové rozdíly a ignoruje technické časové údaje.');
 

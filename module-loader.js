@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-544';
+  const ASSET_VERSION = '0-1-545';
   const ASSET_LOAD_TIMEOUT_MS = 15000;
   const definitions = {
     shopping: {
