@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_543';
-  const APP_BUILD = 543;
+  const APP_VERSION = 'Domácnost+ v.0.1_544';
+  const APP_BUILD = 544;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18526,6 +18526,81 @@
     return 'update';
   }
 
+
+  // Read-only diagnostika: srovnává obsah bez technických časů a vrací jen jména sekcí.
+  function householdUiSettingsDifference(localPayload, household) {
+    const local = householdUiComparableLayout(localPayload?.dashboard_layout || {});
+    const cloud = householdUiComparableLayout(householdUiRemoteLayout(household));
+    const localOnly = Object.keys(local).filter(key => !Object.prototype.hasOwnProperty.call(cloud, key)).sort();
+    const cloudOnly = Object.keys(cloud).filter(key => !Object.prototype.hasOwnProperty.call(local, key)).sort();
+    const changed = Object.keys(local).filter(key =>
+      Object.prototype.hasOwnProperty.call(cloud, key) &&
+      JSON.stringify(canonicalComparableJson(local[key])) !== JSON.stringify(canonicalComparableJson(cloud[key]))
+    ).sort();
+    const weatherChanged = JSON.stringify(canonicalComparableJson(localPayload?.weather_location || {}))
+      !== JSON.stringify(canonicalComparableJson(household?.weatherLocation || household?.weather_location || {}));
+    return { matched: !localOnly.length && !cloudOnly.length && !changed.length && !weatherChanged,
+      localOnly, cloudOnly, changed, weatherChanged };
+  }
+
+  let householdUiDiagnosticHouseholdId = '';
+  let householdUiDiagnosticReport = '';
+
+  async function diagnoseHouseholdUiPending() {
+    if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
+    const householdId = state.cloud?.householdId;
+    try {
+      await ensureHouseholdUiSyncDependencies();
+      if (state.cloud?.householdId !== householdId) return;
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Cloudové připojení není dostupné');
+      const localBefore = householdUiPayload();
+      const comparableBefore = JSON.stringify(canonicalComparableJson({
+        layout: householdUiComparableLayout(localBefore.dashboard_layout),
+        weather: localBefore.weather_location || {}
+      }));
+      const { data, error } = await client.from('households')
+        .select('id, dashboard_layout, weather_location, updated_at')
+        .eq('id', householdId).maybeSingle();
+      if (state.cloud?.householdId !== householdId) return;
+      if (error) throw error;
+      if (!data?.id) throw new Error('Domácnost v cloudu nebyla nalezena');
+      const local = householdUiPayload();
+      const comparableAfter = JSON.stringify(canonicalComparableJson({
+        layout: householdUiComparableLayout(local.dashboard_layout),
+        weather: local.weather_location || {}
+      }));
+      if (comparableBefore !== comparableAfter) {
+        householdUiDiagnosticReport = 'Během kontroly se změnila lokální data. Kontrolu zopakuj, nic se nepřepsalo.';
+      } else {
+        const diff = householdUiSettingsDifference(local, data);
+        const list = (items) => items.slice(0, 8).join(', ') + (items.length > 8 ? ' (celkem ' + items.length + ')' : '');
+        const details = [];
+        if (diff.changed.length) details.push('Rozdílné sekce: ' + list(diff.changed));
+        if (diff.localOnly.length) details.push('Chybí v cloudu: ' + list(diff.localOnly));
+        if (diff.cloudOnly.length) details.push('Pouze v cloudu: ' + list(diff.cloudOnly));
+        if (diff.weatherChanged) details.push('Rozdílné nastavení počasí');
+        const known = normalizeText(state.cloud?.householdUiRevision);
+        const remote = householdUiRemoteRevision(data);
+        if (known && remote && known !== remote) details.push('Cloud má jinou revizi než PC');
+        householdUiDiagnosticReport = diff.matched
+          ? 'PC a cloud obsahují stejné nastavení. ' + (state.cloud?.householdUiPendingAt
+              ? 'Zbývá jen čekající značka; běžná synchronizace ji může bezpečně potvrdit.'
+              : 'Žádná změna nečeká.')
+          : 'PC a cloud mají rozdílné nastavení. ' + details.join(' | ') +
+            '. Žádná data nebyla přepsána.';
+      }
+      householdUiDiagnosticHouseholdId = householdId;
+    } catch (error) {
+      if (state.cloud?.householdId !== householdId) return;
+      householdUiDiagnosticHouseholdId = householdId;
+      householdUiDiagnosticReport = 'Kontrola Nastavení selhala: ' +
+        (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') +
+        '. Lokální data zůstala zachována.';
+    }
+    requestBackgroundRender();
+  }
+
   let garageCloudDiagnosticHouseholdId = '';
   let garageCloudDiagnosticReport = '';
 
@@ -18743,8 +18818,9 @@
             <div class="cloud-recovery-error-row"><div><strong>${escapeHtml(entry.label || cloudOutboxCollectionLabel(entry))}</strong><span>${entry.attempts} ${entry.attempts === 1 ? 'pokus' : entry.attempts < 5 ? 'pokusy' : 'pokusů'}${entry.nextRetryAt ? ` · ${escapeHtml(cloudRetryRelativeLabel(entry.nextRetryAt))}` : ' · čeká na kontrolu'}</span></div>${entry.lastError ? `<em>${escapeHtml(cloudErrorFriendlyMessage({ code: entry.lastErrorCode, message: entry.lastError }))}${entry.lastErrorHint ? `<small>${escapeHtml(entry.lastErrorHint)}</small>` : ''}</em>` : ''}</div>`).join('')}</div>
         </details>` : ''}
         ${(pendingTotal || needsAttention) ? `<div class="form-actions compact-actions"><button class="primary-btn" type="button" data-action="cloud-retry-now">Zkusit uložit teď</button>${!pendingTotal && !conflict && error ? '<button class="ghost-btn" type="button" data-action="cloud-dismiss-error">Skrýt starou chybu</button>' : ''}</div>` : ''}
-        ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button><button class="ghost-btn" type="button" data-action="cloud-diagnose-garage">Prověřit Garáž</button></div>' : ''}
+        ${cloudReady() ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-diagnose-subscriptions">Prověřit Předplatné</button><button class="ghost-btn" type="button" data-action="cloud-diagnose-garage">Prověřit Garáž</button><button class="ghost-btn" type="button" data-action="cloud-diagnose-settings">Prověřit Nastavení</button></div>' : ''}
         ${garageCloudDiagnosticHouseholdId === state.cloud?.householdId && garageCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Garáže:</strong> ' + escapeHtml(garageCloudDiagnosticReport) + '</div>' : ''}
+        ${householdUiDiagnosticHouseholdId === state.cloud?.householdId && householdUiDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Nastavení:</strong> ' + escapeHtml(householdUiDiagnosticReport) + '</div>' : ''}
         ${subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId && subscriptionCloudDiagnosticReport ? '<div class="inline-note compact-note"><strong>Kontrola Předplatného:</strong> ' + escapeHtml(subscriptionCloudDiagnosticReport) + '</div>' : ''}
         ${state.subscriptionsCloud?.pendingAt && subscriptionCloudRecoveryAvailable && !cloudHasBlockingConflict() && subscriptionCloudDiagnosticHouseholdId === state.cloud?.householdId ? '<div class="form-actions compact-actions"><button class="ghost-btn" type="button" data-action="cloud-recover-single-subscription-payment">Doplnit 1 chybějící platbu</button></div>' : ''}
       </section>`;
@@ -20099,6 +20175,10 @@
     }
     if (action === 'cloud-diagnose-garage') {
       diagnoseGaragePending();
+      return;
+    }
+    if (action === 'cloud-diagnose-settings') {
+      diagnoseHouseholdUiPending();
       return;
     }
     if (action === 'cloud-recover-single-subscription-payment') {
@@ -24587,6 +24667,17 @@
     };
 
 
+
+    window.__DOMACNOST_E2E_SETTINGS_DIAGNOSTIC__ = () => {
+      const local = { dashboard_layout: { widgets: ['a'], profileUiSettings: {x:{label:'value',updatedAt:'today'}}, updatedAt:'today', appBuild:APP_BUILD }, weather_location:{city:'A'} };
+      const remote = { dashboard_layout: { widgets: ['a'], profileUiSettings: {x:{label:'value',updatedAt:'yesterday'}}, updatedAt:'yesterday', appBuild:1 }, weather_location:{city:'A'} };
+      const same = householdUiSettingsDifference(local, remote);
+      const changed = householdUiSettingsDifference(local, { ...remote, dashboard_layout: { ...remote.dashboard_layout, widgets: ['b'] } });
+      const missing = householdUiSettingsDifference(local, { ...remote, dashboard_layout: { widgets:['a'] } });
+      const extra = householdUiSettingsDifference(local, { ...remote, dashboard_layout: { ...remote.dashboard_layout, unknownSection:true } });
+      const weather = householdUiSettingsDifference(local, { ...remote, weather_location:{city:'B'} });
+      return {same:same.matched, changed:changed.changed.includes('widgets'), missing:missing.localOnly.includes('profileUiSettings'), extra:extra.cloudOnly.includes('unknownSection'), weather:weather.weatherChanged};
+    };
 
     window.__DOMACNOST_E2E_GARAGE_CLOUD_DIAGNOSTIC__ = () => {
       const vehicle = {
