@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_555** (merge PR #45 `e4a5c7cef80e7b0bcc10f61e1b459b8fe7b033f2`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_556** (merge PR #46 `ddf5688471aff029414f5a6ecb5e856d7841ad0b`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -314,3 +314,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Regrese:** nový vykonatelný `tools/check-cloud-sync-status.mjs` simuluje kompletní úspěch, pending, blokaci konfliktu, permanentní outbox chybu a částečné načtení. Doplněno do `npm run check` vedle Finance testů z 551–555; navýšená PWA verze 556.
 - **Limity:** neřeší neznámé skutečné schéma databáze; Supabase konektor nyní zobrazuje pouze RaK-test a RaK-hlavní, nikoli projekt Domácnost+ — žádné nepodložené SQL ani migrace. Zbývá fyzický 2-device test (uživatel chce až na konci etapy) a DB-level INSERT idempotence / account CAS.
 - **Další krok:** full CI + browser E2E, merge po PASS do main a produkční Vercel READY/alias, aktualizace handoffu. P0 pracovní odhad max ~85 % po nasazení, nikoliv fyzické uzavření.
+
+### 16. 10. 2026 — v0.1_556 PRODUKCE, P0 Cloud VIII
+- PR #46 https://github.com/martinspadrna/Domacnost/pull/46 **MERGED**, squash commit `ddf5688471aff029414f5a6ecb5e856d7841ad0b` do `main`.
+- **PR full CI + browser E2E PASS** https://github.com/martinspadrna/Domacnost/actions/runs/38880747187 (PR commit `8baba03c5cb7feeb57add150e22d9ef7f14f4505`). Spustil se nový vykonatelný cloud status test, Finance INSERT/snapshot/trash/inflight/restart regressions a dosavadní full pipeline.
+- **Produkce Vercel READY**, deployment `dpl_4qTk49mM96daowxahnmzQSVHPVH6`, odpovídající git SHA, alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- `runUnifiedCloudSync` hlásí hotovo pouze po ověřeném úplném načtení všech loaderů, nulovém pending a absenci blokací. Při chybě zachová čas poslední úspěšné synchronizace, zobrazí čekající položky a naváže další retry dle rizika. `cloudSyncLocalPendingData` ani `cloudLoadAllModules` nesmí přepsat `lastSyncAt` při čekajících/neúplných operacích; loader `false` se nepočítá jako úspěch.
+- P0 **IN PROGRESS ~85 % orientačně**, fyzický PC↔mobil test odložen dle přání uživatele až po dokončení zbytku. Supabase plugin list_projects vrací pouze `RaK- test` a `RaK- hlavní`; projekt Domácnost+ není dostupný, proto nelze v této relaci bezpečně ověřit/změnit DB schéma, account-level CAS a DB idempotentní INSERT. **NEPROVÁDĚT NEOVĚŘENÉ SQL**.
+- Otevřené před fyzickým uzavřením: 2-device/suspend/restart/offline→online realita, ztracený ACK nového INSERT před perzistencí, databázový account-level CAS, plný multi-device acceptance. Ostatní P0 klientská opatření automaticky otestovaná; nic nepřepisovat bez důvodu.
