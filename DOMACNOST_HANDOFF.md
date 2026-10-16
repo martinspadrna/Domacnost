@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_553** (merge PR #43 `c6fee82f351f24750bfaf7963fc6e963fc217dfb`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_554** (merge PR #44 `aef0754deb53e1eb1d0d32cb958c6aa6b7d92444`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -280,3 +280,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Vykonatelná regrese:** `tools/check-finance-inflight.mjs` testuje dvojí souběžný INSERT, immutable editaci při letu, smazání/Undo, pozdní ACK účtu, síťový error a opakování, izolaci domácností. Rozšířen `tools/check-e2e-smoke.mjs`, zachovány předchozí P0 regresní sady.
 - **Před vydáním:** zelený úplný CI včetně browser E2E na posledním PR SHA, poté merge a Vercel READY + alias. DB migrace a reálná data nedotčeny.
 - **Dále OPEN:** serverová idempotence při ztracené HTTP odpovědi (client neví ID), pozdní ACK po přepnutí domácnosti nebo zavření procesu před perzistencí, DB account-level CAS, fyzický 2-device/offline→online test. Reálné Supabase schéma bez autorizovaného přístupu nehádat. Pracovní P0 ~75 % až po CI, reálný test pending.
+
+### 16. 10. 2026 — v0.1_554 PRODUKCE, P0 Finance VI
+- PR #44 https://github.com/martinspadrna/Domacnost/pull/44 **MERGED**, squash commit `aef0754deb53e1eb1d0d32cb958c6aa6b7d92444` na `main`.
+- **PR full CI + browser E2E PASS**, poslední PR commit `b2fdc866791c9f808600f1332af7631e680ea5cb`, run https://github.com/martinspadrna/Domacnost/actions/runs/38878033875. Nový vykonatelný `check-finance-inflight.mjs` ověřuje souběžné pokusy INSERT, editaci během requestu, smazání během INSERT, Undo gate, pozdní archivaci účtu a opakování po síťové chybě; zachovány všechny dosavadní Finance testy.
+- **Vercel production READY**, deployment `dpl_CPAd8Bx9G5BmsHru1d7v9q9FLGum`, git SHA odpovídá merge, produkční alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Opraveny závody při souběžném vytváření stejného finančního pohybu z formuláře a sync fronty (single-flight), zachování `pending_update` pro mezitímní editaci, přesměrování pozdního ACK po lokálním smazání účtu/pohybu do Koše/outboxu. Živé Undo zůstává dostupné; před jeho koncem se DB deletion neodesílá. Detachované async callbacky nesmějí přepsat aktuální lokální řádek.
+- P0 **IN PROGRESS cca 75 % (pracovní odhad)**; **reálný cross-device / offline→online fyzický test stále chybí**. DB level idempotentní INSERT při ztracené odpovědi a account-level CAS vyžadují přístup ke skutečnému Supabase schématu. Po restartu před uložením serverového ACK se stále může objevit osiřelý INSERT, nelze poctivě označit za vyřešené.
+- Další etapa: potvrdit přenos edit/delete přes PC↔mobil, přes restart při aktivním outboxu; samostatně řešit trvanlivé pending markery a riziko neviditelného Koše po pádu klienta. Neprovádět neověřené SQL/migrace ani neautorizované destruktivní zásahy.
