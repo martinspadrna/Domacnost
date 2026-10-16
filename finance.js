@@ -1324,6 +1324,12 @@
       const client = getSupabaseClient();
       const requestedHouseholdId = getState().cloud?.householdId;
       if (!client || !requestedHouseholdId) return false;
+      // Cloud má dvě SELECT fáze. Uživatel může mezitím přidat, smazat nebo
+      // změnit účet/pohyb. Starý snapshot pak nesmí přepsat nové lokální změny.
+      const localRevisionBeforeRead = JSON.stringify({
+        accounts: getState().financeAccounts || [],
+        transactions: getState().finance || []
+      });
       const { data: accountData, error: accountError } = await client
         .from('finance_accounts')
         .select('id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at')
@@ -1387,8 +1393,20 @@
         cloudUpdatedAt: item.updated_at || ''
       }));
       if (getState().cloud?.householdId !== requestedHouseholdId) return false;
-      getState().financeAccounts = stagedAccounts;
-      getState().finance = [...cloudItems, ...localOnly];
+      if (JSON.stringify({
+        accounts: getState().financeAccounts || [],
+        transactions: getState().finance || []
+      }) !== localRevisionBeforeRead) {
+        // Současný lokální zápis vyhrává nad starší odpovědí SELECT.
+        // Následující synchronizace načte nový cloud snapshot znovu.
+        return false;
+      }
+      const latestHiddenAccounts = financeHiddenCloudIds('financeAccounts');
+      const latestHiddenTransactions = financeHiddenCloudIds('finance');
+      getState().financeAccounts = stagedAccounts.filter((entry) =>
+        !latestHiddenAccounts.has(String(entry.cloudId)));
+      getState().finance = [...cloudItems, ...localOnly].filter((entry) =>
+        !latestHiddenTransactions.has(String(entry.cloudId)));
       getState().financeCloud = { ...(getState().financeCloud || {}), accountsLoadedAt: new Date().toISOString(), loadedAt: new Date().toISOString() };
       clearFinanceCloudPendingIfClean();
       touchState();
