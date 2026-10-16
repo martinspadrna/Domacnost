@@ -93,6 +93,6 @@ const noLeak=mergeFn(state.trash,[mk('tx-pending','finance','unexpected-id')]);
 assert.equal(noLeak[0].records[0].record.cloudId,'unexpected-id','different cloud identities must not be combined');
 assert(app.includes("recoverFinanceTrashCloudDeletes();\n    const pending = cloudLocalPendingCount();"));
 assert(app.includes("recoverFinanceTrashCloudDeletes();\n    const before = cloudLocalPendingCount();"));
-assert(app.includes("confirmFinanceTrashCloudDelete(entry);\n      queue = queue.slice(1);"));
+assert(app.includes("if (!finishEntry(entry)) return false;\n      confirmFinanceTrashCloudDelete(entry);"), 'ACK may only be stored after current outbox entry and household are verified');
 assert(app.includes("delete restored.cloudDeleteConfirmedAt;"),'restoring must reset delete receipt');
 console.log('PASS Finance restart tombstone recovery, Undo safety, tenant isolation, ack and snapshot merge');
