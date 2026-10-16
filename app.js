@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_551';
-  const APP_BUILD = 551;
+  const APP_VERSION = 'Domácnost+ v.0.1_552';
+  const APP_BUILD = 552;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2728,9 +2728,51 @@
           continue;
         }
       }
-      let deleteQuery = client.from(entry.table).delete().eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
-      if (entry.expectedRevision) deleteQuery = deleteQuery.eq('updated_at', entry.expectedRevision);
-      const { data, error } = await deleteQuery.select('id').maybeSingle();
+      // Finance účty se archivují (ne fyzicky DELETE), aby navázané pohyby
+      // nepřišly o cizí klíč. Výsledek musí potvrdit skutečný řádek.
+      let data = null;
+      let error = null;
+      if (entry.collection === 'finance' && !entry.expectedRevision) {
+        // Bez původní revize nedovolíme nehlídané mazání finančního pohybu.
+        const checked = await client.from(entry.table)
+          .select('id,updated_at').eq('id', entry.cloudId)
+          .eq('household_id', state.cloud.householdId).maybeSingle();
+        if (checked.error) error = checked.error;
+        else if (checked.data) {
+          registerCloudRecordConflict({
+            collection: 'finance', table: entry.table, cloudId: entry.cloudId,
+            localId: entry.localRecord?.id || '', operation: 'delete', label: entry.label,
+            expectedRevision: '', remoteRevision: checked.data.updated_at,
+            localRecord: entry.localRecord, remoteRow: checked.data
+          });
+          return false;
+        } else {
+          // Záznam už není v cloudu, opakovaný pokus je idempotentní.
+          data = { id: entry.cloudId };
+        }
+      } else if (entry.collection === 'financeAccounts') {
+        const archived = await client.from('finance_accounts')
+          .update({ is_archived: true }).eq('id', entry.cloudId)
+          .eq('household_id', state.cloud.householdId).eq('is_archived', false)
+          .select('id').maybeSingle();
+        data = archived.data;
+        error = archived.error;
+        if (!error && !data) {
+          const existing = await client.from('finance_accounts')
+            .select('id,is_archived').eq('id', entry.cloudId)
+            .eq('household_id', state.cloud.householdId).maybeSingle();
+          if (existing.error) error = existing.error;
+          else if (existing.data?.is_archived === true) data = { id: entry.cloudId };
+          else error = { message: 'Archivaci finančního účtu nebylo možné potvrdit', code: 'FINANCE_ARCHIVE_UNCONFIRMED' };
+        }
+      } else {
+        let deleteQuery = client.from(entry.table).delete()
+          .eq('id', entry.cloudId).eq('household_id', state.cloud.householdId);
+        if (entry.expectedRevision) deleteQuery = deleteQuery.eq('updated_at', entry.expectedRevision);
+        const result = await deleteQuery.select('id').maybeSingle();
+        data = result.data;
+        error = result.error;
+      }
       if (error) {
         console.error('Cloud outbox delete failed', error);
         entry.attempts += 1;
@@ -2744,7 +2786,7 @@
         persistStateSnapshot({ immediate: true });
         return false;
       }
-      if (!data && entry.expectedRevision && ['shopping', 'finance', 'calendar'].includes(entry.collection)) {
+      if (!data && ['shopping', 'finance', 'calendar'].includes(entry.collection)) {
         const { data: remoteRow, error: remoteError } = await client
           .from(entry.table)
           .select('*')
@@ -14681,6 +14723,8 @@
       if (state[collection].some((item) => String(item.id) === String(record.id))) return;
       const restored = sanitizeTrashRecord(record);
       if (restored.cloudId) {
+        // Obnova po definitivním zařazení do outboxu potřebuje nový cloud INSERT.
+        // Koš po 30 dní zachovává kopii, takže originál nikdy neztrácíme.
         restored.cloudId = '';
         restored.syncStatus = 'pending';
       }
