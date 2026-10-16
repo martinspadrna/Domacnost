@@ -1595,7 +1595,7 @@
       if (cloudReady() || (getState().cloud?.provider === 'supabase' && getState().cloud?.householdId)) {
         getState().financeCloud = { ...(getState().financeCloud || {}), templatesPendingAt: new Date().toISOString() };
       }
-      saveState();
+      saveState({ immediate: true });
       if (!cloudReady()) return Promise.resolve(true);
       // Odbavení revize provádí centrální CAS potvrzení skutečně odeslaného snapshotu.
       return cloudSaveHouseholdUiSettings(false)
