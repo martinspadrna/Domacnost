@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_555';
-  const APP_BUILD = 555;
+  const APP_VERSION = 'Domácnost+ v.0.1_556';
+  const APP_BUILD = 556;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -19827,11 +19827,16 @@
       });
       if (showMessage) await withMutedToasts(() => cloudLoadAllModules(false));
       setupCloudRealtimeSubscriptions(false);
-      state.cloud.lastSyncAt = new Date().toISOString();
+      const remaining = cloudLocalPendingCount();
+      const blocked = cloudHasBlockingConflict() || cloudOutboxHasPermanentFailure();
+      // Last successful sync must not change when requests are still waiting.
+      if (!remaining && !blocked) state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       requestBackgroundRender();
-      if (showMessage) showToast('Lokální záznamy byly zkontrolované a cloud je načtený');
+      if (showMessage) showToast(remaining || blocked
+        ? `Kontrola cloudu dokončena, ještě čeká ${remaining} změn`
+        : 'Lokální záznamy jsou v cloudu');
     });
   }
 
@@ -20104,19 +20109,29 @@
       for (const loader of loaders) {
         try {
           await yieldToMainThread();
-          await loader(false);
-          ok += 1;
+          const result = await loader(false);
+          if (result !== false) ok += 1;
         } catch (error) {
           console.warn('Cloud load module failed', error);
         }
       }
-      state.cloud.lastSyncAt = new Date().toISOString();
+      if (ok === loaders.length && !cloudLocalPendingCount() && !cloudHasBlockingConflict()) {
+        state.cloud.lastSyncAt = new Date().toISOString();
+      }
       touchState();
       saveState({ immediate: true });
       requestBackgroundRender();
       if (!options.skipRealtimeSetup) setupCloudRealtimeSubscriptions(false);
       if (showMessage) showToast(`Cloud načten: ${ok}/${loaders.length} částí`);
+      return { loaded: ok, total: loaders.length };
     });
+  }
+
+  function cloudSyncCompletionState(loadResult) {
+    const pending = cloudLocalPendingCount();
+    const blocked = cloudHasBlockingConflict() || cloudOutboxHasPermanentFailure();
+    const incompleteLoad = !loadResult || Number(loadResult.loaded) !== Number(loadResult.total);
+    return { pending, blocked, incompleteLoad, complete: !pending && !blocked && !incompleteLoad };
   }
 
   async function runUnifiedCloudSync(showMessage = true) {
@@ -20142,22 +20157,32 @@
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
       await cloudLoadHouseholds(false);
       await cloudSyncLocalPendingData(false);
-      await cloudLoadAllModules(false, { skipRealtimeSetup: true });
+      const loadResult = await cloudLoadAllModules(false, { skipRealtimeSetup: true });
+      const verification = cloudSyncCompletionState(loadResult);
       setupCloudRealtimeSubscriptions(true);
+      const failed = !verification.complete;
+      const pendingMessage = verification.pending
+        ? `Ještě zbývá synchronizovat ${verification.pending} změn`
+        : verification.incompleteLoad
+          ? 'Některé cloudové moduly se nepovedlo načíst'
+          : 'Některá cloudová operace vyžaduje kontrolu';
       state.cloud = {
         ...(state.cloud || {}),
-        autosyncStatus: 'done',
-        autosyncFailureCount: 0,
+        autosyncStatus: failed ? verification.blocked || verification.incompleteLoad ? 'blocked' : 'pending' : 'done',
+        autosyncFailureCount: failed ? Math.max(1, cloudAutosyncFailureCount + 1) : 0,
         autosyncRetryAt: '',
-        lastAutosyncError: '',
+        lastAutosyncError: failed ? pendingMessage : '',
         lastAutosyncAt: new Date().toISOString(),
-        lastSyncAt: new Date().toISOString()
+        ...(failed ? {} : { lastSyncAt: new Date().toISOString() })
       };
       touchState();
       saveState({ immediate: true });
       render();
-      if (showMessage) showToast('Všechno je synchronizované');
-      return true;
+      if (showMessage) showToast(failed ? pendingMessage : 'Všechno je synchronizované');
+      if (failed && !verification.blocked && !verification.incompleteLoad && verification.pending) {
+        scheduleCloudAutosync('unified-incomplete', { force: true, delayMs: 1700 });
+      }
+      return !failed;
     } catch (error) {
       console.warn('Unified cloud sync failed', error);
       cloudAutosyncFailureCount = Math.max(1, cloudAutosyncFailureCount + 1);
