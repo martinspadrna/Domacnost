@@ -46,6 +46,7 @@
     const touchState = deps.touchState || (() => {});
     const showToast = deps.showToast || (() => {});
     const showUndoToast = deps.showUndoToast || ((text) => showToast(text));
+    const linkFinanceLateInsertToTrash = deps.linkFinanceLateInsertToTrash || (() => false);
     const currentHouseholdId = deps.currentHouseholdId || (() => '');
     const currentProfileId = deps.currentProfileId || (() => '');
     const cloudReady = deps.cloudReady || (() => false);
@@ -1035,7 +1036,13 @@
         if (!data?.id) return null;
         if (getState().cloud?.householdId !== householdId) return null;
         const live = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
-        if (!live || (live.cloudId && live.cloudId !== data.id)) return null;
+        if (!live) {
+          // Uživatel účet mezitím smazal: ID patří do Koše, ne do zaniklého objektu.
+          account.cloudId = data.id;
+          linkFinanceLateInsertToTrash('financeAccounts', account.id, householdId, data);
+          return null;
+        }
+        if (live.cloudId && live.cloudId !== data.id) return null;
         // ID uložit i tehdy, když uživatel během INSERT změnil hodnoty.
         // Další synchronizace pak provede UPDATE, ne duplicitní INSERT.
         live.cloudId = data.id;
@@ -1148,29 +1155,74 @@
       return getState().cloud?.householdId === householdId;
     }
 
+    // Jeden lokální pohyb může spouštět formulář, autosync i ruční sync.
+    // Single-flight zabrání dvojitému INSERTu z jedné běžící instance.
+    const financeTransactionInsertInFlight = new Map();
+
+    function financeTransactionInsertConfirmed(item, saved) {
+      return Boolean(saved?.id && item?.cloudId === saved.id &&
+        (getState().finance || []).includes(item) && !item.syncStatus);
+    }
+
     async function cloudAddFinance(item) {
       const client = getSupabaseClient();
       const householdId = getState().cloud?.householdId;
-      if (!client || !householdId) return null;
-      const user = await refreshCloudSession(false);
-      if (!user || getState().cloud?.householdId !== householdId) return null;
-      if (!(await ensureFinanceTransactionAccounts(item, householdId))) {
-        showToast('Pohyb čeká na uložení souvisejících účtů do cloudu');
-        return null;
+      if (!client || !householdId || !item?.id) return null;
+      const flightKey = [householdId, item.id].join(':');
+      if (financeTransactionInsertInFlight.has(flightKey)) return financeTransactionInsertInFlight.get(flightKey);
+      if (item.cloudId) return null;
+
+      const job = (async () => {
+        const user = await refreshCloudSession(false);
+        if (!user || getState().cloud?.householdId !== householdId) return null;
+        let current = (getState().finance || []).find((entry) => entry.id === item.id);
+        if (!current || current.cloudId) return null;
+        if (!(await ensureFinanceTransactionAccounts(current, householdId))) {
+          showToast('Pohyb čeká na uložení souvisejících účtů do cloudu');
+          return null;
+        }
+        // Účet se mohl vytvořit během await; použij aktuální pohyb.
+        current = (getState().finance || []).find((entry) => entry.id === item.id);
+        if (!current || current.cloudId || getState().cloud?.householdId !== householdId) return null;
+        const payload = cloudFinancePayload(current, user.id);
+        if (!financeTransactionAccountsBound(current, payload) ||
+            payload.household_id !== householdId) return null;
+        const sentSnapshot = JSON.stringify(payload);
+        const { data, error } = await client.from('finance_transactions')
+          .insert(payload).select('id,updated_at').single();
+        if (error) {
+          showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
+          return null;
+        }
+        if (!data?.id || getState().cloud?.householdId !== householdId) return null;
+        const live = (getState().finance || []).find((entry) => entry.id === item.id);
+        if (!live) {
+          // Záznam smazaný během requestu: propojit pozdní ACK s Košem/outboxem.
+          // Původní objekt zachovat pro případ, že uživatel mezitím stiskne Undo.
+          item.cloudId = data.id;
+          item.cloudUpdatedAt = data.updated_at || '';
+          item.syncStatus = '';
+          linkFinanceLateInsertToTrash('finance', item.id, householdId, data);
+          return null;
+        }
+        if (live.cloudId && live.cloudId !== data.id) return null;
+        live.cloudId = data.id;
+        live.cloudUpdatedAt = data.updated_at || '';
+        item.cloudId = data.id;
+        item.cloudUpdatedAt = data.updated_at || '';
+        const unchanged = JSON.stringify(cloudFinancePayload(live, user.id)) === sentSnapshot;
+        live.syncStatus = unchanged ? '' : 'pending_update';
+        if (!unchanged) markFinanceCloudPending('finance-transaction-changed-during-insert');
+        getState().cloud.lastSyncAt = new Date().toISOString();
+        persistStateSnapshot({ immediate: true });
+        return unchanged ? data : null;
+      })();
+      financeTransactionInsertInFlight.set(flightKey, job);
+      try {
+        return await job;
+      } finally {
+        if (financeTransactionInsertInFlight.get(flightKey) === job) financeTransactionInsertInFlight.delete(flightKey);
       }
-      const payload = cloudFinancePayload(item, user.id);
-      if (!financeTransactionAccountsBound(item, payload) ||
-          getState().cloud?.householdId !== householdId) return null;
-      const { data, error } = await client.from('finance_transactions').insert(payload).select('id,updated_at').single();
-      if (error) {
-        showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
-        return null;
-      }
-      item.cloudId = data.id;
-      item.cloudUpdatedAt = data.updated_at || '';
-      item.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
-      return data;
     }
 
     async function cloudFinanceRow(cloudId) {
