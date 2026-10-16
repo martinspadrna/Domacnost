@@ -145,3 +145,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Kandidát v0.1_546 na PR #37: https://github.com/martinspadrna/Domacnost/pull/37. **CI full check + browser E2E PASS** na commit `c6f9f9207fb34a72d3c5d12e3cb0b74259e30f4e`, run https://github.com/martinspadrna/Domacnost/actions/runs/38850789241.
 - Nadbytečný PR #36 (v0.1_543) **uzavřen bez merge**, jeho změny obsahuje PR #37. Produkční main zůstává `v0.1_542`, žádný nový release zatím nebyl nasazen.
 - Reálný výsledek PC pending se nedá spolehlivě zjistit z preview na jiné doméně, protože se pending ukládá k původnímu zařízení/originu. Po uživatelském odsouhlasení bezpečně nasadit diagnostiku, pak na PC `Prověřit Nastavení` a teprve podle výsledku řešit konkrétní rozdíly, bez force overwrite.
+
+### 16. 10. 2026 — v0.1_546 MAIN + produkce (uživatelsky schváleno)
+- Uživatel schválil nasazení odpovědí „j“ na nabídku publikace v0.1_546.
+- PR #37 https://github.com/martinspadrna/Domacnost/pull/37 byl označen ready a sloučen do main, **merge commit `a41dece2ef89e727888e59d081162d4a7a9fcc56`**. Obsahuje CAS Garáže + pouze read-only diagnostiku Nastavení domácnosti.
+- GitHub PR CI full check včetně browser E2E **PASS**: run https://github.com/martinspadrna/Domacnost/actions/runs/38851013005 .
+- Vercel **produkční deployment READY** `dpl_5YY4Cxe3RooGhyfCxtHy1aANAiqa` pro tentýž merge commit; alias `domacnost-plus.vercel.app`. Nyní je vydaná verze **v0.1_546**, dřívější v0.1_542 nahrazena.
+- Přetrvávající **1 čekající Nastavení domácnosti na PC** zatím **NEVYŘEŠENO**. K potvrzení obsahu nutný reálný test na původní doméně a PC: Nastavení → Cloud domácnosti → **Prověřit Nastavení**; zaslat text/screenshot názvů rozdílných sekcí. Diagnostika jen SELECT, nic nemaže ani nepřepisuje.
+- Mobilní Garáž po DB opravě uživatelsky OK. Další práce: až po výsledku PC diagnostiky bezpečně vyřešit případný pending marker / konkrétní konflikt; potom P0 Finance. Bez force overwrite.
