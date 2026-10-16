@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_556** (merge PR #46 `ddf5688471aff029414f5a6ecb5e856d7841ad0b`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_557** (merge PR #47 `2adcc3e65cc2c36d2707afb207a91cbe080ccad3`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -331,3 +331,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Regrese:** nový `tools/check-finance-read-race.mjs` provádí skutečně asynchronní mock čtení s lokální změnou mezi SELECTy, kontroluje návrat false a zachování lokálního záznamu, úspěšné načtení bez souběhu, novou tombstone během SELECTu; kontrola obnovy a viditelnosti pending. Přidáno do `npm run check` se všemi regresními testy 551–556. Verze cache/release sjednocena na v0.1_557.
 - **Otevřené:** DB-level idempotence pro ztracenou HTTP odpověď INSERT a atomický account CAS vyžadují přístup do správného Supabase projektu Domácnost+ (aktuálně konektor nabízí jen RaK projekty). Žádné SQL/migrace. Fyzický PC ↔ mobil a offline/restart test až po dokončení dle uživatele. Procento P0 zatím **IN PROGRESS ~85 %**, nelze automaticky prohlásit 100 %.
 - **Před vydáním:** poslední PR SHA → full CI a browser E2E PASS, pak merge main a ověřit Vercel READY/alias.
+
+### 16. 10. 2026 — v0.1_557 PRODUKCE, P0 Finance IX
+- PR #47 https://github.com/martinspadrna/Domacnost/pull/47 **MERGED**, squash commit `2adcc3e65cc2c36d2707afb207a91cbe080ccad3` do `main`.
+- **Full CI + browser E2E PASS** na PR head `6b6f41ac4e026013937e92c8f00baf4088bba375`, run https://github.com/martinspadrna/Domacnost/actions/runs/38882985600.
+- **Vercel production READY**, deployment `dpl_5H4kdzaZRdmimJJ1cyuoxdNtj1MN`, SHA `2adcc3e65cc2c36d2707afb207a91cbe080ccad3`, alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Ruční i automatický sync nyní rekonstruují z Koše nedokončená smazání financí před cloud outbox replay; nevyřízené smazání se zobrazuje v čekajících změnách ještě před vytvořením outboxu. Zmizí při potvrzeném serverovém ACK.
+- Dvoufázový cloud SELECT účtů/pohybů již nesmí přepsat lokální zápis provedený během čekání. Pokud mezitím stav Finance změnil, loader abortuje starší remote snapshot. Před commit znovu aplikuje aktuální Koš/outbox filtr. Nový asynchronní `check-finance-read-race.mjs` testuje pozdní SELECT, lokální úpravu, nově smazaný cloud záznam a normální načtení.
+- P0 **IN PROGRESS orientačně ~85 %**. Fyzické potvrzení PC↔mobil/offline→online až na konci dle uživatele. Trvale OPEN: DB-level idempotence INSERT po ztracené odpovědi, účetní atomický CAS a přístup k Supabase projektu Domácnost+ (konektor vrací jen RaK projekty). Bez správné DB neopravovat schema ani nevymýšlet migrace. Další klientské ochrany dělat pouze tam, kde najdeme konkrétní riziko/regresi.
