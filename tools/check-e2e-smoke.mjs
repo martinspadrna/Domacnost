@@ -1938,6 +1938,27 @@ async function run() {
       fail('Cloud Nastavení: detail nesmí zobrazit citlivé hodnoty a musí rozlišit čtyři sekce.');
     else ok('Cloud Nastavení: detail sekcí a soukromí potvrzeny.');
 
+    const financeAckCheck = await page.send('Runtime.evaluate', {
+      expression: 'window.__DOMACNOST_E2E_FINANCE_WRITE_ACK__?.()',
+      returnByValue: true
+    });
+    const financeAck = financeAckCheck.result?.value || {};
+    if (!financeAck.missing || !financeAck.empty || !financeAck.wrong || !financeAck.matched || !financeAck.noId)
+      fail('Finance: zápis bez potvrzeného ID nesmí být považován za úspěšný.');
+    else ok('Finance: chybějící / nesprávná DB odpověď není úspěšný zápis.');
+
+    const financeSource = readFileSync(join(projectRoot, 'finance.js'), 'utf8');
+    const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
+    const txUpdateSource = financeSource.split('async function cloudUpdateFinance(item, options = {}) {')[1]?.split('async function cloudLoadFinance(showMessage = true)')[0] || '';
+    if (!accountUpdateSource.includes(".select('id')") ||
+        !accountUpdateSource.includes('financeCloudUpdateAcknowledged(data, cloudId)') ||
+        !accountUpdateSource.includes('if (!client || !cloudId || !householdId) return false;') ||
+        !txUpdateSource.includes('if (!expectedRevision') ||
+        !txUpdateSource.includes('financeCloudUpdateAcknowledged(data, cloudId)') ||
+        !txUpdateSource.includes('if (!client || !cloudId || !householdId) return false;'))
+      fail('Finance: account nebo transaction UPDATE stále může potvrdit neuloženou změnu.');
+    else ok('Finance: UPDATE potvrzuje konkrétní DB řádek a transakce vyžadují CAS revizi.');
+
     const garageDiagnosticCheck = await page.send('Runtime.evaluate', {
       expression: 'window.__DOMACNOST_E2E_GARAGE_CLOUD_DIAGNOSTIC__?.()',
       returnByValue: true

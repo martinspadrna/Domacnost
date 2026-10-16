@@ -184,3 +184,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Tři dříve uživatelsky potvrzené oblasti: **Předplatné cross-device OK, Garáž (Fabia + Toyota Auris) OK, Nastavení domácnosti PC OK**. Označit konkrétní čekající konflikt P0 Nastavení jako **DONE (user confirmed)**. Neodvozovat z toho, že všechny ostatní moduly nebo veškerá synchronizace jsou bezchybné.
 - Poslední ověřený release: **v0.1_547**, PR #38 merged na main, Vercel produkce READY, CI včetně browser E2E PASS. Nevyžaduje se nová app verze pro pouhý záznam stavu v handoffu.
 - **Následující priorita P0 Finance**: audit cloudUpdateFinanceAccount, cloudUpdateFinance a jejich pending/false-success chování, CAS a potvrzení serverového UPDATE; dále transakce, šablony a půjčky a cross-device/offline testy. Začít z posledního HEAD. Žádný force overwrite, bezdestruktivní změny po testech rovnou main/produkce dle trvalého souhlasu uživatele.
+
+### 16. 10. 2026 — P0 Finance audit I, kandidát v0.1_548
+- Potvrzeno ze zdrojového `finance.js`: `cloudUpdateFinanceAccount()` dosud vracela `true` při chybějícím klientovi/cloudId/householdId a neověřovala počet změněných DB řádků (UPDATE bez SELECT), takže se mohl smazat pending marker i bez serverového zápisu. Stejný předčasný úspěch v `cloudUpdateFinance()`, která má jinak CAS pro transakce.
+- Bezpečný malý fix v0.1_548: account UPDATE vrací `true` teprve po odpovědi konkrétního řádku s očekávaným ID; 0 rows, chyba, změna domácnosti, záznamu nebo lokálního payloadu během requestu = **false**, pending se zachová. U transakcí chybějící klient = false, neznámá revize = žádný UPDATE naslepo, po SELECT potvrzení kontrola cloud ID a zachování právě odeslaného lokálního payloadu.
+- E2E testuje kladné/záporné případy potvrzení ID a staticky střeží account SELECT i povinnou CAS revizi u transakcí.
+- **Zůstává otevřené pro další P0:** finance_accounts nemá v lokálním modelu sledovanou serverovou revizi; ověřit skutečné DB schéma `finance_accounts` a navrhnout bezpečný CAS (nepřidávat naslepo sloupce bez přístupu/schématu). Dále add/update závislosti účtů, delete/outbox, simultánní editace, Finance loans/templates a cross-device/offline testy.
+- Handoff aktuálně DONE: Předplatné/Garáž/Nastavení domácnosti potvrzené uživatelem. Nevyvozovat z toho DONE všech Financí.
+
+### 16.10.2026 — kandidát posunut na v0.1_549
+- Oprava před CI: E2E finance source check používal neimportované `readFile`; přepnuto na existující `readFileSync(join(projectRoot, 'finance.js'), 'utf8')`. Verze navýšena konzistentně. Čeká full CI včetně reálného Chrome E2E.

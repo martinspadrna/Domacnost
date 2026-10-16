@@ -1013,18 +1013,42 @@
       return data;
     }
 
+    function financeCloudUpdateAcknowledged(data, expectedId) {
+      return Boolean(expectedId && data?.id && String(data.id) === String(expectedId));
+    }
+
     async function cloudUpdateFinanceAccount(account) {
       const client = getSupabaseClient();
-      if (!client || !account?.cloudId || !getState().cloud?.householdId) return true;
+      const householdId = getState().cloud?.householdId;
+      const cloudId = account?.cloudId;
+      // Neexistující spojení ani chybějící ID nesmějí znamenat potvrzený zápis.
+      if (!client || !cloudId || !householdId) return false;
       const user = await refreshCloudSession(false);
-      if (!user) return false;
+      if (!user || getState().cloud?.householdId !== householdId || account.cloudId !== cloudId) return false;
       const payload = cloudFinanceAccountPayload(account, user.id);
       delete payload.created_by;
-      const { error } = await client.from('finance_accounts').update(payload).eq('id', account.cloudId).eq('household_id', getState().cloud.householdId);
+      const snapshot = JSON.stringify(payload);
+      const { data, error } = await client.from('finance_accounts')
+        .update(payload)
+        .eq('id', cloudId)
+        .eq('household_id', householdId)
+        .select('id')
+        .maybeSingle();
       if (error) {
         showToast(error.message || 'Účet se nepovedlo upravit v cloudu');
         return false;
       }
+      // 0 řádků = chyba / neexistující účet; nic se nesmí označit za uložené.
+      if (!financeCloudUpdateAcknowledged(data, cloudId)) return false;
+      // Mezitím se mohla změnit domácnost, záznam nebo lokální hodnoty.
+      if (getState().cloud?.householdId !== householdId ||
+          account.cloudId !== cloudId ||
+          !(getState().financeAccounts || []).includes(account) ||
+          JSON.stringify((() => {
+            const current = cloudFinanceAccountPayload(account, user.id);
+            delete current.created_by;
+            return current;
+          })()) !== snapshot) return false;
       getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
@@ -1092,7 +1116,9 @@
 
     async function cloudUpdateFinance(item, options = {}) {
       const client = getSupabaseClient();
-      if (!client || !item?.cloudId || !getState().cloud?.householdId) return true;
+      const householdId = getState().cloud?.householdId;
+      const cloudId = item?.cloudId;
+      if (!client || !cloudId || !householdId) return false;
       const user = await refreshCloudSession(false);
       if (!user) return false;
       if (item.accountId) {
@@ -1107,6 +1133,9 @@
       delete payload.created_by;
       const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
       const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+      // Bez známé revize nelze bezpečně použít CAS; žádný UPDATE naslepo.
+      if (!expectedRevision || getState().cloud?.householdId !== householdId || item.cloudId !== cloudId) return false;
+      const sentPayloadSnapshot = JSON.stringify(payload);
       const nextRevision = new Date().toISOString();
       payload.updated_at = nextRevision;
       let query = client.from('finance_transactions').update(payload).eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
@@ -1129,6 +1158,15 @@
         }
         return false;
       }
+      if (!financeCloudUpdateAcknowledged(data, cloudId) ||
+          getState().cloud?.householdId !== householdId ||
+          item.cloudId !== cloudId ||
+          !(getState().finance || []).includes(item) ||
+          JSON.stringify((() => {
+            const currentPayload = cloudFinancePayload(item, user.id);
+            delete currentPayload.created_by;
+            return currentPayload;
+          })()) !== sentPayloadSnapshot) return false;
       item.cloudUpdatedAt = data.updated_at || nextRevision;
       item.updatedAt = item.cloudUpdatedAt;
       item.syncStatus = '';
@@ -2165,6 +2203,7 @@
       financeTypeFilter,
       financeCloudPendingCount,
       reconcileFinanceCloudPendingState,
+      financeCloudUpdateAcknowledged,
       mergeFinanceTemplates,
       normalizeFinanceTemplates,
       mergeFinanceLoans,

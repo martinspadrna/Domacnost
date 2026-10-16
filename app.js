@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_547';
-  const APP_BUILD = 547;
+  const APP_VERSION = 'Domácnost+ v.0.1_549';
+  const APP_BUILD = 549;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -24672,6 +24672,16 @@
     };
     window.__DOMACNOST_E2E_HOUSEHOLD_BASELINE_DECISION__ = (remoteRevision, pendingAt) => householdUiBaselineDecision(remoteRevision, pendingAt);
     window.__DOMACNOST_E2E_PENDING_MODULE_IDS__ = (items = null) => pendingCloudModuleIds(items);
+    window.__DOMACNOST_E2E_FINANCE_WRITE_ACK__ = () => {
+      const confirm = getFinanceModule().financeCloudUpdateAcknowledged;
+      return {
+        missing: !confirm(null, 'cloud-account'),
+        empty: !confirm({}, 'cloud-account'),
+        wrong: !confirm({ id: 'another-account' }, 'cloud-account'),
+        matched: confirm({ id: 'cloud-account' }, 'cloud-account'),
+        noId: !confirm({ id: 'cloud-account' }, '')
+      };
+    };
     window.__DOMACNOST_E2E_FINANCE_PENDING_OVERVIEW__ = () => {
       const previous = {
         finance: structuredCloneSafe(state.finance || []),
