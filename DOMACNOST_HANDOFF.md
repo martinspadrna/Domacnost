@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_552** (merge PR #42 `a1d1f4d80f39a2eededcc60e4e212e8c3236cee8`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
+- **Aktuální produkční verze: v0.1_553** (merge PR #43 `c6fee82f351f24750bfaf7963fc6e963fc217dfb`, Vercel READY, PR CI PASS). Nové konverzace musí ověřit HEAD znovu.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -261,3 +261,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Regrese:** nový vykonatelný Node test `tools/check-finance-snapshot.mjs` pro tombstones, mazání/Undo, lazy PWA start, remote odstranění vs pending a správnou per-section značku. Je zapojen do `npm run check` spolu s předchozími Finance testy. Release klíče PWA navýšeny konzistentně na 553.
 - **Omezení / OPEN:** account-level CAS a idempotentní INSERT po ztracené server odpovědi, account/transakční INSERT×DELETE race, cross-device a offline→online fyzický test, 30denní Koš pro půjčky/šablony (zde zůstává krátké Undo + trvalá tombstone). DB schéma Domácnost+ dosud permission denied. Celkové P0 IN PROGRESS ~70 % (pracovní odhad), fyzické ověření pending.
 - **Před produkcí:** full CI + browser E2E musí projít na posledním PR HEAD. Po PASS merge automaticky do main a ověř Vercel READY i správný alias.
+
+### 16.10.2026 — v0.1_553 PRODUKCE, P0 Finance V
+- PR #43 https://github.com/martinspadrna/Domacnost/pull/43 **MERGED** do `main`, squash commit `c6fee82f351f24750bfaf7963fc6e963fc217dfb`.
+- **Full CI + browser E2E PASS**, PR run https://github.com/martinspadrna/Domacnost/actions/runs/38876541162, head `e3e7eaa173c94ccf5fddb4beca4eeca58fd9bf26`. Nový vykonatelný Node test kontroluje normalizaci tombstones při startu PWA, editaci/mazání/Undo, ochranu pending lokálních dat, cloud-only smazání i obnovu markerů. Regresní Finance tests z 551–552 zachovány.
+- **Vercel production READY**, deployment `dpl_AKjyQ5D7PmnB7pkuR8o2NAmYRwmB`, SHA přesně odpovídá merge commit, alias `domacnost-plus.vercel.app`, bez aliasError.
+- Půjčky a šablony mají trvalé `deleted` tombstone + čas revize, Undo vytváří novou revizi. `getFinanceLoans` je nezobrazuje, editace jiné půjčky je nemaže, offline/lazy normalizace je zachová. Šablony se ukládají okamžitě do localStorage. Při bezpečném remote apply bez pending už klient nedoplňuje staré lokální položky z union merge; pending sekce chrání lokální snapshot a existující household CAS.
+- Fix: obnova půjčky z hlavního Koše vyplní `financeCloud.loansPendingAt`, ne mylně `templatesPendingAt`.
+- **Zbývá (OPEN):** skutečný fyzický cross-device test Finance PC + mobil a offline→online/restart; account-level CAS podle DB schématu a idempotentní INSERT po ztracené odpovědi serveru; delete×insert race a vyřešení konfliktů na skutečných účtech. Žádné DB migrace ani force. Automatické CI nenahrazuje fyzické potvrzení.
+- P0 IN PROGRESS cca **70 % orientačně**. P1–P4 podle plánu dále čekají.
