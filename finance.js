@@ -1344,9 +1344,10 @@
 
     async function cloudDeleteFinance(item, options = {}) {
       const client = getSupabaseClient();
-      if (!client || !item?.cloudId || !getState().cloud?.householdId) return true;
+      if (!client || !item?.cloudId || !getState().cloud?.householdId) return false;
       const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
       const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
+      if (!expectedRevision) return false;
       let query = client.from('finance_transactions').delete().eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
       if (expectedRevision) query = query.eq('updated_at', expectedRevision);
       const { data, error } = await query.select('id').maybeSingle();
@@ -1372,7 +1373,7 @@
 
     async function cloudDeleteFinanceAccount(account) {
       const client = getSupabaseClient();
-      if (!client || !account?.cloudId || !getState().cloud?.householdId) return true;
+      if (!client || !account?.cloudId || !getState().cloud?.householdId) return false;
       const { error } = await client.from('finance_accounts').update({ is_archived: true }).eq('id', account.cloudId).eq('household_id', getState().cloud.householdId);
       if (error) {
         showToast(error.message || 'Účet se nepovedlo archivovat v cloudu');
