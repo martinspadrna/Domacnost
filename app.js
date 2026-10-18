@@ -19928,9 +19928,13 @@
         if (!extraCloudItemCurrent(collection, item, workspace)) continue;
         try {
           if (item.cloudId) {
-            if (await cloudUpdateExtraItem(collection, item)) synced += 1;
+            const ok = await cloudUpdateExtraItem(collection, item);
+            if (!cloudSyncWorkspaceMatches(workspace)) return synced;
+            if (ok) synced += 1;
           } else {
-            if ((await cloudAddExtraItem(collection, item))?.id) synced += 1;
+            const saved = await cloudAddExtraItem(collection, item);
+            if (!cloudSyncWorkspaceMatches(workspace)) return synced;
+            if (saved?.id) synced += 1;
           }
         } catch (error) {
           if (!cloudSyncWorkspaceMatches(workspace)) return synced;
