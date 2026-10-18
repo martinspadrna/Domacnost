@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-564`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-565`;
 const APP_ASSETS = [
   './',
   './index.html',
@@ -78,9 +78,35 @@ self.addEventListener('install', (event) => {
   );
 });
 
+// Volitelné zahřátí offline modulů probíhá až po startu aplikace.
+// Nezdržuje install/activate a nikdy neblokuje připravenou PWA aktualizaci.
+let lazyAssetCacheInFlight = null;
+function cacheLazyAppAssets() {
+  if (lazyAssetCacheInFlight) return lazyAssetCacheInFlight;
+  lazyAssetCacheInFlight = (async () => {
+    const cache = await caches.open(CACHE_NAME);
+    for (const path of LAZY_APP_ASSETS) {
+      const assetUrl = new URL(path, self.registration.scope).href;
+      try {
+        if (await cache.match(assetUrl, { ignoreSearch: true })) continue;
+        const response = await fetch(assetUrl, { cache: 'no-store' });
+        if (response && response.ok && response.type !== 'opaque') {
+          await cache.put(assetUrl, response);
+        }
+      } catch (error) {
+        // Výpadek sítě ani quota error nesmí poškodit cache jádra.
+        // Při příštím startu zkusíme pouze dosud chybějící soubory.
+      }
+    }
+  })().finally(() => { lazyAssetCacheInFlight = null; });
+  return lazyAssetCacheInFlight;
+}
+
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  } else if (event.data?.type === 'CACHE_LAZY_MODULES') {
+    event.waitUntil(cacheLazyAppAssets());
   }
 });
 

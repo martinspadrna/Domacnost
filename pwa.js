@@ -44,6 +44,29 @@
     let latestReleaseBuild = APP_BUILD;
     let releaseCheckInFlight = null;
     let trackedInstallingWorker = null;
+    let lazyWarmupScheduled = false;
+    let lazyWarmupRequested = false;
+
+    // Naplní cache odložených modulů bez zdržení prvního vykreslení.
+    // Při offline / šetření daty se nic nestahuje.
+    function scheduleLazyModuleWarmup() {
+      if (lazyWarmupScheduled || lazyWarmupRequested) return;
+      lazyWarmupScheduled = true;
+      window.setTimeout(() => {
+        lazyWarmupScheduled = false;
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        if (!navigator.onLine || document.hidden || connection?.saveData ||
+            ['slow-2g', '2g'].includes(connection?.effectiveType) || connection?.type === 'cellular') return;
+        const worker = navigator.serviceWorker?.controller || serviceWorkerRegistration?.active;
+        if (!worker) return;
+        try {
+          worker.postMessage({ type: 'CACHE_LAZY_MODULES' });
+          lazyWarmupRequested = true;
+        } catch (error) {
+          // Nepodporovaná SW zpráva není důvodem blokovat aplikaci.
+        }
+      }, 8000);
+    }
     // Zachyceno co nejdřív po startu: vrácející se uživatel má aktivní SW z
     // minula, takže "controller" je nastavený hned (žádná změna, appka
     // je pořád ta samá běžící verze). Naproti tomu první instalace SW (po
@@ -543,10 +566,17 @@
           // Proto vždy zkontrolujeme i už existující waiting/installing worker.
           refreshRegistrationUpdateState();
           checkForAppUpdate(false);
+          scheduleLazyModuleWarmup();
         }).catch(() => {});
       });
 
+      window.addEventListener('online', scheduleLazyModuleWarmup);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) scheduleLazyModuleWarmup();
+      });
+
       navigator.serviceWorker.addEventListener('controllerchange', () => {
+        scheduleLazyModuleWarmup();
         // Guard proti reload smyčce: kdyby controllerchange přišel víckrát
         // těsně za sebou (nebo mezitím, co běží reload), pustíme reload
         // jen jednou.
