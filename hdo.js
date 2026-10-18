@@ -408,17 +408,35 @@
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) {
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
-        return;
+        return false;
       }
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      const before = JSON.stringify([getState().hdoWindows || [], getState().hdoCloud || {}]);
+      const stillCurrent = () => getState().cloud?.householdId === householdId && getState().cloud?.userId === userId;
       const { data: settings, error: settingsError } = await client
         .from('hdo_settings')
         .select('id,title,note')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .maybeSingle();
+      if (!stillCurrent()) return false;
       if (settingsError) {
-        showToast(settingsError.message || 'HDO nastavení se nepovedlo načíst');
-        return;
+        if (showMessage) showToast(settingsError.message || 'HDO nastavení se nepovedlo načíst');
+        return false;
       }
+      const { data, error } = await client
+        .from('hdo_windows')
+        .select('id,label,days,start_time,end_time,is_enabled')
+        .eq('household_id', householdId)
+        .order('start_time', { ascending: true });
+      if (!stillCurrent()) return false;
+      if (error) {
+        if (showMessage) showToast(error.message || 'HDO okna se nepovedlo načíst');
+        return false;
+      }
+      if (!Array.isArray(data)) return false;
+      if (JSON.stringify([getState().hdoWindows || [], getState().hdoCloud || {}]) !== before) return false;
+      // Po obou SELECT úspěšně: atomicky přijmout nastavení i okna.
       if (settings?.id) {
         getState().hdoCloud = {
           ...(getState().hdoCloud || {}),
@@ -426,16 +444,7 @@
           loadedAt: new Date().toISOString()
         };
       }
-      const { data, error } = await client
-        .from('hdo_windows')
-        .select('id,label,days,start_time,end_time,is_enabled')
-        .eq('household_id', getState().cloud.householdId)
-        .order('start_time', { ascending: true });
-      if (error) {
-        showToast(error.message || 'HDO okna se nepovedlo načíst');
-        return;
-      }
-      const cloudItems = (data || []).map((item) => ({
+      const cloudItems = data.map((item) => ({
         id: `hdo-cloud-${item.id}`,
         cloudId: item.id,
         householdId: getState().household.id,
@@ -448,11 +457,12 @@
         createdAt: new Date().toISOString()
       }));
       getState().hdoWindows = mergeHdoCloudItemsPreservingPending(cloudItems);
-      getState().cloud.lastSyncAt = new Date().toISOString();
+      // Dílčí refresh není potvrzení úspěšného full syncu.
       touchState();
       saveState();
       render();
       if (showMessage) showToast(`Načteno HDO oken: ${cloudItems.length}`);
+      return true;
     }
 
     async function cloudSyncHdoById(id) {

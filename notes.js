@@ -587,18 +587,24 @@
     async function cloudLoadTasks(showMessage = true) {
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) return false;
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      const before = JSON.stringify(getState().homeTasks || []);
       const { data, error } = await client
         .from('household_tasks')
         .select('*')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .order('status', { ascending: false })
         .order('due_date', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
+      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
       if (error) {
-        showToast(error.message || 'Úkoly se nepovedlo načíst z cloudu');
+        if (showMessage) showToast(error.message || 'Úkoly se nepovedlo načíst z cloudu');
         return false;
       }
-      const cloudItems = (data || []).map((item) => ({
+      if (!Array.isArray(data)) return false;
+      if (JSON.stringify(getState().homeTasks || []) !== before) return false;
+      const cloudItems = data.map((item) => ({
         id: getState().homeTasks.find((task) => task.cloudId === item.id)?.id || `task-cloud-${item.id}`,
         householdId: currentHouseholdId(),
         profileId: currentProfileId(),

@@ -526,3 +526,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Produkční main full checks + Chrome E2E **PASS**, run `39147126716` na squash SHA. Vercel production **READY**, deployment `dpl_2ukvZfE7ZySuGC3PeCAyDiDV5iYK`, `githubCommitSha` odpovídá squash SHA, doména `domacnost-plus.vercel.app` v aktivních alias, `aliasError=null`.
 - Nákup: žádná částečná mutace po selhání 5. SELECT, stale household/user a lokální změny během fetchů bezpečně odmítnuty; merge pending zůstává. Garáž: trojité SELECT validované najednou, scope a local edit ochrana, explicitní true/false. Obě dílčí čtení už nemění globální `lastSyncAt`. Bulk loader respektuje explicitní null selhání a permanentní outbox failure. Nový regresní test integrován do `npm run check`.
 - **P0** zatím neuzavřeno (backend DB CAS + idempotentní INSERT, správný Supabase projekt, skutečné PC↔mobil/offline/restart/konflikty). P1/P2 pokračuje auditem ostatních datových zdrojů a oprávněných full-sync timestampů; bez náhodných velkých přepisů existujících funkčních modulů.
+
+
+### 18. 10. 2026 — P1/P2 HDO, Odpad a Úkoly, kandidát v0.1_569
+- Výchozí produkce v0.1_568, main `f65e9acae91d4d691c619c2f7dea1e48de9dd259`, větev `fix/p1-p2-hdo-waste-tasks-read-569`.
+- HDO: dva následné SELECT (`hdo_settings`, `hdo_windows`) nyní atomicky dokončí před jakoukoli mutací `hdoCloud` nebo `hdoWindows`. Workspace zachycen před dotazy, kontrola po await, při pozdní odpovědi původního účtu/domácnosti nebo současné místní editaci se zahodí výsledek. Explicitní true/false, validace array místo `data || []` a tichý background error.
+- Svoz odpadu: tenant-bound SELECT, ochrana změn při síťovém čekání, data:null neznamená prázdný seznam, explicitní failure/success. Stávající normalizace a zachování lokálních řádků nedotčeny.
+- Úkoly/Zápisník: analogický tenant-bound SELECT, lokální edit během requestu má přednost; zachová se dosavadní merge pending úkolů i `tasksCloud.loadedAt` jen po potvrzeném úspěchu.
+- HDO a Odpad už při dílčím SELECT nepřepisují `cloud.lastSyncAt`, ten nyní zůstává na souhrnném orchestrátoru. Nový test `tools/check-cloud-homecare-read.mjs` spouští celé skutečné moduly v izolovaném JS VM se simulací network failure, A→B, user switch a místní editace. Připojen do `npm run check`.
+- Hranice: žádné DB změny ani migrace. P0 DB účetní CAS a serverové idempotentní INSERT, správná Supabase autorizace a skutečný PC↔mobil/offline/restart/konflikt test zůstávají otevřeny. Další etapa kalendář/smlouvy.
