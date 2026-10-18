@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_570';
-  const APP_BUILD = 570;
+  const APP_VERSION = 'Domácnost+ v.0.1_571';
+  const APP_BUILD = 571;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -20161,7 +20161,8 @@
     //     nepersistuje ani do household UI ani do extras, drží se lokálně
     //     a plní se z veřejného API date.nager.at.
     const map = {
-      calendar: [cloudLoadCalendarSources, cloudLoadCalendar],
+      // cloudLoadCalendar už načítá zdroje + události atomicky, neduplikovat SELECT.
+      calendar: [cloudLoadCalendar],
       shopping: [loadHouseholdUiForModule, cloudLoadShoppingData],
       hdo: [cloudLoadHdoData],
       waste: [cloudLoadWaste],
@@ -20175,7 +20176,8 @@
       // první definici, takže samotné záruky se nenačítaly.
       warranties: [() => cloudLoadExtraCollection('warranties', false), cloudLoadWarrantyFiles],
       garage: [cloudLoadGarageData],
-      contracts: [cloudLoadContracts, cloudLoadContractFiles],
+      // cloudLoadContracts už načítá smlouvy + přílohy atomicky.
+      contracts: [cloudLoadContracts],
       finance: [loadHouseholdUiForModule, cloudLoadFinance],
       // Předplatné je uložené v households.dashboard_layout
       // (subscriptions/subscriptionPeople/subscriptionPayments/
@@ -20376,9 +20378,9 @@
         cloudLoadHdoData,
         cloudLoadWaste,
         cloudLoadTasks,
-        cloudLoadCalendarSources,
+        // Atomic loaders zahrnují i zdroje a přílohy — druhý SELECT by
+        // byl navíc, prodlužoval sync a přinášel další možnou race.
         cloudLoadCalendar,
-        cloudLoadContractFiles,
         cloudLoadExtraCollections,
         cloudLoadWarrantyFiles,
         cloudLoadFinance
