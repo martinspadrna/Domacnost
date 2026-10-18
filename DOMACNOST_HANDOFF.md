@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_565** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_566** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -17,7 +17,7 @@ Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento so
 |---|---|---|
 | P0 | Cloud sync a ochrana dat (fronty, konflikty, offline, restart) | ROZPRACOVÁNO |
 | P1 | Local-first/start, okamžitá použitelnost UI | ROZPRACOVÁNO |
-| P2 | Cloud pokrytí všech modulů | ČEKÁ |
+| P2 | Cloud pokrytí všech modulů | ROZPRACOVÁNO |
 | P3 | Stabilita a výkon UI | ČEKÁ |
 | P4 | UX a vzhled, mobil-first | ČEKÁ |
 
@@ -482,3 +482,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Další tři chyby: lazy `scheduleLazyCloudLoadForModule` označovalo i nezdařené volání za `loaded` a sdílelo marker mezi domácnostmi; `cloudLoadModuleForNav` hlásilo úspěch pokud uspěl jediný subloader; `cloudBackgroundLoadAllModules` bezpodmínečně přepisovalo `lastSyncAt` i při částečném selhání/pending a vracelo `true`. Nyní je loaded pouze úplný úspěch, další pokusy nejsou blokované, marker lazy modulu má tenant klíč, priority/background chrání scope přes async čekání, timestamp pouze při kompletním načtení bez pending/konfliktu/outbox permanent error. Skip-modules denominator vychází jen z platných modulů.
 - Test `tools/check-cloud-module-completion.mjs` skutečně vykonává funkce z `app.js` s řízeným network failure/delayed response/tenant switch a kontrolou markerů/timestampů. Zapojen do `npm run check`.
 - Před sloučením: plné CI a Chrome E2E PASS na head, potom main CI/Vercel/alias a finální handoff. P0 DB CAS + idempotence INSERT, autorizace k Domácnost+ Supabase, fyzický PC↔mobil/offline/restart test stále otevřené.
+
+
+### 18. 10. 2026 — v0.1_566 PRODUKCE (P1/P2)
+- PR #56 https://github.com/martinspadrna/Domacnost/pull/56 **MERGED**, squash SHA `9605f07f5a8ebac1ba4f10b8b47b892cf13bc14d`; finální PR head `4a712d08d8d9a468e264a160b950bc92cf18a587`.
+- **Full checks + skutečné Chrome E2E PASS** na posledním PR SHA, run `39123775886`. První PR run `39123729923` FAIL: starý test PWA cache měl natvrdo číslo 565; opraven na aktuální `release.json`, následný kompletní run PASS.
+- Produkční `main` full checks + Chrome E2E **PASS**, run `39123853433` na přesném squash SHA.
+- Vercel production **READY**, deployment `dpl_2jrUmooD4feL7da5VmE61qLNZoYN`, `githubCommitSha` odpovídá merge SHA, `domacnost-plus.vercel.app` v alias a `aliasError=null`.
+- Implementované: po rychlém local-first Home startu se klidově dočtou panelové datové moduly z cloudu, následně se dočítají zbývající moduly; u partial load už loaded neblokuje retry a lastSyncAt nevydává falešné potvrzení; lazy marker je tenant-scoped, priority/background drží workspace scope i přes síť, full load vyžaduje nulový pending/konflikt/outbox blocking. Reálný PC/mobil test stále nepotvrzen.
+- **P0 stále IN PROGRESS ~85–88 %**: backend účetní CAS/idempotentní INSERT, autorizovaný přístup ke správnému Supabase projektu, fyzické PC↔mobil/offline/restart/konflikt. P1/P2 **ROZPRACOVÁNO**: další větší etapa může být konzistence ostatních modulů/uživatelský fyzický test, bez zásahu do jiné Supabase DB.
