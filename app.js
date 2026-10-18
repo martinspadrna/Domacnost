@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_565';
-  const APP_BUILD = 565;
+  const APP_VERSION = 'Domácnost+ v.0.1_566';
+  const APP_BUILD = 566;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -3678,9 +3678,11 @@
   }
 
   function scheduleBootBackgroundCloudLoad(options = {}) {
-    if (bootBackgroundCloudLoadTimer || !cloudReady()) return;
+    if (bootBackgroundCloudLoadTimer || !cloudReady() || !browserAppearsOnline()) return;
+    const workspace = cloudSyncWorkspaceScope();
     bootBackgroundCloudLoadTimer = runWhenUiQuiet(() => {
       bootBackgroundCloudLoadTimer = null;
+      if (!cloudSyncWorkspaceMatches(workspace) || !browserAppearsOnline()) return;
       cloudBackgroundLoadAllModules(false, options).catch((error) => console.warn('Background cloud load failed', error));
     }, { delay: 2500, quietMs: 900, timeout: 15000 });
   }
@@ -3691,34 +3693,46 @@
   // priority modules aren't fetched twice. Timer guard prevents a second warm
   // start / login-force from firing another priority load in parallel.
   function scheduleBootHomePriorityCloudLoad() {
-    if (bootHomePriorityCloudLoadTimer || !cloudReady()) return;
+    // Kód nejprve vykreslí lokální Home; cloud refresh běží jen při připojení,
+    // v klidové chvíli a bez úsporného režimu dat.
+    if (bootHomePriorityCloudLoadTimer || !cloudReady() || !browserAppearsOnline() || !allowModuleIntentPrefetch()) return;
+    const workspace = cloudSyncWorkspaceScope();
     bootHomePriorityCloudLoadTimer = runWhenUiQuiet(async () => {
       bootHomePriorityCloudLoadTimer = null;
+      if (!cloudSyncWorkspaceMatches(workspace) || !browserAppearsOnline()) return;
       let loaded = [];
       try {
         loaded = await cloudLoadHomePriorityModules(false);
       } catch (error) {
         console.warn('Priority home cloud load failed', error);
       }
-      // Only skip modules that actually succeeded — partial priority failures
-      // must still be retried by the background load.
+      if (!cloudSyncWorkspaceMatches(workspace)) return;
+      // Jen kompletně načtené moduly vynechat z následného background cyklu.
       scheduleBootBackgroundCloudLoad({ skipModules: loaded });
     }, { delay: 400, quietMs: 400, timeout: 6000 });
   }
 
   function scheduleLazyCloudLoadForModule(moduleId, options = {}) {
     const id = String(moduleId || '');
-    if (!id || id === 'home' || id === MORE_MODULE.id || !cloudReady()) return;
-    if (lazyModuleCloudLoads.get(id) === 'loaded' || lazyModuleCloudLoads.get(id) === 'loading') return;
-    lazyModuleCloudLoads.set(id, 'loading');
+    // Weather/polishHolidays nemají vlastní cloud loader: neopakovat no-op.
+    if (!id || ['home', 'weather', 'polishHolidays', MORE_MODULE.id].includes(id) || !cloudReady()) return;
+    const workspace = cloudSyncWorkspaceScope();
+    const key = `${workspace.userId}:${workspace.householdId}:${id}`;
+    if (lazyModuleCloudLoads.get(key) === 'loaded' || lazyModuleCloudLoads.get(key) === 'loading') return;
+    lazyModuleCloudLoads.set(key, 'loading');
     runWhenUiQuiet(async () => {
       try {
-        await cloudLoadModuleForNav(id, false);
-        lazyModuleCloudLoads.set(id, 'loaded');
+        if (!cloudSyncWorkspaceMatches(workspace)) return;
+        const loaded = await cloudLoadModuleForNav(id, false, { strictLoaderResults: true });
+        if (!cloudSyncWorkspaceMatches(workspace)) return;
+        if (!loaded) return;
+        lazyModuleCloudLoads.set(key, 'loaded');
         if (id === 'calendar') scheduleCalendarAutoSync('calendar-open', { delay: 1800 });
       } catch (error) {
-        lazyModuleCloudLoads.delete(id);
         console.warn('Lazy module cloud load failed', id, error);
+      } finally {
+        // Pozdní A nesmí označit modul B za hotový; B má vlastní klíč.
+        if (lazyModuleCloudLoads.get(key) === 'loading') lazyModuleCloudLoads.delete(key);
       }
     }, { delay: Number(options.delay || 2200), quietMs: Number(options.quietMs || 1500), timeout: 7000 });
   }
@@ -20074,9 +20088,10 @@
       await cloudLoadProfilesForCurrentHousehold();
       saveState({ immediate: true });
       requestBackgroundRender();
-      // Data ostatních modulů se načtou až po jejich otevření. Warm start obnoví
-      // jen účet, domácnost, profily a lehký layout potřebný pro hlavní obrazovku.
+      // Home je již lokálně vykreslený. V klidovém okně dočteme jeho cloudové
+      // karty a poté zbytek modulů (bez blokování UI či přepsání pending).
       scheduleBootCloudMaintenance();
+      scheduleBootHomePriorityCloudLoad();
       if (showMessage) showToast('Cloud domácnost připravená');
     });
   }
@@ -20178,12 +20193,11 @@
       if (ok > 0) scheduleAutomaticDataIntegrityAudit(`module-${moduleId}`, { delay: 1400, force: true });
       if (renderAfter) requestBackgroundRender();
       if (showMessage) showToast(`Modul načten z cloudu: ${ok}/${loaders.length}`);
-      // Strict režim (realtime): jakýkoli neuspěch jednoho loaderu shodí
-      // celý modul na false, aby se rozjel plný fallback. UI/lazy režim
-      // (default) toleruje dílčí neúspěchy — stačí, když aspoň jeden
-      // loader modulu prošel.
+      // Úspěch znamená načtení VŠECH zdrojů. Dílčí hodnoty lze použít
+      // v UI, ale modul musí zůstat způsobilý pro další bezpečný pokus.
+      // Realtime strict režim zachovává své výslovné failure chování.
       if (strictLoaderResults && failed > 0) return false;
-      return ok > 0;
+      return failed === 0 && ok === loaders.length;
     });
   }
 
@@ -20228,20 +20242,25 @@
   // let the background retry the ones that didn't come through.
   async function cloudLoadHomePriorityModules(showMessage = false) {
     if (!state.cloud?.userId || !state.cloud?.householdId) return [];
+    const workspace = cloudSyncWorkspaceScope();
     const moduleIds = getPriorityCloudModulesForHome();
     if (!moduleIds.length) return [];
     return withDeferredRender(async () => {
       const loadedModuleIds = [];
       for (const moduleId of moduleIds) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return [];
         await yieldToMainThread();
+        if (!cloudSyncWorkspaceMatches(workspace)) return [];
         try {
-          const loaded = await cloudLoadModuleForNav(moduleId, false, { renderAfter: false });
+          const loaded = await cloudLoadModuleForNav(moduleId, false, { renderAfter: false, strictLoaderResults: true });
+          if (!cloudSyncWorkspaceMatches(workspace)) return [];
           if (loaded) loadedModuleIds.push(moduleId);
         } catch (error) {
-          // Don't add to loadedModuleIds — background load will retry this module.
+          if (!cloudSyncWorkspaceMatches(workspace)) return [];
           console.warn('Priority home module load failed', moduleId, error);
         }
       }
+      if (!cloudSyncWorkspaceMatches(workspace)) return [];
       if (loadedModuleIds.length > 0) saveState({ immediate: true });
       requestBackgroundRender();
       if (showMessage) showToast(`Home priority načteno: ${loadedModuleIds.length}/${moduleIds.length}`);
@@ -20261,6 +20280,7 @@
       // a plní se z veřejného API date.nager.at.
       const moduleOrder = ['shopping', 'calendar', 'finance', 'hdo', 'waste', 'readings', 'pool', 'tasks', 'warranties', 'garage', 'contracts', 'subscriptions'];
       const skipModules = new Set(Array.isArray(options.skipModules) ? options.skipModules : []);
+      const requiredModules = moduleOrder.filter((id) => !skipModules.has(id));
       let ok = 0;
       for (const moduleId of moduleOrder) {
         if (!cloudSyncWorkspaceMatches(workspace)) return false;
@@ -20268,7 +20288,7 @@
         await yieldToMainThread();
         if (!cloudSyncWorkspaceMatches(workspace)) return false;
         try {
-          const loaded = await cloudLoadModuleForNav(moduleId, false, { renderAfter: false });
+          const loaded = await cloudLoadModuleForNav(moduleId, false, { renderAfter: false, strictLoaderResults: true });
           if (loaded) ok += 1;
         } catch (error) {
           if (!cloudSyncWorkspaceMatches(workspace)) return false;
@@ -20279,14 +20299,17 @@
       }
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
       setupCloudRealtimeSubscriptions(false);
-      state.cloud.lastSyncAt = new Date().toISOString();
+      const fullLoad = ok === requiredModules.length;
+      const clean = fullLoad && !cloudLocalPendingCount() && !cloudHasBlockingConflict() && !cloudOutboxHasPermanentFailure();
+      // Částečný SELECT ani neodeslaný outbox není "poslední úspěšný sync".
+      if (clean) state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState({ immediate: true });
-      scheduleAutomaticDataIntegrityAudit('cloud-full-load', { delay: 1400, force: true });
+      if (ok > 0) scheduleAutomaticDataIntegrityAudit('cloud-full-load', { delay: 1400, force: true });
       requestBackgroundRender();
       scheduleCalendarAutoSync('background-load', { delay: 6000 });
-      if (showMessage) showToast(`Cloud pozadí načteno: ${ok}/${moduleOrder.length - skipModules.size}`);
-      return true;
+      if (showMessage) showToast(`Cloud pozadí načteno: ${ok}/${requiredModules.length}`);
+      return clean;
     });
   }
 
