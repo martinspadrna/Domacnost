@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_564** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_565** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -16,7 +16,7 @@ Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento so
 | Fáze | Popis | Stav |
 |---|---|---|
 | P0 | Cloud sync a ochrana dat (fronty, konflikty, offline, restart) | ROZPRACOVÁNO |
-| P1 | Local-first/start, okamžitá použitelnost UI | ČEKÁ |
+| P1 | Local-first/start, okamžitá použitelnost UI | ROZPRACOVÁNO |
 | P2 | Cloud pokrytí všech modulů | ČEKÁ |
 | P3 | Stabilita a výkon UI | ČEKÁ |
 | P4 | UX a vzhled, mobil-first | ČEKÁ |
@@ -464,3 +464,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Regrese: nový samostatný `tools/check-pwa-offline-cache.mjs` dynamicky spouští service worker v testovaném mocku, kontroluje úplnost registry lazy modulů, deduplikaci dvou požadavků, správný build cache, idempotenci a ignorování cizích zpráv. Zapojeno do `npm run check`.
 - Stabilita CI: browser E2E Upozornění čeká na vykreslení 10 přepínačů a poté na skutečně změněnou hodnotu `aria-checked`, místo pevného čekání 180 ms a okamžitého čtení v tomtéž JS ticku.
 - Před merge: full npm check + Chrome E2E PASS na finálním PR SHA; pak produkční main CI, Vercel READY, alias a finální handoff. P0 nezavírat; fyzický PC/mobil offline, restart a konflikt test stále otevřený.
+
+
+### 18. 10. 2026 — v0.1_565 PRODUKCE, P1 offline moduly a test harness
+- PR #55 https://github.com/martinspadrna/Domacnost/pull/55 **MERGED** squash `806af9130138618975d4726073220b04e495d376`.
+- Finální PR head `bd30711d8e2e87b2790dd57c60b23c6239460294`: **full checks i Chrome E2E PASS**, run https://github.com/martinspadrna/Domacnost/actions/runs/39119196211.
+- Produkční main na squash SHA: **full checks i Chrome E2E PASS**, run https://github.com/martinspadrna/Domacnost/actions/runs/39119299864.
+- Vercel **READY**: deployment `dpl_2QKbhPY136CTFF8dmFCaC2JtSuKQ`, `githubCommitSha` odpovídá squash SHA, `domacnost-plus.vercel.app` v aktivních aliases, `aliasError=null`.
+- Nové lazy moduly se po startu aplikace online nenápadně přednačítají do aktuální cache; na pomalém/šetřeném připojení pouze při povolených podmínkách. Start, install/update PWA nejsou blokované. Offline dostupnost nově instalované appky je zaručena až po dokončení tohoto úspěšného přednačtení; při ztrátě sítě se nedotažené moduly zkusí při příštím startu.
+- Browser E2E Upozornění čeká na skutečný přepínač a změnu stavu, odstraněn flaky fixní delay. Nový dependency-free test integrovaný do CI.
+- **P0 pořád IN PROGRESS ~85–88 %.** Backend účetní CAS, idempotence INSERT, autorizovaný Supabase Domácnost+ a reálný PC↔mobil/offline/restart/konflikt test jsou otevřené. P1 je nyní rozpracované (offline připravenost vylepšena), další P1/P2 moduly auditovat a řešit pouze konkrétní potvrzené riziko.
