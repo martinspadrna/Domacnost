@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_569** (PR #59, squash `4372d3aa1495d654085e9c05c0d058d88a0c84c6`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_570** (PR #60, squash `9fd9b55d28328835c45e597e74a26da828d204e5`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -551,3 +551,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Smlouvy: `cloudLoadContractFiles(false,{stage:true})` předá surové výsledky, až potom se společně aplikují vzdálené smlouvy i vazba jejich souborů. Neúspěšný SELECT příloh už neoznámí úspěch ani nezanechá napůl zapsané smlouvy; obě query scope-bound, local edit guard. Stávající preserve-pending merge smluv a standalone načítání příloh zachováno. Oba samostatné SELECT přestaly nastavovat globální `lastSyncAt`, který patří souhrnné synchronizaci.
 - Přidán VM test `tools/check-cloud-calendar-contracts-read.mjs` pro late SELECT, missing/error, tenant switch, local edit, related file mapping a empty remote. Kompletní CI + Chrome E2E před merge; poté main CI, Vercel READY a alias a dokončit záznam.
 - Žádný zásah do Supabase DB, Google auth, kalendářového API, RLS ani pending outboxu. P0 DB CAS/idempotentní INSERT a fyzický PC↔mobil offline/restart/konflikt nadále otevřený.
+
+
+### 18. 10. 2026 — v0.1_570 PRODUKCE, Kalendář/Smlouvy/přílohy
+- PR #60 https://github.com/martinspadrna/Domacnost/pull/60 **MERGED**. Finální head `dd45d73d09fc6350fa320c4187eb37d2e51920fe`, squash SHA `9fd9b55d28328835c45e597e74a26da828d204e5`.
+- Plné CI a skutečné Chrome E2E **PASS** na PR SHA, workflow `39153192791`. Produkční main **full CI + Chrome E2E PASS**, run `39153270097` na squash SHA.
+- Vercel production **READY** deployment `dpl_CnMceuMF8mtXgVtL1nCB4GAj9wki` na správném merge SHA, `domacnost-plus.vercel.app` aktivní alias, `aliasError=null`.
+- Kalendář: bezpečné staged sources + eventy, žádný partial commit po selhání 2. SELECT, tenant userId/householdId guard, in-flight local source/event/conflict edit guard, iCal plánování po úspěšném commitnu; standalone zdroje zachovány. Smlouvy: staged SELECT metadata příloh, společná aplikace smluv+příloh, mapování cloudContractId na správný lokální contractId, tenant guard a ochrana editací; standalone soubory chráněné, full-sync lastSyncAt zde nenastavován.
+- Dependency-free test `tools/check-cloud-calendar-contracts-read.mjs` pro reálné modulové funkce: druhý SELECT failure/null, A→B, user switch, local edit, valid remote vazba souboru a standalone čtení. Součást `npm run check`.
+- **P0 zůstává otevřeno:** právoplatný Supabase Domácnost+ projekt, DB CAS a serverová idempotence INSERT, reálné PC↔mobil/offline/restart/konflikt. P1/P2 rozpracované: následný audit dalších cloud loaderů a full-sync statusu. Bez DB zásahu a bez reálného fyzického testu.
