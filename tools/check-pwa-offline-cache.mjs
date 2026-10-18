@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
 const root = resolve(import.meta.dirname, '..');
+const releaseBuild = JSON.parse(readFileSync(resolve(root, 'release.json'), 'utf8')).build;
 const sw = readFileSync(resolve(root, 'sw.js'), 'utf8');
 const loader = readFileSync(resolve(root, 'module-loader.js'), 'utf8');
 const pwa = readFileSync(resolve(root, 'pwa.js'), 'utf8');
@@ -35,7 +36,7 @@ const env = {
     skipWaiting: () => {}
   },
   caches: { open: async (name) => {
-    assert.equal(name, 'domacnost-plus-v0-1-565');
+    assert.equal(name, `domacnost-plus-v0-1-${releaseBuild}`);
     return fakeCache;
   } },
   fetch: async (url) => {
