@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_567** (PR #57, squash `d5f4515cec25c7ad03ec07bd33c69ec91b2af9a3`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_568** (PR #58, squash `bdd7d898d2dd05d27ade09608d1cba6162eb2390`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -518,3 +518,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Oba moduly už samostatným SELECT neoznačují celý cloud synchronizovaný přes `lastSyncAt`. Orchestrátor `cloudLoadAllModules` explicitní `null` počítá jako chybu, `lastSyncAt` nezmění při permanentním outbox failure. Legacy `undefined` po dobu postupné migrace loaderů zůstává kompatibilně jako úspěch, ostatní moduly dále auditovat.
 - Regresní test `tools/check-cloud-shopping-garage-read.mjs` vykonává reálné extrahované funkce s mock síťovými odpověďmi (neúplná data, failure 5. shopping SELECT, A→B, user switch, současný local edit, happy path i pending) a kontrolu sync statusu. Připojen do `npm run check`; `check-cloud-sync-status.mjs` upraven podle nové null podmínky.
 - Bez Supabase SQL/migrací. Ověřit full CI+Chrome E2E před merge, pak main CI+Vercel READY/alias a aktualizovat handoff. **P0 backend CAS/idempotence + autorizace a fyzický PC↔mobil test zůstávají otevřené.**
+
+
+### 18. 10. 2026 — v0.1_568 PRODUKCE, atomické čtení Nákupu a Garáže
+- PR #58 https://github.com/martinspadrna/Domacnost/pull/58 **MERGED**. Finální head `7e073f3a7f1c4d06ef412323c5e08af924349f71`, squash commit `bdd7d898d2dd05d27ade09608d1cba6162eb2390`.
+- Full CI + Chrome E2E PR **PASS**, workflow run `39147045895`. První run `39146998340` spadl výhradně na zastaralém textovém assertionu `check-cloud-sync-status.mjs`, který jsem upravil; druhý run prošel kompletně.
+- Produkční main full checks + Chrome E2E **PASS**, run `39147126716` na squash SHA. Vercel production **READY**, deployment `dpl_2ukvZfE7ZySuGC3PeCAyDiDV5iYK`, `githubCommitSha` odpovídá squash SHA, doména `domacnost-plus.vercel.app` v aktivních alias, `aliasError=null`.
+- Nákup: žádná částečná mutace po selhání 5. SELECT, stale household/user a lokální změny během fetchů bezpečně odmítnuty; merge pending zůstává. Garáž: trojité SELECT validované najednou, scope a local edit ochrana, explicitní true/false. Obě dílčí čtení už nemění globální `lastSyncAt`. Bulk loader respektuje explicitní null selhání a permanentní outbox failure. Nový regresní test integrován do `npm run check`.
+- **P0** zatím neuzavřeno (backend DB CAS + idempotentní INSERT, správný Supabase projekt, skutečné PC↔mobil/offline/restart/konflikty). P1/P2 pokračuje auditem ostatních datových zdrojů a oprávněných full-sync timestampů; bez náhodných velkých přepisů existujících funkčních modulů.
