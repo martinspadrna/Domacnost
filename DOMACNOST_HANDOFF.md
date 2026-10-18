@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Poslední ověřená produkční verze: v0.1_561** (PR #51, merge `724f6e67b085b2b9b60ff3cdd051cc86aaf6402c`, Vercel READY, CI PASS). Nová v0.1_562 je kandidát do dokončení CI a produkčního nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_562** (PR #52, merge `2c90e2c4432a40846886af38650001618eec1907`, Vercel READY, full CI + browser E2E PASS). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -411,3 +411,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - **Omezení:** jednotlivé již běžící remote requesty nelze tímto klientským guardem atomicky zrušit ani zaručit, že jejich interní loader nezmění lokální stav; to vyžaduje další audit všech jednotlivých loaderů a backend CAS. Guard zajišťuje ukončení zbytku starého cyklu a že orchestrátor nepotvrdí úspěch v novém workspace.
 - Před merge nutné plné CI + reálné Chrome E2E PASS a poté ověřit Vercel production READY + alias a zapsat finální SHA.
 - Supabase konektor 18.10. zobrazuje pouze RaK test `cgshssdjgzzuprlwnabl` a hlavní `bkqamcbkiwumsvelahxr`, nikoli Domácnost+; neprovádět zásahy v cizích projektech. Účetní DB CAS a idempotentní INSERT plus fyzický cross-device test zůstávají otevřené (~85 % orientačně).
+
+### 18. 10. 2026 — v0.1_562 PRODUKCE, P0 tenant isolation
+- PR #52 https://github.com/martinspadrna/Domacnost/pull/52 **MERGED**, squash `2c90e2c4432a40846886af38650001618eec1907`.
+- PR **full checks a skutečné Chrome E2E PASS** na kandidát SHA `e329402a065ae968b85ca41fb7da19a7e9dbe3fd`, GitHub run `39107876530`.
+- Produkční main **full checks + Chrome E2E PASS**, GitHub run `39107959294` na squash SHA.
+- Vercel produkce **READY**, deployment `dpl_2Wtma18H4cn3j8taToUWPT63zXgB`, `meta.githubCommitSha` odpovídá merge SHA, alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Ochrana scope manuálního i automatického cloudu a targeted/bulk/background loaderů při přepnutí domácnosti, bez DB změn, bez přepisů pending/konfliktů. Autotesty zahrnují odložené odpovědi všech šesti cyklů; fyzický test není hotov.
+- **P0 IN PROGRESS orientačně ~85 %.** Na uzavření chybí Supabase Domácnost+ DB CAS a idempotence INSERT (konektor ukazuje pouze jiné RaK projekty), plus souhrnný test PC↔mobil, offline/online, restart PWA, konflikty a Undo dle uživatelova přání až po širší etapě. Žádné spekulativní migrace nebo force.
