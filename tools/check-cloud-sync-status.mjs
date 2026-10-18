@@ -85,7 +85,7 @@ assert(pendingSource.includes('if (!remaining && !blocked) state.cloud.lastSyncA
 assert(!pendingSource.includes("showToast('Lokální záznamy byly zkontrolované a cloud je načtený')"));
 const loadSource=between('  async function cloudLoadAllModules(showMessage = true, options = {}) {',
   '  function cloudSyncCompletionState(loadResult) {');
-assert(loadSource.includes('if (result !== false) ok += 1;'));
+assert(loadSource.includes('if (result !== false && result !== null) ok += 1;'));
 assert(loadSource.includes('return { loaded: ok, total: loaders.length };'));
 assert(loadSource.includes('if (ok === loaders.length && !cloudLocalPendingCount() && !cloudHasBlockingConflict())'));
 

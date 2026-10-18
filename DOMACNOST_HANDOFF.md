@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_567** (PR #57, squash `d5f4515cec25c7ad03ec07bd33c69ec91b2af9a3`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na `main`).. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_567** (PR #57, squash `d5f4515cec25c7ad03ec07bd33c69ec91b2af9a3`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -509,3 +509,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - P1/P2: SELECT domácností/layoutu/profilů neaplikuje stale výsledek po přepnutí účtu nebo domácnosti; místní editace profilu a změna aktivního profilu při HTTP čekání mají přednost. Cloud warm-start po asynchronních krocích ověřuje identity scope, po přepnutí se nepokračuje v profile/home refresh staré domácnosti. Dílčí SELECT u těchto tří cest už nepřepisuje globální `lastSyncAt`; ostatní historické zápisy do `lastSyncAt` dále auditovat selektivně.
 - `tools/check-cloud-bootstrap-races.mjs` simuluje opožděné odpovědi, local edit, špatný/missing remote řádek i switch při dependency await. Full CI Chrome E2E a PWA release marker konzistentně 567.
 - P0 zůstává otevřené: Supabase Domácnost+ backend schema, account CAS a serverově idempotentní INSERT plus skutečný test PC↔mobil/offline/online/restart/konflikty; žádné DB zásahy bez autorizace. P1/P2 nadále rozpracované. Následující krok: další cílený audit načítání jednotlivých modulů a agregovaného sync stavu, bez zbytečného zásahu do hotových částí.
+
+
+### 18. 10. 2026 — P1/P2 Nákup + Garáž atomické čtení, kandidát v0.1_568
+- Výchozí produkce v0.1_567, `main` HEAD `7c24487ed18788914c0a269d8c0f2983bcf2d851`. Větev `fix/p1-p2-shopping-garage-read-568`.
+- **Nákup:** původně v `cloudLoadShoppingData` načtené seznamy, katalog a `shoppingCloud` měnily lokální state dříve než doběhl SELECT `shopping_list_items`; při selhání zůstaly nové seznamy a staré položky. Nyní atomicky nejprve čeká na všechny 4 katalogové SELECT a na položky (nebo validní prázdný seznam), teprve poté mutuje stav. Neúspěšné/neúplné `data:null`, A→B/user switch nebo současná lokální změna skončí `false` bez přepsání původních dat. Lokálně pending položky se dál mergují stávající implementací, bez změny algoritmu.
+- **Garáž:** `cloudLoadGarageData` nyní SELECT všech tří tabulek váže na původní workspace, čeká na všechna data, kontroluje `Array.isArray`, A→B/user switch a in-flight local edit. Při partial/HTTP error vrací `false` místo `undefined`, při potvrzeném úspěchu `true`. Existing pending merge zachován beze změny.
+- Oba moduly už samostatným SELECT neoznačují celý cloud synchronizovaný přes `lastSyncAt`. Orchestrátor `cloudLoadAllModules` explicitní `null` počítá jako chybu, `lastSyncAt` nezmění při permanentním outbox failure. Legacy `undefined` po dobu postupné migrace loaderů zůstává kompatibilně jako úspěch, ostatní moduly dále auditovat.
+- Regresní test `tools/check-cloud-shopping-garage-read.mjs` vykonává reálné extrahované funkce s mock síťovými odpověďmi (neúplná data, failure 5. shopping SELECT, A→B, user switch, současný local edit, happy path i pending) a kontrolu sync statusu. Připojen do `npm run check`; `check-cloud-sync-status.mjs` upraven podle nové null podmínky.
+- Bez Supabase SQL/migrací. Ověřit full CI+Chrome E2E před merge, pak main CI+Vercel READY/alias a aktualizovat handoff. **P0 backend CAS/idempotence + autorizace a fyzický PC↔mobil test zůstávají otevřené.**
