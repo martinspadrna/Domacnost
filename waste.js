@@ -179,19 +179,25 @@
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) {
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
-        return;
+        return false;
       }
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      const before = JSON.stringify(getState().waste || []);
       const { data, error } = await client
         .from('waste_schedules')
         .select('id,title,pickup_date,repeat_rule,notify_before_hours,is_enabled,note')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .order('pickup_date', { ascending: true });
+      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
       if (error) {
-        showToast(error.message || 'Svoz odpadu se nepovedlo načíst');
-        return;
+        if (showMessage) showToast(error.message || 'Svoz odpadu se nepovedlo načíst');
+        return false;
       }
+      if (!Array.isArray(data)) return false;
+      if (JSON.stringify(getState().waste || []) !== before) return false;
       const localOnly = normalizeWasteStorageItems(getState().waste.filter((item) => !item.cloudId));
-      const cloudItems = normalizeWasteStorageItems((data || []).map((item) => ({
+      const cloudItems = normalizeWasteStorageItems(data.map((item) => ({
         id: getState().waste.find((entry) => entry.cloudId === item.id)?.id || `waste-cloud-${item.id}`,
         cloudId: item.id,
         householdId: currentHouseholdId(),
@@ -205,11 +211,11 @@
         note: item.note || ''
       })));
       getState().waste = [...cloudItems, ...localOnly];
-      getState().cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       render();
       if (showMessage) showToast(`Načteno svozů: ${cloudItems.length}`);
+      return true;
     }
 
     async function cloudSyncWasteById(id) {
