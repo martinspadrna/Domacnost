@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_566';
-  const APP_BUILD = 566;
+  const APP_VERSION = 'Domácnost+ v.0.1_567';
+  const APP_BUILD = 567;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -20062,11 +20062,15 @@
         bootCloudResumeChecked = true;
         if (!user) requestBackgroundRender();
       }
-      if (!user) return;
+      if (!user || state.cloud?.userId !== user.id) return false;
+      const bootUserId = user.id;
       cloudWarmStartDone = true;
       await cloudLoadUserVisualSettings(false);
+      if (state.cloud?.userId !== bootUserId) return false;
       await yieldToMainThread();
+      if (state.cloud?.userId !== bootUserId) return false;
       const households = await cloudLoadHouseholds(false);
+      if (state.cloud?.userId !== bootUserId) return false;
       if (!state.cloud?.householdId && households.length) {
         const preferredHousehold = pickBestCloudHousehold(households);
         state.cloud.householdId = preferredHousehold.id;
@@ -20080,12 +20084,17 @@
         requestBackgroundRender();
         return;
       }
+      const workspace = cloudSyncWorkspaceScope();
       await yieldToMainThread();
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       // renderAfter:false — warm start dělá závěrečný requestRender() sám
       // pod řádkem, mezikrok by byl duplicitní.
       await cloudLoadHouseholdUiSettings(false, { renderAfter: false });
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       await yieldToMainThread();
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       await cloudLoadProfilesForCurrentHousehold();
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       saveState({ immediate: true });
       requestBackgroundRender();
       // Home je již lokálně vykreslený. V klidovém okně dočteme jeho cloudové
@@ -22762,14 +22771,23 @@
     if (!client) { if (showMessage) showToast('Supabase knihovna není načtená'); return []; }
     const user = await refreshCloudSession(false);
     if (!user) { if (showMessage) showToast('Nejdřív se přihlas'); return []; }
+    // Zafixovat identitu před network await. Odpověď starého účtu/domácnosti
+    // nesmí měnit aktivní workspace, seznam domácností ani jeho pending stav.
+    const requestUserId = String(user.id || '');
+    const requestHouseholdId = String(state.cloud?.householdId || '');
+    if (!requestUserId || state.cloud?.userId !== requestUserId) return [];
     const { data, error } = await client
       .from('household_members')
       .select('household_id, role, status, households(id, name, timezone, dashboard_layout, weather_location, created_at, updated_at)')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .order('created_at', { ascending: true });
+    if (state.cloud?.userId !== requestUserId || String(state.cloud?.householdId || '') !== requestHouseholdId) return [];
     if (error) { if (showMessage) showToast(error.message || 'Domácnosti se nepovedlo načíst'); return []; }
-    const households = (data || []).map((row) => ({
+    // Odpověď null/undefined bez SQL erroru nesmí vypadat jako prázdný
+    // seznam domácností a odhlásit aktuální workspace.
+    if (!Array.isArray(data)) return [];
+    const households = data.map((row) => ({
       id: row.household_id,
       role: row.role || 'member',
       status: row.status || 'active',
@@ -22780,7 +22798,8 @@
       createdAt: row.households?.created_at || '',
       updatedAt: row.households?.updated_at || ''
     })).filter((item) => item.id);
-    state.cloud = { ...(state.cloud || {}), households, lastSyncAt: new Date().toISOString() };
+    // Dílčí SELECT není dokončená synchronizace všech modulů.
+    state.cloud = { ...(state.cloud || {}), households };
     const currentCloudHouseholdValid = households.some((item) => item.id === state.cloud.householdId);
     if (state.cloud.householdId && !currentCloudHouseholdValid) {
       state.cloud.householdId = '';
@@ -22806,13 +22825,16 @@
     }
     const activeHousehold = households.find((item) => item.id === state.cloud.householdId);
     if (activeHousehold) {
+      const activeScope = cloudSyncWorkspaceScope();
       if (householdUiHasPendingChanges()) await ensureHouseholdUiSyncDependencies();
+      if (!cloudSyncWorkspaceMatches(activeScope)) return [];
       const applyRemote = shouldApplyRemoteHouseholdUi(activeHousehold);
       state.household = { ...(state.household || {}), id: activeHousehold.id, isConfigured: true };
       if (applyRemote) {
         // Remote apply normalizuje Předplatné i vape. Na novém zařízení
         // nesmí spadnout jen proto, že uživatel tyto moduly neotevřel.
         await ensureHouseholdUiSyncDependencies();
+        if (!cloudSyncWorkspaceMatches(activeScope)) return [];
         trashTrackingSuppressed = true;
         try {
           state.household.name = activeHousehold.name || state.household?.name || 'Domácnost';
@@ -23179,17 +23201,22 @@
     if (!cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
+    const workspace = cloudSyncWorkspaceScope();
     const { data, error } = await client
       .from('households')
       .select('id, name, dashboard_layout, weather_location, updated_at')
-      .eq('id', state.cloud.householdId)
+      .eq('id', workspace.householdId)
       .single();
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    // Neúplný nebo neodpovídající remote řádek nesmí změnit jinou domácnost.
     if (error) {
       if (showMessage) showToast(error.message || 'Nastavení domácnosti se nepovedlo načíst');
       return false;
     }
+    if (!data || data.id !== workspace.householdId) return false;
     if (data) {
       if (options.acceptConflict !== true && householdUiHasPendingChanges()) await ensureHouseholdUiSyncDependencies();
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const applyRemote = shouldApplyRemoteHouseholdUi(data, { acceptConflict: options.acceptConflict === true });
       if (!applyRemote) {
         // Read-through přijme pouze cloud-only nové platby, zbytek lokálního
@@ -23202,6 +23229,7 @@
         return true;
       }
       await ensureHouseholdUiSyncDependencies();
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       trashTrackingSuppressed = true;
       try {
         state.household.name = data.name || state.household.name || 'Domácnost';
@@ -23210,7 +23238,7 @@
         resetTrashTrackingBaseline();
         trashTrackingSuppressed = false;
       }
-      state.cloud.lastSyncAt = new Date().toISOString();
+      // Dílčí layout read nesmí potvrdit celý cloud sync.
       touchState();
       saveState();
       // Loader teď načítá data pro několik Home widgetů (readings,
@@ -23529,19 +23557,25 @@
   async function cloudLoadProfilesForCurrentHousehold() {
     const client = getSupabaseClient();
     if (!client || !state.cloud?.householdId) return false;
+    const workspace = cloudSyncWorkspaceScope();
     const previousActive = state.profiles?.find((profile) => profile.id === state.activeProfileId) || null;
+    const originalActiveProfileId = state.activeProfileId;
+    const localProfilesSnapshot = JSON.stringify(state.profiles || []);
     const { data, error } = await client
       .from('profiles')
       .select('id, name, user_id, avatar_emoji, color, is_default, created_at')
-      .eq('household_id', state.cloud.householdId)
+      .eq('household_id', workspace.householdId)
       .eq('is_archived', false)
       .order('created_at', { ascending: true });
-    if (error) return false;
-    if (!data?.length) return false;
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (error || !Array.isArray(data) || !data.length) return false;
+    // Nová lokální úprava nebo změna aktivního profilu během HTTP požadavku
+    // mají přednost před starou vzdálenou odpovědí.
+    if (state.activeProfileId !== originalActiveProfileId || JSON.stringify(state.profiles || []) !== localProfilesSnapshot) return false;
     state.profiles = dedupeProfiles(data.map((profile, index) => ({
       id: profile.id,
       cloudId: profile.id,
-      householdId: state.cloud.householdId,
+      householdId: workspace.householdId,
       name: profile.name || `Profil ${index + 1}`,
       avatarEmoji: profile.avatar_emoji || '🙂',
       color: profile.color || ['blue', 'green', 'violet', 'orange'][index % 4],
@@ -23557,7 +23591,6 @@
     state.activeProfileId = preserved?.id || '';
     applyActiveProfileUiSettings();
     state.cloud.profilesLoadedAt = new Date().toISOString();
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 

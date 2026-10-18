@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_566** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_566** (PR #56, squash `9605f07f5a8ebac1ba4f10b8b47b892cf13bc14d`, Vercel READY, plné CI a Chrome E2E PASS; nový kandidát v0.1_567 zatím na větvi). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -491,3 +491,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Vercel production **READY**, deployment `dpl_2jrUmooD4feL7da5VmE61qLNZoYN`, `githubCommitSha` odpovídá merge SHA, `domacnost-plus.vercel.app` v alias a `aliasError=null`.
 - Implementované: po rychlém local-first Home startu se klidově dočtou panelové datové moduly z cloudu, následně se dočítají zbývající moduly; u partial load už loaded neblokuje retry a lastSyncAt nevydává falešné potvrzení; lazy marker je tenant-scoped, priority/background drží workspace scope i přes síť, full load vyžaduje nulový pending/konflikt/outbox blocking. Reálný PC/mobil test stále nepotvrzen.
 - **P0 stále IN PROGRESS ~85–88 %**: backend účetní CAS/idempotentní INSERT, autorizovaný přístup ke správnému Supabase projektu, fyzické PC↔mobil/offline/restart/konflikt. P1/P2 **ROZPRACOVÁNO**: další větší etapa může být konzistence ostatních modulů/uživatelský fyzický test, bez zásahu do jiné Supabase DB.
+
+
+### 18. 10. 2026 — větší P1/P2 balík: cloud bootstrap tenant-race, kandidát v0.1_567
+- Výchozí `main` `60ea4c5068da62b57853b9c8c9eb04bf87d07203`, produkční v0.1_566. Větev `fix/p1-p2-bootstrap-read-isolation-567`.
+- Nalezeno v `cloudLoadHouseholds`, `cloudLoadHouseholdUiSettings`, `cloudLoadProfilesForCurrentHousehold`: opožděné SELECT odpovědi po změně účtu/domácnosti se mohly aplikovat do aktuálního lokálního stavu. Profiles navíc mohly při síťovém čekání přepsat novější lokální edit a aktivní profil. Žádná SQL migrace.
+- Tyto čtečky nyní fixují původní `householdId`/`userId`, SELECT je na původní tenant, po await kontrolují scope, UI loaders i po případném lazy `ensureHouseholdUiSyncDependencies`, nulová/neúplná odpověď household listu není důvod smazat domov, profiles zachovají současnou editaci. `cloudWarmStartLoad` před dalšími kroky i potvrzením kontroluje účet/scope.
+- Tři dílčí čtení přestala přepisovat globální `state.cloud.lastSyncAt`, který má znamenat potvrzenou souhrnnou synchronizaci. Ostatní legacy lokální moduly ještě čítač používají; jejich kompletní sjednocení je samostatný audit, nesmí se přepisovat bez důkazů a testů.
+- Nový vykonatelný `tools/check-cloud-bootstrap-races.mjs` v CI simuluje opožděný SELECT, A→B, user switch, lokální edit, změnu profilu, chybějící data a warm-start. Následně ověřit full CI i Chrome E2E, pak merge/main/produkční alias a final handoff.
+- **P0** DB CAS/idempotence stále otevřené, fyzický PC↔mobil/offline/restart až po širším balíku; neposílat migrační SQL do nepřipojeného Supabase projektu.
