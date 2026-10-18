@@ -792,22 +792,29 @@
       };
     }
 
-    async function cloudLoadCalendarSources(showMessage = false) {
+    async function cloudLoadCalendarSources(showMessage = false, options = {}) {
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) {
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
-        return [];
+        return options.stage ? null : [];
       }
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      const before = JSON.stringify(getCalendarSources());
       const { data, error } = await client
         .from('calendar_sources')
         .select('id,household_id,profile_id,name,provider,provider_calendar_id,provider_connection_id,color,is_enabled,sync_enabled,last_synced_at,note,created_at')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .order('created_at', { ascending: true });
-      if (error) {
-        if (showMessage) showToast(error.message || 'Zdroje kalendáře se nepovedlo načíst');
-        return getCalendarSources();
+      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return options.stage ? null : getCalendarSources();
+      if (error || !Array.isArray(data)) {
+        if (showMessage && error) showToast(error.message || 'Zdroje kalendáře se nepovedlo načíst');
+        return options.stage ? null : getCalendarSources();
       }
-      const sources = (data || []).map(mapCalendarSource);
+      if (JSON.stringify(getCalendarSources()) !== before) return options.stage ? null : getCalendarSources();
+      const sources = data.map(mapCalendarSource);
+      // Staged sources aktualizujeme až zároveň s úspěšným SELECT událostí.
+      if (options.stage) return sources;
       // Lokálně přidaný zdroj (ještě bez cloudId, čeká na dokončení
       // cloudAddCalendarSource na pozadí) se nesmí ztratit jen proto, že
       // zrovna proběhlo načtení z cloudu - dřív se sem sources přiřadilo
@@ -1173,23 +1180,38 @@
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
         return false;
       }
-      await cloudLoadCalendarSources(false);
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      const before = JSON.stringify([
+        getState().calendar || [],
+        getState().calendarCloud || {},
+        getState().cloud?.recordConflicts || []
+      ]);
+      const sources = await cloudLoadCalendarSources(false, { stage: true });
+      if (!sources || getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
       const { data, error } = await client
         .from('calendar_events')
         .select('id,source_id,title,description,location,starts_at,ends_at,all_day,event_type,provider_event_id,provider_status,created_at,updated_at')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .neq('status', 'cancelled')
         .order('starts_at', { ascending: true });
-      if (error) {
-        showToast(error.message || 'Kalendář se nepovedlo načíst');
+      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (error || !Array.isArray(data)) {
+        if (showMessage && error) showToast(error.message || 'Kalendář se nepovedlo načíst');
         return false;
       }
+      if (JSON.stringify([
+        getState().calendar || [],
+        getState().calendarCloud || {},
+        getState().cloud?.recordConflicts || []
+      ]) !== before) return false;
+      const sourceList = mergeCalendarSources(getCalendarSources().filter((source) => !source.cloudId), sources);
       const cloudBackedIcsSourceIds = new Set();
-      getCalendarSources()
+      sourceList
         .filter((source) => normalizeCalendarSourceProvider(source.provider) === 'ical')
         .forEach((source) => calendarSourceIdSet(source).forEach((id) => cloudBackedIcsSourceIds.add(id)));
       const localOnly = getState().calendar.filter((event) => !event.cloudId && !isEventFromSourceSet(event, cloudBackedIcsSourceIds));
-      const cloudItems = (data || []).map((item) => {
+      const cloudItems = data.map((item) => {
         const start = splitCalendarDateTime(item.starts_at, { allDay: item.all_day });
         const end = splitCalendarDateTime(item.ends_at, { allDay: item.all_day });
         return {
@@ -1214,7 +1236,15 @@
       });
       const conflictingDeletes = new Set((getState().cloud?.recordConflicts || []).filter((entry) => entry.collection === 'calendar' && entry.operation === 'delete').map((entry) => entry.cloudId));
       getState().calendar = [...cloudItems.filter((item) => !conflictingDeletes.has(item.cloudId)), ...localOnly];
-      getState().calendarCloud = { ...(getState().calendarCloud || {}), loadedAt: new Date().toISOString(), sourcesLoadedAt: getState().calendarCloud?.sourcesLoadedAt || new Date().toISOString() };
+      getState().calendarCloud = {
+        ...(getState().calendarCloud || {}),
+        sources: sourceList,
+        loadedAt: new Date().toISOString(),
+        sourcesLoadedAt: new Date().toISOString()
+      };
+      if (sources.some((source) => normalizeCalendarSourceProvider(source.provider) === 'ical')) {
+        scheduleCalendarAutoSync('sources-loaded', { delay: showMessage ? 1800 : 9000 });
+      }
       touchState();
       saveState({ immediate: true, skipTrashTracking: true });
       render();

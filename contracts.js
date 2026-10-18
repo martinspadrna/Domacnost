@@ -217,18 +217,27 @@
         if (showMessage) showToast('Nejdřív vytvoř / napoj domácnost v cloudu');
         return false;
       }
+      const householdId = state.cloud.householdId;
+      const userId = state.cloud.userId;
+      if (user.id !== userId) return false;
+      const before = JSON.stringify([state.contracts || [], state.contractFiles || [], getActiveContractId()]);
       const { data, error } = await client
         .from('contracts')
         .select('id,title,type,provider,contract_number,valid_from,valid_until,amount,payment_frequency,reminder_days,note,created_at')
-        .eq('household_id', state.cloud.householdId)
+        .eq('household_id', householdId)
         .order('valid_until', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
-      if (error) {
-        if (showMessage) showToast(error.message || 'Smlouvy se nepovedlo načíst');
+      if (state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return false;
+      if (error || !Array.isArray(data)) {
+        if (showMessage && error) showToast(error.message || 'Smlouvy se nepovedlo načíst');
         return false;
       }
+      // Přílohy se musí také dočíst, než se změní seznam smluv.
+      const files = await cloudLoadContractFiles(false, { stage: true });
+      if (!files || state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return false;
+      if (JSON.stringify([state.contracts || [], state.contractFiles || [], getActiveContractId()]) !== before) return false;
 
-      const cloudContracts = (data || []).map((item) => {
+      const cloudContracts = data.map((item) => {
         const existing = (state.contracts || []).find((contract) => contract.cloudId === item.id);
         return {
           id: existing?.id || uid(),
@@ -249,13 +258,14 @@
         };
       });
       state.contracts = mergeCloudContractsPreservingPending(cloudContracts);
+      const cloudFiles = files.map((item) => mapCloudContractFile(item)).filter(Boolean);
+      state.contractFiles = [...(state.contractFiles || []).filter((file) => !file.cloudId), ...cloudFiles];
       if (!getActiveContractId() && state.contracts.length) setActiveContractId(state.contracts[0].id);
-      state.cloud.lastSyncAt = new Date().toISOString();
+      // Jeden modulový refresh ještě neznamená úplnou synchronizaci.
       touchState();
       saveState();
       render();
-      await cloudLoadContractFiles(false);
-      if (showMessage) showToast('Cloud smlouvy načtené');
+      if (showMessage) showToast('Cloud smlouvy a přílohy načtené');
       return true;
     }
 
@@ -495,7 +505,7 @@
       return '';
     }
 
-    async function cloudLoadContractFiles(showMessage = true) {
+    async function cloudLoadContractFiles(showMessage = true, options = {}) {
       const client = getSupabaseClient();
       if (!client) {
         if (showMessage) showToast('Supabase knihovna není načtená');
@@ -506,19 +516,25 @@
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
         return false;
       }
+      const householdId = state.cloud.householdId;
+      const userId = state.cloud.userId;
+      if (user.id !== userId) return options.stage ? null : false;
+      const before = JSON.stringify([state.contracts || [], state.contractFiles || []]);
       const { data, error } = await client
         .from('contract_files')
         .select('id,household_id,contract_id,storage_path,file_name,mime_type,file_size,source,created_at')
-        .eq('household_id', state.cloud.householdId)
+        .eq('household_id', householdId)
         .order('created_at', { ascending: false });
-      if (error) {
-        if (showMessage) showToast(error.message || 'Přílohy se nepovedlo načíst');
-        return false;
+      if (state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return options.stage ? null : false;
+      if (error || !Array.isArray(data)) {
+        if (showMessage && error) showToast(error.message || 'Přílohy se nepovedlo načíst');
+        return options.stage ? null : false;
       }
-      const cloudFiles = (data || []).map((item) => mapCloudContractFile(item)).filter(Boolean);
+      if (JSON.stringify([state.contracts || [], state.contractFiles || []]) !== before) return options.stage ? null : false;
+      if (options.stage) return data;
+      const cloudFiles = data.map((item) => mapCloudContractFile(item)).filter(Boolean);
       const localOnly = (state.contractFiles || []).filter((file) => !file.cloudId);
       state.contractFiles = [...localOnly, ...cloudFiles];
-      state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       render();
