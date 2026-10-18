@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Poslední produkční verze: v0.1_563** (PR #53, full CI + E2E PASS). v0.1_564 je kandidát do dokončení ověřeného release. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_564** (PR #54, squash `39923b74402ce81a18b27bbe0cc620107020c634`, Vercel READY a potvrzený full CI + Chrome E2E PASS na PR i `main` po opakování flaky browser testu). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -446,3 +446,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Nový `tools/check-cloud-extra-writes.mjs` simuluje lost/no-row ACK, concurrent update, mutaci během INSERT/UPDATE, A→B při čekání, offline, delete a batch scope. Bez backend oprávnění, žádné SQL/migrace ani přepis uživatelských dat.
 - **Omezení:** serverově idempotentní INSERT a databázové revision CAS stále čekají na autorizovaný přístup do správného Supabase projektu. Pozdní INSERT u už odstraněného záznamu nelze bez serverového idempotentního klíče plně automaticky deduplikovat. P0 zůstává IN PROGRESS přibližně 85–88 %, fyzický PC↔mobil/offline/restart test až po této širší etapě podle přání uživatele.
 - K vydání nutné zelené full CI + Chrome E2E na finálním PR SHA, merge a kontrola main CI, Vercel READY a produkční alias; poté finální handoff záznam.
+
+### 18. 10. 2026 — v0.1_564 PRODUKCE, větší P0 cloud balík
+- PR #54 https://github.com/martinspadrna/Domacnost/pull/54 **MERGED**, merge SHA `39923b74402ce81a18b27bbe0cc620107020c634` na main.
+- PR full checks + Chrome E2E **PASS** na head `2487df95ab3e3ad54092b0d1fd9cfd4af262e40f`, GitHub run `39117734650`; původní dva běhy na PR odhalily a opravily pravdivé vykazování po přepnutí domácnosti a starší test očekávající odstraněný no-op loader.
+- Produkční Vercel **READY**, deployment `dpl_4qRqf72GHc3Awnj1UB1FPm15Unda`; `githubCommitSha` přesně odpovídá merge, alias `domacnost-plus.vercel.app` bez chyby.
+- Main CI GitHub run `39117838244`: první pokus Chrome E2E **FAIL** na jediné kontrolní větvi „Upozornění nejdou nastavovat samostatně podle typu“, všechny ostatní browser scénáře a celé npm check PASS. **Opakování bez změny commitu PASS** včetně upozornění. Flaky E2E je nadále otevřený test-harness úkol, není potvrzena aplikační regresní chyba. Neprohlašovat první run za PASS — hlídat stabilitu v dalších bězích, ideálně čekat na panel/re-render místo pevného 180ms timeoutu.
+- Změny: extra cloud INSERT/UPDATE potvrzuje správný řádek a tenant, per-item single-flight, dirty snapshot během čekání zůstane pending; offline/error nepřepíše lokální editaci, cloudSyncLocalExtraCollections má tenant ochranu i po await. Ruční notes retry rozlišuje INSERT/UPDATE. Odebrán falešný always-false user settings loader z full-load početníku, realtime fallback kontroluje úplnost.
+- Test `tools/check-cloud-extra-writes.mjs` plus existující regresní sada a Chrome E2E, bez databázového zásahu. PWA release značky 564 ve všech relevantních souborech.
+- **P0 IN PROGRESS cca 85–88 %**, neuzavřený serverově idempotentní INSERT, `finance_accounts` DB CAS, přístup do správného Supabase projektu Domácnost+, fyzické PC↔mobil/offline/restart a konflikty. Bez správných práv do Supabase neprovádět žádnou migraci. Potenciálně osiřelé řádky po smazání během insertu je nutné dořešit backendově nebo bezpečným outboxem; současný klient si je po ztracené odpovědi nedokáže zaručeně deduplikovat.
+- **Další krok většího rozsahu:** buď autorizovat správný Supabase projekt a provést backend revize/idempotence s read-only auditem nejprve, nebo pokračovat samostatným P1/P2 průchodem skutečných modulů a stabilizačními regresními testy bez databázových zásahů; nepřidávat stále další drobné náhodné cloud patche.
