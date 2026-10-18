@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_570** (PR #60, squash `9fd9b55d28328835c45e597e74a26da828d204e5`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_571** (PR #61, squash `c4bf563c6cbc3dafdc444c80b274be25e0f6767e`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -568,3 +568,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `app.js`: `cloudLoadModuleForNav` pro `calendar` a `contracts` už nespouští extra samostatné loaders `cloudLoadCalendarSources` a `cloudLoadContractFiles` — od v570 je jejich atomická práce součástí `cloudLoadCalendar`/`cloudLoadContracts`. Totéž v `cloudLoadAllModules`; odstraněny dva duplicitní síťové dotazy pro full sync, celkový denominator přepočítaný automaticky z aktuálního seznamu. Větší výkon i méně možných závodů. Nezměněné standalone UI akce zůstávají.
 - Regrese: `tools/check-cloud-warranty-read.mjs` spouští skutečný warranty.js v Node VM s odloženým SELECT (A→B, switch user, local edit, null data, HTTP error, valid empty i navázané soubory), plus dynamickou kontrolu cloud loader mapy a full sync. Připojen do `npm run check`.
 - Nutné plné CI + Chrome E2E na PR, poté na main a Vercel alias; zapsat finální čísla do handoffu. **P0** DB CAS/idempotentní INSERT a fyzické PC↔mobil/offline/restart/konflikt otevřené; nepoužívat jiný Supabase projekt.
+
+
+### 18. 10. 2026 — v0.1_571 PRODUKCE, záruky a odstranění redundantních SELECT
+- PR #61 https://github.com/martinspadrna/Domacnost/pull/61 **MERGED**. Finální PR head `6a86c78604fdffeeb5bffdafa74f1edba010b8be`; squash SHA `c4bf563c6cbc3dafdc444c80b274be25e0f6767e`.
+- PR full CI + Chrome E2E **PASS** `39159649807`, produkční main full CI + Chrome E2E **PASS** `39159733325` přesně na squash SHA.
+- Vercel production **READY** `dpl_CE6ZkccW5qmxyoUTBu9B396r84ue`, odpovídající git commit a aktivní alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Záruky: tenant-scoped a in-flight-local-edit safe `cloudLoadWarrantyFiles`, SELECT null/SQL-error nesmí nahradit validní data, partial loader nezapisuje full-sync `lastSyncAt`. Lokální-only přílohy a existující mapování do záruk zůstaly zachovány.
+- Cloud orchestrátory: odstraněné dvojí načítání calendar_sources a contract_files z `cloudLoadModuleForNav` i `cloudLoadAllModules`. Oba composite loadery v570 tato data načítají samy atomicky; méně síťových volání a možných závodů, zachované samostatné UI načítání podle potřeby. Úspěch full-sync stále hlídá počet loaderů i pending/konflikty/permanent outbox failure.
+- Nový `tools/check-cloud-warranty-read.mjs` opravdu vykonává warranty.js v izolovaném VM, kontroluje A→B, jiné userId, současný edit, null/SQL error, prázdný i vyplněný remote, timestamp i seznam loaderů; zapojen do `npm run check`.
+- **P0 stále otevřeno**: správný Supabase Domácnost+ projekt, backend CAS/idempotentní INSERT a fyzické PC↔mobil/offline/restart/konflikt. Další práce P1/P2: audit zbývajících datových modulů a oprávněných globálních `lastSyncAt` zápisů, bez plošných rizikových změn.
