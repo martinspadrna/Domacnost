@@ -3,7 +3,7 @@
 Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_561** (PR #51, merge `724f6e67b085b2b9b60ff3cdd051cc86aaf6402c`, Vercel READY, PR CI a browser E2E PASS). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Poslední ověřená produkční verze: v0.1_561** (PR #51, merge `724f6e67b085b2b9b60ff3cdd051cc86aaf6402c`, Vercel READY, CI PASS). Nová v0.1_562 je kandidát do dokončení CI a produkčního nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -402,3 +402,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Scoped DELETE outbox: žádné přepsání fronty nové domácnosti pozdním ACK ze staré, žádná ztráta dalších DELETE vzniklých během síťového požadavku. Testováno se simulovaným network await, chybovou odpovědí a změnou domácnosti; uživatelský fyzický test není dosud hotový.
 - **Main CI**: run `38911025385` zahájen pro merge SHA; ověřit konečný PASS po doběhnutí, případné selhání rozebrat podle logu.
 - **P0 IN PROGRESS cca 85 %.** Blokátor posledního kroku je autorizovaný přístup k projektu Supabase Domácnost+ kvůli DB account CAS a serverové idempotenci INSERT. Žádné DB zásahy bez ověření schématu a práv. Až poté souhrnný PC↔mobil/offline/restart test. Nepřidávat spekulativní klientské změny bez konkrétního rizika.
+
+### 18. 10. 2026 — P0 tenant isolation: kandidát v0.1_562
+- Vychází z produkční v0.1_561, `main` `add35cc8d3a460f82532af3ee790ccb296e08388`. P0 stále IN PROGRESS.
+- **Zjištěné riziko:** v561 je izolovaná pouze cloudová DELETE fronta, ale ruční/automatická synchronizace a multi-module read cykly provádějí více `await` operací; při změně domácnosti mezi nimi mohou další operace běžet již v jiné domácnosti a stará odpověď může nové domácnosti změnit `autosyncStatus`/`lastSyncAt`.
+- `cloudSyncWorkspaceScope` zachytí aktuální `householdId`/`userId`, `cloudSyncWorkspaceMatches` ověří jeho platnost. Cílená ochrana v `runCloudAutosyncNow`, `cloudSyncLocalPendingData`, `runUnifiedCloudSync`, `cloudLoadAllModules`, `cloudLoadModuleForNav` i `cloudBackgroundLoadAllModules` přeruší starou dávku po čekání na moduly/síť a před následující operací či potvrzením úspěchu. Autosync blokuje souběžné vyvolání dalšího `runCloudAutosyncNow`, při přepnutí zachovává stav nové domácnosti a případný nový pending naplánuje pod jejím kontextem.
+- Vykonatelný regresní test `tools/check-cloud-workspace-scope.mjs` simuluje opožděné odpovědi z A po přepnutí na B u všech šesti cest; kontroluje, že se následný loader/sync již nespustí a `lastSyncAt`, fronty a stav B nejsou falešně potvrzeny. V konzervativním rozsahu pouze frontend orchestrátor, bez Supabase SQL/migrací.
+- **Omezení:** jednotlivé již běžící remote requesty nelze tímto klientským guardem atomicky zrušit ani zaručit, že jejich interní loader nezmění lokální stav; to vyžaduje další audit všech jednotlivých loaderů a backend CAS. Guard zajišťuje ukončení zbytku starého cyklu a že orchestrátor nepotvrdí úspěch v novém workspace.
+- Před merge nutné plné CI + reálné Chrome E2E PASS a poté ověřit Vercel production READY + alias a zapsat finální SHA.
+- Supabase konektor 18.10. zobrazuje pouze RaK test `cgshssdjgzzuprlwnabl` a hlavní `bkqamcbkiwumsvelahxr`, nikoli Domácnost+; neprovádět zásahy v cizích projektech. Účetní DB CAS a idempotentní INSERT plus fyzický cross-device test zůstávají otevřené (~85 % orientačně).
