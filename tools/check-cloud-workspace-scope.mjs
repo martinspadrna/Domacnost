@@ -159,16 +159,16 @@ const make=()=>{
 // Bulk cloud loader must stop at the first delayed loader response.
 {
   const e=make(),gate=deferred();
-  e.ctx.cloudLoadUserVisualSettings=()=>{e.calls.push('settings');return gate.promise;};
-  e.ctx.cloudLoadHouseholdUiSettings=async()=>{e.calls.push('household');return true;};
+  // V564 se už záměrný no-op user_app_settings nepočítá jako loader.
+  e.ctx.cloudLoadHouseholdUiSettings=()=>{e.calls.push('household');return gate.promise;};
   const fn=compile('async function cloudLoadAllModules(', 'function cloudSyncCompletionState(',e.ctx);
   const job=fn(false);
   await flush();
-  assert.deepEqual(e.calls,['settings']);
+  assert.deepEqual(e.calls,['household']);
   e.state.cloud=home('b','user2');
   gate.resolve(true);
   assert.equal(await job,false);
-  assert.deepEqual(e.calls,['settings']);
+  assert.deepEqual(e.calls,['household']);
   assert.equal(e.saved.includes('b'),false);
 }
 
