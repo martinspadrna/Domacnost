@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Poslední potvrzená produkční verze: v0.1_562** (PR #52, Vercel READY, full CI + Chrome E2E PASS). v0.1_563 je zatím kandidát — aktualizovat až po ověření nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_563** (PR #53, merge `d8da8b01b0818bcca4993c115eafecb13e6c833a`, Vercel READY, full CI + Chrome E2E PASS). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -428,3 +428,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Přidány dependency-free regresní testy `tools/check-cloud-extra-read-race.mjs` (časově opožděné SELECT, lokální edit, pending merge, B, partial batch) a `tools/check-cloud-realtime-scope.mjs` (staré eventy/subscription callbacky, opožděný refresh a error/fallback). Verze + PWA cache 563 všude sjednocené.
 - **Před merge:** vyžadovat full `npm run check` + Chrome `check:e2e` PASS na posledním PR SHA, následně main a produkce READY i správný alias, aktualizovat finální handoff.
 - **P0 stále IN PROGRESS cca 85 %.** Správný Supabase DB account CAS/idempotence INSERT, test reálného PC↔mobil offline/restart/konflikt a audit jednotlivých zbývajících loaderů nejsou tímto fixem vyřešené; nepoužívat force ani migrovat jiné Supabase projekty.
+
+### 18. 10. 2026 — v0.1_563 PRODUKCE, P0 extra data/realtime ochrany
+- PR #53 https://github.com/martinspadrna/Domacnost/pull/53 **MERGED**, produkční squash commit `d8da8b01b0818bcca4993c115eafecb13e6c833a`.
+- PR full checks a browser Chrome E2E **PASS** na posledním head `578c6ec8a6f71e70ce74386af027240c3495137a`, run `39112548643` (počáteční testovací timing chybu jsme opravili před merge).
+- Produkční main full checks a Chrome E2E **PASS**, run `39112609253` na přesném merge SHA.
+- Vercel produkce **READY**, deployment `dpl_H2hXNYQPPDkn9y21kgVHWYv8RDFC`; produkční alias `domacnost-plus.vercel.app`, `aliasError=null` a git SHA odpovídá merge.
+- `cloudLoadExtraCollection` nyní chrání workspace i rozpracovanou lokální editaci během čtení Notes/Coupons/Warranties; chybné/partial SELECT nezahodí lokální data ani nepředstírá kompletní sync. Batch partial failure vrací false. Staré realtime callbacky/odpovědi z jiné domácnosti nebo účtu nemohou dát aktuální domácnosti `online` ani spouštět její targeted refresh.
+- Dva nové asynchronní regresní testy integrovány do npm check; PWA cache/release build 563 konzistentní.
+- **P0 zůstává IN PROGRESS přibližně 85 %.** Chybí DB account-level CAS a serverově idempotentní INSERT po lost ACK; aktuální konektor Supabase nemá přístup ke správnému projektu Domácnost+ (pouze RaK), žádné migrace naslepo. Reálný PC↔mobil, offline/restart/konfliktový test uživatel chce až po širší etapě; jednotlivé loader/write paths mimo rozsah této opravy dále auditovat pouze s reprodukovaným rizikem.
