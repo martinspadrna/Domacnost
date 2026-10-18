@@ -40,12 +40,14 @@ const instantiate=type=>{
   const snapshot=()=>JSON.stringify({hdoWindows:state.hdoWindows,hdoCloud:state.hdoCloud,waste:state.waste,homeTasks:state.homeTasks,tasksCloud:state.tasksCloud});
   return {state,queries,operations,load,response,snapshot};
 };
-async function begin(e,expected){
- const job=e.load(false);await flush();assert.equal(e.queries.length,expected);return job;
+function begin(e,expected){
+ const job=e.load(false);
+ assert.equal(e.queries.length,expected);
+ return job;
 }
 function assertOriginal(e,before,label){assert.equal(e.snapshot(),before,label);assert.equal(e.state.cloud.lastSyncAt,'confirmed-original');assert.deepEqual(e.operations,[]);}
 for(const change of ['household','user','edit']){
-  const e=instantiate('hdo'),job=await begin(e,1),before=e.snapshot();
+  const e=instantiate('hdo'),job=begin(e,1),before=e.snapshot();
   if(change==='household')e.state.cloud.householdId='B';
   if(change==='user')e.state.cloud.userId='V';
   if(change==='edit')e.state.hdoWindows[0].label='New local';
@@ -55,13 +57,13 @@ for(const change of ['household','user','edit']){
   assertOriginal(e,original,'HDO '+change+' must not apply');
 }
 {
- const e=instantiate('hdo'),job=await begin(e,1),before=e.snapshot();
+ const e=instantiate('hdo'),job=begin(e,1),before=e.snapshot();
  e.response(0,{id:'cloud-setting'});await flush();assert.equal(e.queries.length,2);
  assert.equal(e.snapshot(),before,'settings must not mutate prior to window read');
  e.response(1,null,{message:'offline'});assert.equal(await job,false);assertOriginal(e,before,'HDO partial');
 }
 {
- const e=instantiate('hdo'),job=await begin(e,1);
+ const e=instantiate('hdo'),job=begin(e,1);
  e.response(0,{id:'cloud-setting'});await flush();e.response(1,[]);
  assert.equal(await job,true);assert.equal(e.state.hdoCloud.settingId,'cloud-setting');
  assert.equal(e.state.hdoWindows[0].id,'wLocal','pending HDO survives');
@@ -71,7 +73,7 @@ for(const change of ['household','user','edit']){
 for(const type of ['waste','notes']){
  const loaderType=type==='notes'?'Tasks':'Waste';
  for(const change of ['household','user','edit','invalid','error']){
-  const e=instantiate(type),job=await begin(e,1),before=e.snapshot();
+  const e=instantiate(type),job=begin(e,1),before=e.snapshot();
   if(change==='household')e.state.cloud.householdId='B';
   if(change==='user')e.state.cloud.userId='V';
   if(change==='edit'){
@@ -86,7 +88,7 @@ for(const type of ['waste','notes']){
   assertOriginal(e,preserved,loaderType+' '+change);
   assert(e.queries[0].filters.some(([key,val])=>key==='household_id'&&val==='A'));
  }
- const e=instantiate(type),job=await begin(e,1);
+ const e=instantiate(type),job=begin(e,1);
  e.response(0,[]);assert.equal(await job,true,loaderType+' empty valid response');
  if(type==='waste')assert.equal(e.state.waste[0].type,'Local','local-only waste survives');
  else assert.equal(e.state.homeTasks[0].title,'Local','pending tasks survive');
