@@ -23,6 +23,8 @@ const state={cloud:{householdId:'h1',userId:'user1',provider:'supabase',
 const env={
   state,
   cloudReady:()=>true,
+  cloudSyncWorkspaceScope:()=>({householdId:state.cloud.householdId,userId:state.cloud.userId}),
+  cloudSyncWorkspaceMatches:(scope)=>Boolean(scope?.householdId===state.cloud.householdId && scope?.userId===state.cloud.userId),
   clearCloudAutosyncTimer:()=>{},
   render:()=>{},
   ensureModuleCode:async()=>{},

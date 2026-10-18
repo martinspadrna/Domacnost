@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_561';
-  const APP_BUILD = 561;
+  const APP_VERSION = 'Domácnost+ v.0.1_562';
+  const APP_BUILD = 562;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -19131,6 +19131,19 @@
     return navigator.onLine !== false;
   }
 
+  // Jeden cyklus synchronizace patří uživateli a domácnosti, kde začal.
+  // Async loader nebo HTTP odpověď nesmí potvrdit sync nové domácnosti.
+  function cloudSyncWorkspaceScope() {
+    return { householdId: state.cloud?.householdId, userId: state.cloud?.userId };
+  }
+
+  function cloudSyncWorkspaceMatches(scope) {
+    return Boolean(scope?.householdId && scope?.userId
+      && state.cloud?.householdId === scope.householdId
+      && state.cloud?.userId === scope.userId
+      && cloudReady());
+  }
+
   function clearCloudAutosyncTimer() {
     if (!cloudAutosyncTimer) return;
     window.clearTimeout(cloudAutosyncTimer);
@@ -19227,11 +19240,14 @@
   }
 
   async function runCloudAutosyncNow(showMessage = true) {
+    // Ruční opakování během autosyncu nesmí spustit druhou paralelní dávku.
+    if (cloudAutosyncRunning) return false;
     cleanupProviderManagedCalendarSyncArtifacts();
     if (!cloudReady()) {
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
       return false;
     }
+    const workspace = cloudSyncWorkspaceScope();
     healStaleHouseholdUiConflict();
     if (cloudHasBlockingConflict()) {
       state.cloud.autosyncStatus = 'blocked';
@@ -19284,8 +19300,10 @@
     try {
       await withMutedToasts(async () => {
         await ensurePendingCloudModuleCode();
+        if (!cloudSyncWorkspaceMatches(workspace)) return;
         await cloudSyncLocalPendingData(false);
       });
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const after = cloudLocalPendingCount();
       const permanentFailure = cloudOutboxHasPermanentFailure() || cloudHasBlockingConflict();
       if (after) cloudAutosyncFailureCount += 1;
@@ -19306,6 +19324,7 @@
       if (showMessage) showToast(after ? retryDelay ? `Ještě zbývá ${after} změn, zkusím je znovu automaticky` : `Cloud sync hotový, ${after} položek chce ruční kontrolu` : 'Lokální záznamy jsou v cloudu');
       return !after;
     } catch (error) {
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       console.warn('Cloud autosync failed', error);
       cloudAutosyncFailureCount += 1;
       retryDelay = cloudAutosyncFailureCount <= CLOUD_AUTOSYNC_RETRY_DELAYS_MS.length ? cloudAutosyncRetryDelayMs() : 0;
@@ -19323,7 +19342,12 @@
       return false;
     } finally {
       cloudAutosyncRunning = false;
-      if (retryDelay) scheduleCloudAutosync('automatic-retry', { force: true, delayMs: retryDelay });
+      if (retryDelay && cloudSyncWorkspaceMatches(workspace)) {
+        scheduleCloudAutosync('automatic-retry', { force: true, delayMs: retryDelay });
+      } else if (!cloudSyncWorkspaceMatches(workspace) && cloudReady() && cloudLocalPendingCount()) {
+        // Přepnutí domácnosti uprostřed staré dávky nesmí B nechat bez autosyncu.
+        scheduleCloudAutosync('workspace-changed', { force: true, delayMs: 500 });
+      }
     }
   }
 
@@ -19858,6 +19882,7 @@
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
         return;
       }
+      const workspace = cloudSyncWorkspaceScope();
       // I ruční synchronizace musí před prvním replay obnovit ztracený DELETE po pádu Undo.
       recoverFinanceTrashCloudDeletes();
       const syncers = [
@@ -19880,6 +19905,7 @@
       ];
       await withMutedToasts(async () => {
         for (const syncer of syncers) {
+          if (!cloudSyncWorkspaceMatches(workspace)) return;
           // Neotevřený modul bez čekajících změn není důvod stahovat jen kvůli
           // pravidelnému autosyncu. Relevantní moduly připraví předem
           // ensurePendingCloudModuleCode().
@@ -19887,14 +19913,19 @@
           if (syncer.shouldRun && !syncer.shouldRun()) continue;
           try {
             await yieldToMainThread();
+            if (!cloudSyncWorkspaceMatches(workspace)) return;
             await syncer.run();
           } catch (error) {
+            if (!cloudSyncWorkspaceMatches(workspace)) return;
             console.warn('Cloud pending sync failed', error);
           }
+          if (!cloudSyncWorkspaceMatches(workspace)) return;
           if (cloudHasBlockingConflict()) break;
         }
       });
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       if (showMessage) await withMutedToasts(() => cloudLoadAllModules(false));
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       setupCloudRealtimeSubscriptions(false);
       const remaining = cloudLocalPendingCount();
       const blocked = cloudHasBlockingConflict() || cloudOutboxHasPermanentFailure();
@@ -19954,7 +19985,9 @@
 
   async function cloudLoadModuleForNav(moduleId, showMessage = false, options = {}) {
     if (!state.cloud?.userId || !state.cloud?.householdId) return false;
+    const workspace = cloudSyncWorkspaceScope();
     await ensureModuleCode(moduleId);
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
     const renderAfter = options.renderAfter !== false;
     // Malý wrapper — priority/background/realtime běhy modulu vždy chtějí
     // sdílený household UI loader bez vlastního renderu. Závěrečný render
@@ -20019,9 +20052,12 @@
       let failed = 0;
       await withMutedToasts(async () => {
         for (const loader of loaders) {
+          if (!cloudSyncWorkspaceMatches(workspace)) return;
           await yieldToMainThread();
+          if (!cloudSyncWorkspaceMatches(workspace)) return;
           try {
             const result = await loader(false);
+            if (!cloudSyncWorkspaceMatches(workspace)) return;
             // Explicitní false / null = loader reportuje selhání. Ostatní
             // hodnoty (undefined nebo cokoli truthy) berem jako úspěch —
             // starší loadery (cloudLoadHouseholdUiSettings apod.) nic
@@ -20033,11 +20069,13 @@
               ok += 1;
             }
           } catch (error) {
+            if (!cloudSyncWorkspaceMatches(workspace)) return;
             failed += 1;
             console.warn('Lazy cloud module failed', moduleId, error);
           }
         }
       });
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       if (ok > 0) saveState({ immediate: true });
       if (ok > 0) scheduleAutomaticDataIntegrityAudit(`module-${moduleId}`, { delay: 1400, force: true });
       if (renderAfter) requestBackgroundRender();
@@ -20115,6 +20153,7 @@
 
   async function cloudBackgroundLoadAllModules(showMessage = false, options = {}) {
     if (!state.cloud?.userId || !state.cloud?.householdId) return false;
+    const workspace = cloudSyncWorkspaceScope();
     // Celý background load je obalen do withDeferredRender, takže
     // cloudLoadModuleForNav volané uvnitř mohou volně žádat o render,
     // ale skutečný flush proběhne až po dokončení celé smyčky. Bez toho
@@ -20126,16 +20165,21 @@
       const skipModules = new Set(Array.isArray(options.skipModules) ? options.skipModules : []);
       let ok = 0;
       for (const moduleId of moduleOrder) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         if (skipModules.has(moduleId)) continue;
         await yieldToMainThread();
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         try {
           const loaded = await cloudLoadModuleForNav(moduleId, false, { renderAfter: false });
           if (loaded) ok += 1;
         } catch (error) {
+          if (!cloudSyncWorkspaceMatches(workspace)) return false;
           console.warn('Background module load failed', moduleId, error);
         }
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         await new Promise((resolve) => window.setTimeout(resolve, 120));
       }
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       setupCloudRealtimeSubscriptions(false);
       state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
@@ -20154,7 +20198,9 @@
         if (!options.silentWhenOffline) showToast('Nejdřív napoj domácnost na cloud');
         return;
       }
+      const workspace = cloudSyncWorkspaceScope();
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const loaders = [
         cloudLoadUserVisualSettings,
         // cloudLoadAllModules dělá závěrečný requestRender() ve svém konci,
@@ -20176,14 +20222,19 @@
       ];
       let ok = 0;
       for (const loader of loaders) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         try {
           await yieldToMainThread();
+          if (!cloudSyncWorkspaceMatches(workspace)) return false;
           const result = await loader(false);
+          if (!cloudSyncWorkspaceMatches(workspace)) return false;
           if (result !== false) ok += 1;
         } catch (error) {
+          if (!cloudSyncWorkspaceMatches(workspace)) return false;
           console.warn('Cloud load module failed', error);
         }
       }
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       if (ok === loaders.length && !cloudLocalPendingCount() && !cloudHasBlockingConflict()) {
         state.cloud.lastSyncAt = new Date().toISOString();
       }
@@ -20211,6 +20262,7 @@
       render();
       return false;
     }
+    const workspace = cloudSyncWorkspaceScope();
     clearCloudAutosyncTimer();
     cloudAutosyncFailureCount = 0;
     state.cloud = {
@@ -20224,9 +20276,13 @@
     render();
     try {
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       await cloudLoadHouseholds(false);
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       await cloudSyncLocalPendingData(false);
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const loadResult = await cloudLoadAllModules(false, { skipRealtimeSetup: true });
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const verification = cloudSyncCompletionState(loadResult);
       setupCloudRealtimeSubscriptions(true);
       const failed = !verification.complete;
@@ -20253,6 +20309,7 @@
       }
       return !failed;
     } catch (error) {
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       console.warn('Unified cloud sync failed', error);
       cloudAutosyncFailureCount = Math.max(1, cloudAutosyncFailureCount + 1);
       state.cloud = {
