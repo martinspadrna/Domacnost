@@ -588,20 +588,28 @@
       const client = getSupabaseClient();
       if (!client || !getState().cloud?.householdId) return false;
       const user = await refreshCloudSession(false);
-      if (!user) return false;
+      if (!user || !getState().cloud?.householdId) return false;
+      const householdId = getState().cloud.householdId;
+      const userId = getState().cloud.userId;
+      if (!userId || user.id !== userId) return false;
+      // Starý SELECT nesmí přepsat nové přílohy nebo upravené záruky
+      // (mapCloudWarrantyFile závisí na jejich aktuálních lokálních ID).
+      const before = JSON.stringify([getState().warranties || [], getState().warrantyFiles || []]);
       const { data, error } = await client
         .from('household_warranty_files')
         .select('id,household_id,warranty_key,storage_path,file_name,mime_type,file_size,source,created_at')
-        .eq('household_id', getState().cloud.householdId)
+        .eq('household_id', householdId)
         .order('created_at', { ascending: false });
-      if (error) {
-        if (showMessage) showToast(error.message || 'Přílohy záruk se nepovedlo načíst');
+      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (error || !Array.isArray(data)) {
+        if (showMessage && error) showToast(error.message || 'Přílohy záruk se nepovedlo načíst');
         return false;
       }
-      const cloudFiles = (data || []).map((item) => mapCloudWarrantyFile(item)).filter(Boolean);
+      if (JSON.stringify([getState().warranties || [], getState().warrantyFiles || []]) !== before) return false;
+      const cloudFiles = data.map((item) => mapCloudWarrantyFile(item)).filter(Boolean);
       const localOnly = (getState().warrantyFiles || []).filter((file) => !file.cloudId);
       getState().warrantyFiles = [...localOnly, ...cloudFiles];
-      getState().cloud.lastSyncAt = new Date().toISOString();
+      // Načtení jedné tabulky není dokončená synchronizace všech modulů.
       touchState();
       saveState();
       if (showMessage) {
