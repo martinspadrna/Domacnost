@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_567';
-  const APP_BUILD = 567;
+  const APP_VERSION = 'Domácnost+ v.0.1_568';
+  const APP_BUILD = 568;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -16687,8 +16687,16 @@
     const client = getSupabaseClient();
     if (!client) { if (showMessage) showToast('Supabase knihovna není načtená'); return null; }
     const user = await refreshCloudSession(false);
-    if (!user || !state.cloud?.householdId) return showToast('Nejdřív vytvoř / napoj domácnost v cloudu');
-    const householdId = state.cloud.householdId;
+    if (!user || !state.cloud?.householdId) {
+      if (showMessage) showToast('Nejdřív vytvoř / napoj domácnost v cloudu');
+      return false;
+    }
+    const workspace = cloudSyncWorkspaceScope();
+    if (!cloudSyncWorkspaceMatches(workspace) || workspace.userId !== user.id) return false;
+    const householdId = workspace.householdId;
+    // Odložený SELECT nesmí přepsat editaci vytvořenou během čekání.
+    // Celý nákup obnovit atomicky až po úspěchu VŠECH pěti požadavků.
+    const localBeforeRead = JSON.stringify([state.shoppingLists || [], state.shopping || [], state.shoppingCloud || {}]);
 
     const [unitsRes, categoriesRes, catalogRes, listsRes] = await Promise.all([
       client.from('shopping_units').select('code,label,kind,sort_order').order('sort_order'),
@@ -16697,10 +16705,29 @@
       client.from('shopping_lists').select('id,name,status,created_at,updated_at').eq('household_id', householdId).eq('status', 'active').order('created_at', { ascending: true })
     ]);
 
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
     const firstError = unitsRes.error || categoriesRes.error || catalogRes.error || listsRes.error;
-    if (firstError) return showToast(firstError.message || 'Nákupy se nepovedlo načíst');
-
-    const cloudListsRaw = listsRes.data || [];
+    if (firstError) {
+      if (showMessage) showToast(firstError.message || 'Nákupy se nepovedlo načíst');
+      return false;
+    }
+    if (![unitsRes.data, categoriesRes.data, catalogRes.data, listsRes.data].every(Array.isArray)) return false;
+    const cloudListsRaw = listsRes.data;
+    const cloudListIds = cloudListsRaw.map((list) => list.id).filter(Boolean);
+    // Dokud není kompletní SELECT položek, žádný shopping state nemutujeme.
+    // Jinak při selhání druhého dotazu zůstaly nové seznamy a staré položky.
+    const itemsRes = cloudListIds.length
+      ? await client.from('shopping_list_items')
+        .select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,done_at,created_at,updated_at')
+        .eq('household_id', householdId).in('list_id', cloudListIds).order('position').order('created_at')
+      : { data: [], error: null };
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (itemsRes.error) {
+      if (showMessage) showToast(itemsRes.error.message || 'Položky nákupu se nepovedlo načíst');
+      return false;
+    }
+    if (!Array.isArray(itemsRes.data)) return false;
+    if (JSON.stringify([state.shoppingLists || [], state.shopping || [], state.shoppingCloud || {}]) !== localBeforeRead) return false;
     const existingByCloudId = new Map((state.shoppingLists || []).filter((list) => list.cloudId || list.cloudListId).map((list) => [list.cloudId || list.cloudListId, list]));
     const existingByName = new Map((state.shoppingLists || []).map((list) => [normalizeKey(list.name), list]));
     const cloudLists = cloudListsRaw.map((list, index) => {
@@ -16747,17 +16774,12 @@
     if (!cloudLists.length) {
       state.shopping = mergeShoppingCloudItemsPreservingPending([]);
       markShoppingRuntimeDirty();
-      state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       render();
       if (showMessage) showToast('V cloudu zatím není žádný nákupní seznam');
       return true;
     }
-
-    const cloudListIds = cloudLists.map((list) => list.cloudId).filter(Boolean);
-    const itemsRes = await client.from('shopping_list_items').select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,done_at,created_at,updated_at').eq('household_id', householdId).in('list_id', cloudListIds).order('position').order('created_at');
-    if (itemsRes.error) return showToast(itemsRes.error.message || 'Položky nákupu se nepovedlo načíst');
 
     const cloudItems = (itemsRes.data || []).map((item) => {
       const catalogItem = findShoppingCatalogItem(item.name);
@@ -16790,7 +16812,6 @@
     if (!state.shoppingLists.some((list) => list.id === state.activeShoppingListId)) state.activeShoppingListId = state.shoppingLists[0]?.id || '';
 
     markShoppingRuntimeDirty();
-    state.cloud.lastSyncAt = new Date().toISOString();
     touchState();
     saveState();
     render();
@@ -17459,19 +17480,28 @@
 
   async function cloudLoadGarageData(showMessage = true) {
     const client = getSupabaseClient();
-    if (!client || !state.cloud?.householdId) return showToast('Nejdřív napoj domácnost na cloud');
+    if (!client || !state.cloud?.householdId) {
+      if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
+      return false;
+    }
     const user = await refreshCloudSession(false);
-    if (!user) { if (showMessage) showToast('Nejdřív se přihlas'); return null; }
+    if (!user) { if (showMessage) showToast('Nejdřív se přihlas'); return false; }
+    const workspace = cloudSyncWorkspaceScope();
+    if (!cloudSyncWorkspaceMatches(workspace) || workspace.userId !== user.id) return false;
+    const localBeforeRead = JSON.stringify([state.vehicles || [], state.fuel || [], state.services || []]);
 
     const [{ data: vehicles, error: vehicleError }, { data: fuel, error: fuelError }, { data: services, error: serviceError }] = await Promise.all([
-      client.from('vehicles').select('*').eq('household_id', state.cloud.householdId).order('created_at', { ascending: true }),
-      client.from('fuel_logs').select('*').eq('household_id', state.cloud.householdId).order('date', { ascending: true }),
-      client.from('service_logs').select('*').eq('household_id', state.cloud.householdId).order('date', { ascending: true })
+      client.from('vehicles').select('*').eq('household_id', workspace.householdId).order('created_at', { ascending: true }),
+      client.from('fuel_logs').select('*').eq('household_id', workspace.householdId).order('date', { ascending: true }),
+      client.from('service_logs').select('*').eq('household_id', workspace.householdId).order('date', { ascending: true })
     ]);
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
     if (vehicleError || fuelError || serviceError) {
-      showToast(vehicleError?.message || fuelError?.message || serviceError?.message || 'Garáž se nepovedlo načíst');
-      return;
+      if (showMessage) showToast(vehicleError?.message || fuelError?.message || serviceError?.message || 'Garáž se nepovedlo načíst');
+      return false;
     }
+    if (![vehicles, fuel, services].every(Array.isArray)) return false;
+    if (JSON.stringify([state.vehicles || [], state.fuel || [], state.services || []]) !== localBeforeRead) return false;
 
     const existingByCloud = new Map(state.vehicles.filter((vehicle) => vehicle.cloudId).map((vehicle) => [vehicle.cloudId, vehicle]));
     const cloudVehicles = (vehicles || []).map((vehicle) => {
@@ -17552,11 +17582,12 @@
 
     if (!garageVehicleId && state.vehicles.length) garageVehicleId = state.vehicles[0].id;
     normalizeGarageRuntimeState({ persist: false });
-    state.cloud.lastSyncAt = new Date().toISOString();
+    // Samotný modulový SELECT nepotvrzuje celkový cloud sync.
     touchState();
     saveState();
     render();
     if (showMessage) showToast('Cloud Garáž načtená');
+    return true;
   }
 
 
@@ -20360,14 +20391,16 @@
           if (!cloudSyncWorkspaceMatches(workspace)) return false;
           const result = await loader(false);
           if (!cloudSyncWorkspaceMatches(workspace)) return false;
-          if (result !== false) ok += 1;
+          // false/null reportuje explicitní neúspěch (legacy validní undefined
+          // zůstává tolerovaný, dokud každý modul nedostane strict return).
+          if (result !== false && result !== null) ok += 1;
         } catch (error) {
           if (!cloudSyncWorkspaceMatches(workspace)) return false;
           console.warn('Cloud load module failed', error);
         }
       }
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
-      if (ok === loaders.length && !cloudLocalPendingCount() && !cloudHasBlockingConflict()) {
+      if (ok === loaders.length && !cloudLocalPendingCount() && !cloudHasBlockingConflict() && !cloudOutboxHasPermanentFailure()) {
         state.cloud.lastSyncAt = new Date().toISOString();
       }
       touchState();
