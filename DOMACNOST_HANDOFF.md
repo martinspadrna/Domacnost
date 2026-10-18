@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_568** (PR #58, squash `bdd7d898d2dd05d27ade09608d1cba6162eb2390`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_569** (PR #59, squash `4372d3aa1495d654085e9c05c0d058d88a0c84c6`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -535,3 +535,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Úkoly/Zápisník: analogický tenant-bound SELECT, lokální edit během requestu má přednost; zachová se dosavadní merge pending úkolů i `tasksCloud.loadedAt` jen po potvrzeném úspěchu.
 - HDO a Odpad už při dílčím SELECT nepřepisují `cloud.lastSyncAt`, ten nyní zůstává na souhrnném orchestrátoru. Nový test `tools/check-cloud-homecare-read.mjs` spouští celé skutečné moduly v izolovaném JS VM se simulací network failure, A→B, user switch a místní editace. Připojen do `npm run check`.
 - Hranice: žádné DB změny ani migrace. P0 DB účetní CAS a serverové idempotentní INSERT, správná Supabase autorizace a skutečný PC↔mobil/offline/restart/konflikt test zůstávají otevřeny. Další etapa kalendář/smlouvy.
+
+
+### 18. 10. 2026 — v0.1_569 PRODUKCE, HDO/Odpad/Úkoly cloud čtení
+- PR #59 https://github.com/martinspadrna/Domacnost/pull/59 **MERGED**. Final PR head `2534f308ffd73c10bc0b96b1c286284e7983c689`, squash commit `4372d3aa1495d654085e9c05c0d058d88a0c84c6`.
+- Full checks + Chrome E2E **PASS** na PR `39148331797`; první `39148278549` selhal pouze chybou nového test harness (asynchronní `begin` omylem čekal na pending promise). Oprava testu bez změny implementační logiky, následný run PASS.
+- Main full CI + Chrome E2E **PASS** na squash SHA `39148409452`; Vercel production **READY** na `dpl_2JSaSEWNGrQK1tQ8MKmuve4SdEJm`, alias `domacnost-plus.vercel.app` aktivní, `aliasError=null`, správný git SHA.
+- HDO atomické dva SELECT a ochrana domácnosti/účtu/in-flight local edits; Odpad tenant-safe SELECT a explicit failure/true; Úkoly tenant-safe SELECT a zachování lokálního pending při síťovém čekání. HDO a Odpad už při samostatném načtení nemění `lastSyncAt`. Nový VM test `check-cloud-homecare-read.mjs` začleněn do `npm run check`.
+- **P0 otevřeno:** správný Supabase projekt, backend `finance_accounts` CAS a serverově idempotentní INSERT, fyzický PC↔mobil / offline / restart / konflikty. **P1/P2 rozpracováno**, další věcný blok především kalendář a smlouvy, nezavádět nepodložené přepisy funkčního UI.
