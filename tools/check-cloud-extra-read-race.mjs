@@ -120,12 +120,10 @@ for(const switchedUser of [false,true]) {
 {
   const e=deferredContext(),job=e.batch();
   e.queries[0].gate.resolve({data:null,error:{message:'down'}});
-  await Promise.resolve();
-  await Promise.resolve();
+  for(let i=0;i<20;i++) await Promise.resolve();
   assert.equal(e.queries.length,2);
   e.queries[1].gate.resolve({data:[],error:null});
-  await Promise.resolve();
-  await Promise.resolve();
+  for(let i=0;i<20;i++) await Promise.resolve();
   assert.equal(e.queries.length,3);
   e.queries[2].gate.resolve({data:[],error:null});
   assert.equal(await job,false);
