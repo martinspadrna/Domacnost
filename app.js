@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_562';
-  const APP_BUILD = 562;
+  const APP_VERSION = 'Domácnost+ v.0.1_563';
+  const APP_BUILD = 563;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -19522,16 +19522,20 @@
   }
 
   async function runCloudRealtimeRefresh(sources) {
+    const workspace = cloudSyncWorkspaceScope();
     const { keys, hasUnknown } = collectRealtimeLoaderKeys(sources);
     if (hasUnknown || !keys.length) {
       // Neznámý source nebo žádné mapování — bezpečný full reload,
       // aby data nezůstala zatuhlá pro tabulku, kterou zatím nemapujeme.
       await cloudLoadAllModules(false, { skipRealtimeSetup: true });
-      return;
+      return cloudSyncWorkspaceMatches(workspace);
     }
     for (const key of keys) {
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       await runRealtimeLoaderByKey(key);
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
     }
+    return true;
   }
 
   // Armuje (nebo znovu armuje) debounce timer pro realtime refresh. Sdílený
@@ -19559,6 +19563,7 @@
     }
     if (cloudRealtimePendingSources.size === 0) return;
     cloudRealtimeReloading = true;
+    const workspace = cloudSyncWorkspaceScope();
     const sources = new Set(cloudRealtimePendingSources);
     cloudRealtimePendingSources.clear();
     const sourcesLabel = describeRealtimeSources(sources);
@@ -19568,6 +19573,7 @@
       // po nastavení realtime statusu.
       await withDeferredRender(async () => {
         await withMutedToasts(() => runCloudRealtimeRefresh(sources));
+        if (!cloudSyncWorkspaceMatches(workspace)) return;
         state.cloud = {
           ...(state.cloud || {}),
           realtimeStatus: 'online',
@@ -19580,6 +19586,7 @@
       });
     } catch (error) {
       // Cílený refresh selhal — zkusíme full reload, aby data nezůstala zatuhlá.
+      if (!cloudSyncWorkspaceMatches(workspace)) return;
       console.warn('Targeted realtime refresh failed, falling back to full reload', error);
       try {
         // Fallback taky batchujeme — cloudLoadAllModules má vlastní
@@ -19587,6 +19594,7 @@
         // závěrečný state.cloud update projde stejným flushem.
         await withDeferredRender(async () => {
           await withMutedToasts(() => cloudLoadAllModules(false, { skipRealtimeSetup: true }));
+          if (!cloudSyncWorkspaceMatches(workspace)) return;
           state.cloud = {
             ...(state.cloud || {}),
             realtimeStatus: 'online',
@@ -19598,6 +19606,7 @@
           requestBackgroundRender();
         });
       } catch (fallbackError) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return;
         console.warn('Realtime cloud refresh failed', fallbackError);
         state.cloud = { ...(state.cloud || {}), realtimeStatus: 'channel_error' };
         saveState();
@@ -19605,7 +19614,7 @@
     } finally {
       cloudRealtimeReloading = false;
       // Přišly další zdroje během běhu? Naplánuj krátký retry, ať se neztratí.
-      if (cloudRealtimePendingSources.size > 0 && !cloudRealtimeReloadTimer && cloudReady()) {
+      if (cloudRealtimePendingSources.size > 0 && !cloudRealtimeReloadTimer && cloudSyncWorkspaceMatches(workspace)) {
         armCloudRealtimeReloadTimer(300);
       }
     }
@@ -19636,16 +19645,19 @@
       return false;
     }
     const householdId = state.cloud.householdId;
+    const userId = state.cloud.userId;
     if (!force && cloudRealtimeChannel && cloudRealtimeHouseholdId === householdId) return true;
     disposeCloudRealtime();
     cloudRealtimeHouseholdId = householdId;
     state.cloud = { ...(state.cloud || {}), realtimeStatus: 'connecting' };
     const channel = client.channel(`domacnost-plus-household-${householdId}`);
+    const channelIsCurrent = () => cloudRealtimeChannel === channel &&
+      state.cloud?.householdId === householdId && state.cloud?.userId === userId && cloudReady();
     REALTIME_CLOUD_TABLES.forEach((table) => {
       channel.on(
         'postgres_changes',
         { event: '*', schema: 'public', table, filter: `household_id=eq.${householdId}` },
-        (payload) => scheduleCloudRealtimeRefresh(payload?.table || table)
+        (payload) => { if (channelIsCurrent()) scheduleCloudRealtimeRefresh(payload?.table || table); }
       );
     });
     // Tabulka households má primární klíč 'id', ne 'household_id', takže ji
@@ -19656,10 +19668,11 @@
     channel.on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'households', filter: `id=eq.${householdId}` },
-      (payload) => scheduleCloudRealtimeRefresh(payload?.table || 'households')
+      (payload) => { if (channelIsCurrent()) scheduleCloudRealtimeRefresh(payload?.table || 'households'); }
     );
     cloudRealtimeChannel = channel;
     channel.subscribe((status) => {
+      if (!channelIsCurrent()) return;
       const key = String(status || '').toLowerCase();
       state.cloud = {
         ...(state.cloud || {}),
@@ -19779,23 +19792,31 @@
     if (!config || !cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
+    const workspace = cloudSyncWorkspaceScope();
+    // Zápis lokálních změn během SELECT má přednost před starou odpovědí.
+    const localBeforeRead = JSON.stringify(state[collection] || []);
     let query = client
       .from(config.table)
       .select(config.select)
-      .eq('household_id', state.cloud.householdId);
+      .eq('household_id', workspace.householdId);
     if (config.order) query = query.order(config.order.column, { ascending: config.order.ascending });
     const { data, error } = await query;
-    if (error) {
-      if (showMessage) showToast(error.message || 'Cloud data se nepovedlo načíst');
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (error || !Array.isArray(data)) {
+      if (showMessage) showToast(error?.message || 'Cloud data se nepovedlo načíst');
       return false;
     }
-    const cloudItems = (data || []).map((item) => config.map(item));
+    if (JSON.stringify(state[collection] || []) !== localBeforeRead) return false;
+    const cloudItems = data.map((item) => config.map(item));
     // Offline/čekající lokální edit nesmí přepsat čerstvé cloud načtení.
     // Potvrzené cloud řádky se obnoví, ale položky se syncStatus zůstávají
     // lokálně zdrojem pravdy do chvíle, než je autosync skutečně odešle.
+    if (!cloudSyncWorkspaceMatches(workspace) ||
+        JSON.stringify(state[collection] || []) !== localBeforeRead) return false;
     state[collection] = mergeCloudExtraCollectionPreservingPending(collection, cloudItems);
     state.householdExtrasCloud = { ...(state.householdExtrasCloud || {}), loadedAt: new Date().toISOString() };
-    state.cloud.lastSyncAt = new Date().toISOString();
+    // Dílčí SELECT neznamená dokončený zápis všech čekajících změn.
+    // lastSyncAt potvrzuje až kompletní synchronizační orchestrátor.
     touchState();
     saveState();
     if (showMessage) showToast('Cloud data načtená');
@@ -19804,20 +19825,27 @@
 
   async function cloudLoadExtraCollections(showMessage = false) {
     if (!cloudReady()) return false;
+    const workspace = cloudSyncWorkspaceScope();
+    const collections = Object.keys(CLOUD_EXTRA_COLLECTIONS);
     let count = 0;
-    for (const collection of Object.keys(CLOUD_EXTRA_COLLECTIONS)) {
+    for (const collection of collections) {
+      if (!cloudSyncWorkspaceMatches(workspace)) return false;
       try {
         const ok = await cloudLoadExtraCollection(collection, false);
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         if (ok) count += 1;
       } catch (error) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return false;
         console.warn('Cloud extra load failed', collection, error);
       }
     }
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
     touchState();
     saveState();
     render();
-    if (showMessage) showToast(`Cloud drobné moduly načtené: ${count}/${Object.keys(CLOUD_EXTRA_COLLECTIONS).length}`);
-    return true;
+    if (showMessage) showToast(`Cloud drobné moduly načtené: ${count}/${collections.length}`);
+    // Partial SELECT != full confirmed load; do not mark all modules as loaded.
+    return count === collections.length;
   }
 
   async function cloudSyncLocalExtraCollections(showMessage = true) {
