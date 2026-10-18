@@ -1858,20 +1858,27 @@ async function run() {
       expression: `window.__DOMACNOST_E2E_NAV__('settings', 'notifications')`,
       awaitPromise: true
     });
-    await new Promise((resolveWait) => setTimeout(resolveWait, 180));
+    await waitForExpression(page, `document.querySelectorAll('.panel-notifications [data-action="toggle-notification-type"]').length === 10`, 5000, 50);
+    const notificationBefore = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `document.querySelector('[data-action="toggle-notification-type"]')?.getAttribute('aria-checked') ?? null`
+    });
+    const notificationBeforeValue = notificationBefore.result?.value;
+    await page.send('Runtime.evaluate', {
+      expression: `document.querySelector('[data-action="toggle-notification-type"]')?.click()`
+    });
+    const notificationToggled = notificationBeforeValue == null ? null : await waitForExpression(
+      page,
+      `document.querySelector('.panel-notifications [data-action="toggle-notification-type"]')?.getAttribute('aria-checked') !== ${JSON.stringify(notificationBeforeValue)}`,
+      4000,
+      50
+    );
     const notificationSettingsCheck = await page.send('Runtime.evaluate', {
       returnByValue: true,
-      expression: `(() => {
-        const switches = document.querySelectorAll('[data-action="toggle-notification-type"]');
-        const first = switches[0];
-        const before = first?.getAttribute('aria-checked');
-        first?.click();
-        const after = document.querySelector('[data-action="toggle-notification-type"]')?.getAttribute('aria-checked');
-        return { panel: Boolean(document.querySelector('.panel-notifications')), count: switches.length, before, after };
-      })()`
+      expression: `({ panel: Boolean(document.querySelector('.panel-notifications')), count: document.querySelectorAll('.panel-notifications [data-action="toggle-notification-type"]').length })`
     });
     const notificationSettingsValue = notificationSettingsCheck.result?.value || {};
-    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 10 || notificationSettingsValue.before === notificationSettingsValue.after) fail('Upozornění nejdou nastavovat samostatně podle typu.');
+    if (!notificationSettingsValue.panel || notificationSettingsValue.count !== 10 || !notificationToggled) fail('Upozornění nejdou nastavovat samostatně podle typu.');
     else ok('Upozornění: deset typů lze samostatně zapnout nebo vypnout.');
 
     await page.send('Runtime.evaluate', {
