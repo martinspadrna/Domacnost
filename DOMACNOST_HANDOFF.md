@@ -3,7 +3,7 @@
 Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_566** (PR #56, squash `9605f07f5a8ebac1ba4f10b8b47b892cf13bc14d`, Vercel READY, plné CI a Chrome E2E PASS; nový kandidát v0.1_567 zatím na větvi). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_567** (PR #57, squash `d5f4515cec25c7ad03ec07bd33c69ec91b2af9a3`, Vercel READY, full checks + Chrome E2E PASS na posledním PR i na `main`).. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -500,3 +500,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Tři dílčí čtení přestala přepisovat globální `state.cloud.lastSyncAt`, který má znamenat potvrzenou souhrnnou synchronizaci. Ostatní legacy lokální moduly ještě čítač používají; jejich kompletní sjednocení je samostatný audit, nesmí se přepisovat bez důkazů a testů.
 - Nový vykonatelný `tools/check-cloud-bootstrap-races.mjs` v CI simuluje opožděný SELECT, A→B, user switch, lokální edit, změnu profilu, chybějící data a warm-start. Následně ověřit full CI i Chrome E2E, pak merge/main/produkční alias a final handoff.
 - **P0** DB CAS/idempotence stále otevřené, fyzický PC↔mobil/offline/restart až po širším balíku; neposílat migrační SQL do nepřipojeného Supabase projektu.
+
+
+### 18. 10. 2026 — v0.1_567 PRODUKCE, bootstrap čtení izolovaná podle domácnosti
+- PR #57 https://github.com/martinspadrna/Domacnost/pull/57 **MERGED** do main; squash commit `d5f4515cec25c7ad03ec07bd33c69ec91b2af9a3`. Kandidát `6dd29625050568a30ca02bdd1e90d51de61ea9ea`.
+- PR plné CI + reálný Chrome E2E **PASS**, run `39128314833`. Produkční main na squash SHA: full checks i Chrome E2E **PASS**, run `39128394164`.
+- Produkční Vercel **READY**, deployment `dpl_ENJF6qRWdQ8vUQuRrgxBnD86b3bs`, `meta.githubCommitSha` odpovídá squash SHA, alias `domacnost-plus.vercel.app` aktivní, `aliasError=null`.
+- P1/P2: SELECT domácností/layoutu/profilů neaplikuje stale výsledek po přepnutí účtu nebo domácnosti; místní editace profilu a změna aktivního profilu při HTTP čekání mají přednost. Cloud warm-start po asynchronních krocích ověřuje identity scope, po přepnutí se nepokračuje v profile/home refresh staré domácnosti. Dílčí SELECT u těchto tří cest už nepřepisuje globální `lastSyncAt`; ostatní historické zápisy do `lastSyncAt` dále auditovat selektivně.
+- `tools/check-cloud-bootstrap-races.mjs` simuluje opožděné odpovědi, local edit, špatný/missing remote řádek i switch při dependency await. Full CI Chrome E2E a PWA release marker konzistentně 567.
+- P0 zůstává otevřené: Supabase Domácnost+ backend schema, account CAS a serverově idempotentní INSERT plus skutečný test PC↔mobil/offline/online/restart/konflikty; žádné DB zásahy bez autorizace. P1/P2 nadále rozpracované. Následující krok: další cílený audit načítání jednotlivých modulů a agregovaného sync stavu, bez zbytečného zásahu do hotových částí.
