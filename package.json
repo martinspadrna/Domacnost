@@ -1,11 +1,11 @@
 {
   "name": "domacnost-plus",
-  "version": "0.1.562",
+  "version": "0.1.563",
   "private": true,
   "type": "module",
   "description": "Domácnost+ — instalovatelná PWA pro rodinnou domácnost. Frontend-only repo; ověřovací skripty jsou dependency-free.",
   "scripts": {
-    "check": "npm run check:cloud-workspace-scope && npm run check:cloud-outbox-race && npm run check:finance-pagination && npm run check:finance-cloud-link && npm run check:finance-read-race && npm run check:cloud-sync-status && npm run check:finance-restart && npm run check:finance-inflight && npm run check:finance-snapshot && npm run check:finance && npm run check:finance-trash && npm run check:syntax && npm run check:release && npm run check:static && npm run check:memo && npm run check:wiring && npm run check:style-layers && npm run check:forms",
+    "check": "npm run check:cloud-extra-read-race && npm run check:cloud-realtime-scope && npm run check:cloud-workspace-scope && npm run check:cloud-outbox-race && npm run check:finance-pagination && npm run check:finance-cloud-link && npm run check:finance-read-race && npm run check:cloud-sync-status && npm run check:finance-restart && npm run check:finance-inflight && npm run check:finance-snapshot && npm run check:finance && npm run check:finance-trash && npm run check:syntax && npm run check:release && npm run check:static && npm run check:memo && npm run check:wiring && npm run check:style-layers && npm run check:forms",
     "check:finance": "node tools/check-finance-account-insert.mjs",
     "check:finance-trash": "node tools/check-finance-trash.mjs",
     "check:finance-snapshot": "node tools/check-finance-snapshot.mjs",
@@ -17,6 +17,8 @@
     "check:finance-pagination": "node tools/check-finance-pagination.mjs",
     "check:cloud-outbox-race": "node tools/check-cloud-outbox-race.mjs",
     "check:cloud-workspace-scope": "node tools/check-cloud-workspace-scope.mjs",
+    "check:cloud-extra-read-race": "node tools/check-cloud-extra-read-race.mjs",
+    "check:cloud-realtime-scope": "node tools/check-cloud-realtime-scope.mjs",
     "check:syntax": "node tools/check-syntax.mjs",
     "check:release": "node tools/check-release.mjs",
     "check:static": "node tools/check-static-smoke.mjs",

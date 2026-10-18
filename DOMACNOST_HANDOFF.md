@@ -1,9 +1,9 @@
 # Domácnost+ — centrální handoff
 
-Aktualizováno: 16. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
+Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_562** (PR #52, merge `2c90e2c4432a40846886af38650001618eec1907`, Vercel READY, full CI + browser E2E PASS). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Poslední potvrzená produkční verze: v0.1_562** (PR #52, Vercel READY, full CI + Chrome E2E PASS). v0.1_563 je zatím kandidát — aktualizovat až po ověření nasazení. Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -419,3 +419,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Vercel produkce **READY**, deployment `dpl_2Wtma18H4cn3j8taToUWPT63zXgB`, `meta.githubCommitSha` odpovídá merge SHA, alias `domacnost-plus.vercel.app`, `aliasError=null`.
 - Ochrana scope manuálního i automatického cloudu a targeted/bulk/background loaderů při přepnutí domácnosti, bez DB změn, bez přepisů pending/konfliktů. Autotesty zahrnují odložené odpovědi všech šesti cyklů; fyzický test není hotov.
 - **P0 IN PROGRESS orientačně ~85 %.** Na uzavření chybí Supabase Domácnost+ DB CAS a idempotence INSERT (konektor ukazuje pouze jiné RaK projekty), plus souhrnný test PC↔mobil, offline/online, restart PWA, konflikty a Undo dle uživatelova přání až po širší etapě. Žádné spekulativní migrace nebo force.
+
+### 18. 10. 2026 — P0 cloud extra SELECT / realtime závod, kandidát v0.1_563
+- Výchozí produkční main `a44b57127059ceecf06b01b0a866ef52873291e0`, release 562. Bez nových oprávnění ke správnému Supabase projektu Domácnost+ (přístupné byly pouze RaK).
+- Konkrétní bug v `cloudLoadExtraCollection`: po `await` SELECT nebyla kontrola identity domácnosti ani stejného lokálního snapshotu. Staré A mohlo načíst B do `state.notes/coupons/warranties`; stará cloud data mohla také přepsat edit, která vznikla během HTTP čekání. Výsledek navíc vždy nastavoval `lastSyncAt`, přestože šlo jen o dílčí čtení.
+- Fix: scope `householdId` + `userId`, explicitní filter SELECT na počáteční domácnost, po odpovědi kontrola scope a lokálního snapshotu (bez aktuálnosti nepřebírat nic). Zachovat stávající merge lokálně pending; neúplný DB response je failure bez vyprázdnění kolekce. Dílčí SELECT neoznačuje kompletní sync za hotový. Batch `cloudLoadExtraCollections` ověřuje scope po každém loaderu, zastaví se bez změny B a vrací false při částečně neúspěšném načtení.
+- Realtime: callback `postgres_changes` a `subscribe` ověřuje identitu původního kanálu, domácnosti i uživatele; starý A kanál po přepnutí nesmí spustit B reload ani změnit B `realtimeStatus`. Běžící refresh chrání scope před následným potvrzením `online` a před fallbackem; refresh více zdrojů se po přepnutí zastaví.
+- Přidány dependency-free regresní testy `tools/check-cloud-extra-read-race.mjs` (časově opožděné SELECT, lokální edit, pending merge, B, partial batch) a `tools/check-cloud-realtime-scope.mjs` (staré eventy/subscription callbacky, opožděný refresh a error/fallback). Verze + PWA cache 563 všude sjednocené.
+- **Před merge:** vyžadovat full `npm run check` + Chrome `check:e2e` PASS na posledním PR SHA, následně main a produkce READY i správný alias, aktualizovat finální handoff.
+- **P0 stále IN PROGRESS cca 85 %.** Správný Supabase DB account CAS/idempotence INSERT, test reálného PC↔mobil offline/restart/konflikt a audit jednotlivých zbývajících loaderů nejsou tímto fixem vyřešené; nepoužívat force ani migrovat jiné Supabase projekty.
