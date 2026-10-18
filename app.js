@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_563';
-  const APP_BUILD = 563;
+  const APP_VERSION = 'Domácnost+ v.0.1_564';
+  const APP_BUILD = 564;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18351,7 +18351,7 @@
     saveState();
     render();
     showToast('Uloženo');
-    syncNewItemToCloud(cloudAddExtraItem(collection, record), record);
+    if (extraCloudConfig(collection)) syncNewItemToCloud(cloudAddExtraItem(collection, record), record);
   }
 
   async function updateCoupon(id, data) {
@@ -18368,6 +18368,8 @@
     saveState();
     render();
     showToast('Kód upraven');
+    coupon.syncStatus = cloudReady() ? 'pending' : coupon.syncStatus || (coupon.cloudId ? 'pending' : '');
+    saveState();
     syncUpdateToCloud(cloudUpdateExtraItem('coupons', coupon));
   }
 
@@ -19525,10 +19527,9 @@
     const workspace = cloudSyncWorkspaceScope();
     const { keys, hasUnknown } = collectRealtimeLoaderKeys(sources);
     if (hasUnknown || !keys.length) {
-      // Neznámý source nebo žádné mapování — bezpečný full reload,
-      // aby data nezůstala zatuhlá pro tabulku, kterou zatím nemapujeme.
-      await cloudLoadAllModules(false, { skipRealtimeSetup: true });
-      return cloudSyncWorkspaceMatches(workspace);
+      const loaded = await cloudLoadAllModules(false, { skipRealtimeSetup: true });
+      return cloudSyncWorkspaceMatches(workspace) &&
+        Boolean(loaded && loaded.loaded === loaded.total);
     }
     for (const key of keys) {
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
@@ -19572,8 +19573,9 @@
       // uvnitř runCloudRealtimeRefresh se sesbírají do jednoho flushe
       // po nastavení realtime statusu.
       await withDeferredRender(async () => {
-        await withMutedToasts(() => runCloudRealtimeRefresh(sources));
+        const refreshed = await withMutedToasts(() => runCloudRealtimeRefresh(sources));
         if (!cloudSyncWorkspaceMatches(workspace)) return;
+        if (refreshed === false) throw new Error('Realtime cloud refresh returned incomplete result');
         state.cloud = {
           ...(state.cloud || {}),
           realtimeStatus: 'online',
@@ -19593,8 +19595,9 @@
         // withDeferredRender, ale externí wrapper zajistí, že náš
         // závěrečný state.cloud update projde stejným flushem.
         await withDeferredRender(async () => {
-          await withMutedToasts(() => cloudLoadAllModules(false, { skipRealtimeSetup: true }));
+          const loaded = await withMutedToasts(() => cloudLoadAllModules(false, { skipRealtimeSetup: true }));
           if (!cloudSyncWorkspaceMatches(workspace)) return;
+          if (!loaded || loaded.loaded !== loaded.total) throw new Error('Realtime fallback cloud load incomplete');
           state.cloud = {
             ...(state.cloud || {}),
             realtimeStatus: 'online',
@@ -19699,69 +19702,131 @@
     return CLOUD_EXTRA_COLLECTIONS[collection] || null;
   }
 
+  // Jeden INSERT/UPDATE konkrétního záznamu musí proběhnout postupně.
+  // Další lokální editace čeká na následující sync, místo závodu HTTP požadavků.
+  const extraCloudWritesInFlight = new Map();
+
+  function extraCloudItemCurrent(collection, item, workspace) {
+    return cloudSyncWorkspaceMatches(workspace) &&
+      (state[collection] || []).includes(item);
+  }
+
+  function extraCloudItemSnapshot(collection, item, userId) {
+    const config = extraCloudConfig(collection);
+    if (!config || !item) return '';
+    const payload = config.payload(item, userId);
+    delete payload.created_by;
+    return JSON.stringify(payload);
+  }
+
   async function cloudAddExtraItem(collection, item) {
     const config = extraCloudConfig(collection);
-    if (!config || !cloudReady()) return null;
+    if (!config || !cloudReady() || !item?.id || item.cloudId) return null;
+    const workspace = cloudSyncWorkspaceScope();
+    const key = `${workspace.householdId}:${collection}:${item.id}`;
+    if (extraCloudWritesInFlight.has(key)) return extraCloudWritesInFlight.get(key);
     const client = getSupabaseClient();
     if (!client) return null;
-    const user = await refreshCloudSession(false);
-    if (!user || !state.cloud?.householdId) return null;
-    const payload = config.payload(item, user.id);
-    const { data, error } = await client
-      .from(config.table)
-      .insert(payload)
-      .select('id')
-      .single();
-    if (error) {
-      item.syncStatus = 'pending';
-      showToast(error.message || 'Záznam se nepovedlo uložit do cloudu');
-      return null;
+
+    const task = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || String(user.id) !== String(workspace.userId) ||
+          !extraCloudItemCurrent(collection, item, workspace) || item.cloudId) return null;
+      const payload = config.payload(item, user.id);
+      if (payload.household_id !== workspace.householdId) return null;
+      const sentSnapshot = extraCloudItemSnapshot(collection, item, user.id);
+      const { data, error } = await client.from(config.table).insert(payload).select('id').single();
+      if (!cloudSyncWorkspaceMatches(workspace)) return null;
+      if (error || !data?.id) {
+        if (extraCloudItemCurrent(collection, item, workspace)) {
+          item.syncStatus = 'pending';
+          persistStateSnapshot({ immediate: true });
+        }
+        if (error) showToast(error.message || 'Záznam se nepovedlo uložit do cloudu');
+        return null;
+      }
+      if (!extraCloudItemCurrent(collection, item, workspace)) {
+        // Po odstranění položky nemáme právo znovu ji vložit do UI;
+        // vzdálený orphan musí být řešen samostatně přes delete outbox.
+        return null;
+      }
+      item.cloudId = data.id;
+      const unchanged = extraCloudItemSnapshot(collection, item, user.id) === sentSnapshot;
+      item.syncStatus = unchanged ? '' : 'pending';
+      persistStateSnapshot({ immediate: true });
+      if (!unchanged) scheduleCloudAutosync('extra-changed-during-insert', { force: true, delayMs: 600 });
+      return unchanged ? data : null;
+    })();
+    extraCloudWritesInFlight.set(key, task);
+    try { return await task; } finally {
+      if (extraCloudWritesInFlight.get(key) === task) extraCloudWritesInFlight.delete(key);
     }
-    item.cloudId = data.id;
-    item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
-    return data;
   }
 
   async function cloudUpdateExtraItem(collection, item) {
     const config = extraCloudConfig(collection);
-    if (!config || !cloudReady() || !item?.cloudId) return true;
-    const client = getSupabaseClient();
-    if (!client) return true;
-    const user = await refreshCloudSession(false);
-    if (!user) return false;
-    const payload = config.payload(item, user.id);
-    delete payload.created_by;
-    const { error } = await client
-      .from(config.table)
-      .update(payload)
-      .eq('id', item.cloudId)
-      .eq('household_id', state.cloud.householdId);
-    if (error) {
+    if (!config || !item?.cloudId || !cloudReady()) return false;
+    const workspace = cloudSyncWorkspaceScope();
+    if (!extraCloudItemCurrent(collection, item, workspace)) return false;
+    const cloudId = item.cloudId;
+    const key = `${workspace.householdId}:${collection}:${item.id}`;
+    // Paralelní update stejného řádku není bezpečný bez serverové CAS revize.
+    if (extraCloudWritesInFlight.has(key)) {
       item.syncStatus = 'pending';
-      showToast(error.message || 'Záznam se nepovedlo upravit v cloudu');
+      persistStateSnapshot({ immediate: true });
       return false;
     }
-    item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
-    return true;
+    const client = getSupabaseClient();
+    if (!client) return false;
+
+    const task = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || String(user.id) !== String(workspace.userId) ||
+          !extraCloudItemCurrent(collection, item, workspace) || item.cloudId !== cloudId) return false;
+      const payload = config.payload(item, user.id);
+      if (payload.household_id !== workspace.householdId) return false;
+      delete payload.created_by;
+      const snapshot = JSON.stringify(payload);
+      const { data, error } = await client.from(config.table).update(payload)
+        .eq('id', cloudId).eq('household_id', workspace.householdId)
+        .select('id').maybeSingle();
+      if (!extraCloudItemCurrent(collection, item, workspace) || item.cloudId !== cloudId) return false;
+      if (error || String(data?.id || '') !== String(cloudId)) {
+        item.syncStatus = 'pending';
+        persistStateSnapshot({ immediate: true });
+        if (error) showToast(error.message || 'Záznam se nepovedlo upravit v cloudu');
+        return false;
+      }
+      const unchanged = extraCloudItemSnapshot(collection, item, user.id) === snapshot;
+      item.syncStatus = unchanged ? '' : 'pending';
+      persistStateSnapshot({ immediate: true });
+      if (!unchanged) scheduleCloudAutosync('extra-changed-during-update', { force: true, delayMs: 600 });
+      return unchanged;
+    })();
+    extraCloudWritesInFlight.set(key, task);
+    try { return await task; } finally {
+      if (extraCloudWritesInFlight.get(key) === task) extraCloudWritesInFlight.delete(key);
+    }
   }
 
   async function cloudDeleteExtraItem(collection, item) {
     const config = extraCloudConfig(collection);
-    if (!config || !item?.cloudId || !cloudReady()) return true;
+    if (!config || !item?.cloudId) return true;
+    if (!cloudReady()) return false;
+    const workspace = cloudSyncWorkspaceScope();
     const client = getSupabaseClient();
-    if (!client) return true;
-    const { error } = await client
-      .from(config.table)
-      .delete()
-      .eq('id', item.cloudId)
-      .eq('household_id', state.cloud.householdId);
+    if (!client) return false;
+    const { data, error } = await client.from(config.table).delete()
+      .eq('id', item.cloudId).eq('household_id', workspace.householdId)
+      .select('id').maybeSingle();
+    if (!cloudSyncWorkspaceMatches(workspace)) return false;
     if (error) {
       showToast(error.message || 'Záznam se nepovedlo smazat z cloudu');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
+    // Pokud už řádek neexistuje, opakované smazání může být bezpečně potvrzené
+    // pouze po samostatném SELECT; bez něj se na úspěch nespoléhat.
+    if (String(data?.id || '') !== String(item.cloudId)) return false;
     return true;
   }
 
@@ -19853,26 +19918,27 @@
       if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
       return 0;
     }
+    const workspace = cloudSyncWorkspaceScope();
     let synced = 0;
     for (const collection of Object.keys(CLOUD_EXTRA_COLLECTIONS)) {
-      // Cloudové řádky bez syncStatus už jsou potvrzené. Dříve se při každém
-      // autosyncu znovu přepisovaly všechny záruky a slevové kódy, i když se
-      // změnilo jen nastavení domácnosti.
+      if (!cloudSyncWorkspaceMatches(workspace)) return synced;
       const items = (state[collection] || []).filter(cloudExtraItemNeedsSync);
       for (const item of items) {
+        if (!cloudSyncWorkspaceMatches(workspace)) return synced;
+        if (!extraCloudItemCurrent(collection, item, workspace)) continue;
         try {
           if (item.cloudId) {
-            const ok = await cloudUpdateExtraItem(collection, item);
-            if (ok) synced += 1;
+            if (await cloudUpdateExtraItem(collection, item)) synced += 1;
           } else {
-            const saved = await cloudAddExtraItem(collection, item);
-            if (saved?.id) synced += 1;
+            if ((await cloudAddExtraItem(collection, item))?.id) synced += 1;
           }
         } catch (error) {
+          if (!cloudSyncWorkspaceMatches(workspace)) return synced;
           console.warn('Cloud extra sync failed', collection, error);
         }
       }
     }
+    if (!cloudSyncWorkspaceMatches(workspace)) return synced;
     touchState();
     saveState();
     if (showMessage) render();
@@ -20230,7 +20296,9 @@
       await Promise.all(['shopping', 'tasks', 'contracts', 'warranties', 'hdo', 'waste', 'finance', 'calendar'].map(ensureModuleCode));
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
       const loaders = [
-        cloudLoadUserVisualSettings,
+        // Vzhled je součást household dashboard_layout a načítá se dalším
+        // loaderem; cloudLoadUserVisualSettings je záměrný no-op (false), nikoli
+        // samostatný cloud zdroj. Jeho započtení navždy hlásilo partial load.
         // cloudLoadAllModules dělá závěrečný requestRender() ve svém konci,
         // takže intermediate render z household UI loaderu by byl duplicitní.
         () => cloudLoadHouseholdUiSettings(false, { renderAfter: false }),
@@ -21152,7 +21220,13 @@
     }
     if (action === 'cloud-sync-note') {
       const note = state.notes.find((item) => item.id === button.dataset.id);
-      if (note) cloudAddExtraItem('notes', note).then(() => { touchState(); saveState(); render(); showToast(note.cloudId ? 'Stránka odeslaná do cloudu' : 'Stránku se nepovedlo odeslat'); });
+      if (note) {
+        const task = note.cloudId ? cloudUpdateExtraItem('notes', note) : cloudAddExtraItem('notes', note);
+        Promise.resolve(task).then((result) => {
+          touchState(); saveState(); render();
+          showToast(result ? 'Stránka odeslaná do cloudu' : 'Stránka čeká na synchronizaci');
+        });
+      }
       return;
     }
     if (action === 'cloud-load-tasks') {
@@ -23767,15 +23841,21 @@
     touchState();
     saveState();
     render();
-    syncUpdateToCloud((async () => {
-      const ok = await cloudUpdateExtraItem(collection, item);
-      if (!ok) {
-        item[key] = !item[key];
-        touchState();
-        saveState();
-        requestRender();
-      }
-    })());
+    if (extraCloudConfig(collection)) {
+      // Nevracet lokální hodnotu zpět kvůli offline/RLS chybě; sync zůstane pending.
+      item.syncStatus = 'pending';
+      saveState();
+      syncUpdateToCloud((async () => {
+        const ok = item.cloudId
+          ? await cloudUpdateExtraItem(collection, item)
+          : Boolean((await cloudAddExtraItem(collection, item))?.id);
+        if (!ok && (state[collection] || []).includes(item)) {
+          item.syncStatus = 'pending';
+          saveState();
+          requestBackgroundRender();
+        }
+      })());
+    }
   }
 
   async function deleteVehicle(id) {
