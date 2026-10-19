@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_578** (PR #68, squash `181974b882960b3c84f280256f6d8df24853e898`, Vercel READY; full CI a Chrome E2E PASS na PR. Produkční `main` workflow `39284012475` bylo při zápisu stále ve frontě). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_579** (PR #69, squash `0a72d92bbd2e67cfcc0a43db0a87c0809d56fae9`, Vercel READY; full CI a Chrome E2E PASS na PR #69 a produkční v0.1_578; produkční `main` v0.1_579 CI workflow `39289030386` při tomto zápisu teprve probíhá). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -729,3 +729,21 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Verze 579 sjednocena v app/index/sw/module-loader/package/release.json, bez DB SQL/RLS/mazání dat.
 - Stále trvá plugin error `link_id must identify an eligible linked account` pro Supabase Domácnost+ projekt `hyyehcskthqmncqlechi`. Serverový CAS finance_accounts, 2-device idempotentní INSERT a reálné testy nesmějí být označeny hotové.
 - Původní `main` CI runy `39284012475` a `39284200765` stále `queued` při zahájení auditu; PR v579 musí projít full CI+Chrome E2E PŘED merge/produkčním release. Uživatelské přejímací testy lze mezitím bezpečně dělat na produkční v578, s uvedením skutečné verze.
+
+
+### 19.10.2026 — v0.1_579 produkce; potvrzení fyzických testů v0.1_578
+- **Uživatel skutečně otestoval na PC a iPhonu produkční v0.1_578 a oznámil všech šest výsledků A–F OK.** Zdroj: přímý výsledek fyzického testu v této konverzaci, nikoli předpoklad z CI.
+- **UZAVŘENO — uživatelské funkční ověření**:
+  - A spuštění/přihlášení a přístup k modulům na PC+iPhonu;
+  - B synchronizace Předplatné PC→iPhone včetně restartu;
+  - C Finance: účet a pohyb mezi PC/iPhonem a zpětná změna;
+  - D offline vytvoření záznamu → offline restart → online → PC, bez nahlášené duplicity;
+  - E detekce konfliktu téhož pohybu při offline/online editaci (uživatel hlásí OK, ale **výběr obou rozhodovacích variant ani výsledný stav vzdálené DB není testem potvrzen**);
+  - F synchronizace Nákupů PC↔iPhone (OK). F rovněž požadovalo zjistit **počty historicky čekajících změn Garáž a Nastavení**, tyto počty uživatel v odpovědi nedodal; **nelze je uzavřít jako srovnané jen kvůli F=OK**.
+- **Není třeba znovu testovat celé A–D, pokud po nasazení další verze nevznikne nová regrese.** Uživatel už prokázal použitelnou cross-device/offline funkčnost konkrétní produkční v0.1_578. Při v0.1_579 vhodný krátký smoke nové opravy Finance pending.
+- **OTEVŘENO pro P0**: volba `Použít cloud` a `Ponechat toto zařízení` pro skutečný konflikt — postupně na dvou **samostatných testovacích pohybech**, nikdy nekonfliktovat s reálnými finančními údaji. Po každé volbě ověřit správný stav na obou zařízeních a po restartu, bez duplicity a druhé ztracené změny. Pokud uživatel konflikt stále má, neřešit automaticky, nepoužívat force. Stačí stručné OK obou variant nebo anonymizovaný screenshot případné chyby.
+- **OTEVŘENO**: historické pending Garáž/Nastavení; žádat konkrétní počet + název sekce a případnou starou hodnotu „čeká“ na PC a iPhonu; nepokoušet se pending plošně vymazat.
+- **OTEVŘENO backend P0**: serverová idempotence Finance INSERT napříč zařízeními a CAS pro `finance_accounts` + RLS/DB schema. Přístup k cílovému Supabase `hyyehcskthqmncqlechi` byl v aktuální konverzaci opakovaně odmítnut (`link_id must identify an eligible linked account`); nelze bez read-only auditu uzavřít ani opravit produkční DB.
+- **RELEASE**: PR #69 https://github.com/martinspadrna/Domacnost/pull/69, PR head `917c68e3a984e9ed15ce9a87d88ec26ad6564e32`, full PR CI/Chrome E2E PASS workflow `39285791873`, squash MERGED `0a72d92bbd2e67cfcc0a43db0a87c0809d56fae9`, Vercel production READY deployment `dpl_AG5yD6zq6PG7tvmkzCGwEZ4j4sCx`, alias `domacnost-plus.vercel.app` active, aliasError=null. Main CI workflow `39289030386` při tomto zápisu ještě běží; aktualizovat stav po skutečném dokončení.
+- Implementace v579: druhý shodný caller single-flight UPDATE `finance_accounts` přebírá potvrzený ACK pouze pokud se nezměnil user/profile/household, lokální účet, payload ani `syncStatus=conflict`. Předchozí v578 false-pending regrese opravena; testy kryjí známé situace. Nový `DOMACNOST_P0_ACCEPTANCE.md` je v main.
+- **P0 jako celek NEUZAVŘENO.** Fyzická funkčnost a detekce konfliktu ověřeny uživatelem, ale bezpečné řešení konfliktu + historické pending + backendová ochrana a autorizovaný DB audit chybí. P1/P2/P3/P4 zůstávají nezávislé etapy.
