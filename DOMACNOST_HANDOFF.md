@@ -619,3 +619,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Browser offline recovery E2E jednou nastaví test data a počká na DOM při pomalejším renderu; nestabilní jednoúčelový assertion se stal determinističtějším. Na tomto release Chrome E2E na PR i `main` prošly napoprvé.
 - **P0 otevřené:** autorizace ke správnému Supabase Domácnost+, backend CAS `finance_accounts`/serverová idempotence INSERT a fyzické testy PC↔mobil/offline→online/restart/konflikty. Backend DB beze změn, neprováděno žádné mazání ani force overwrite.
 - Další etapa: audit zbývajících asynchronních cloud načítání proti přepínání účtu/profilu a konzistence přehledu pending; P3 vyhodnotit časově citlivé testy bez oslabování asercí.
+
+
+### 19. 10. 2026 — kandidát v0.1_574, P1/P2: profile-safe cloud read izolace
+- Navazuje na produkční v0.1_573 / HEAD `0e6bd841c148faddfcb59de3c63ac1b095239de3`; branch `fix/p1-p2-profile-read-isolation-574`.
+- Rozšířena scope ochrana šestice lazy modulů: `hdo.js`, `waste.js`, `notes.js` (Úkoly), `calendar.js` (události+zdroje), `contracts.js` (smlouvy+přílohy), `warranty.js` (přílohy záruk). Každý relevantní SELECT drží userId, cloud householdId, lokální householdId a activeProfileId. Pozdní odpověď po přepnutí profilu či lokální domácnosti už nesmí mutovat data ani hlásit úspěch.
+- Cloudové záznamy v HDO/Odpadu/Úkolech/Kalendáři/Smlouvách při úspěšném staged načtení používají zachycené profile/household ID, nikoli pozdější live reference.
+- Zachováno atomické čtení, pending/Koš, merge, CAS, PWA, UI, RLS, žádná DB migrace ani force overwrite.
+- Vykonatelné VM regresní testy `check-cloud-homecare-read`, `check-cloud-calendar-contracts-read` a `check-cloud-warranty-read` rozšířené o změnu activeProfileId a lokální domácnosti během odloženého SELECT. Verze sjednocena na v0.1_574 v app, cache, indexu, module-loaderu, package a release.json.
+- **Stav: kandidát, před CI/E2E, bez merge**. Po PASS dle pravidla sloučit, ověřit produkční Vercel SHA, alias, main CI a doplnit finální handoff.
+- P0 blokátory nezměněny: schéma správného Supabase projektu, serverový CAS `finance_accounts`, idempotentní INSERT, fyzický test PC↔mobil / offline↔online / restart a konflikty.

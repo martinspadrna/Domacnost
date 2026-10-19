@@ -217,6 +217,12 @@
       }
       const householdId = state.cloud.householdId;
       const userId = state.cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => state.cloud?.householdId === householdId &&
+        state.cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       if (user.id !== userId) return false;
       const before = JSON.stringify([state.contracts || [], state.contractFiles || [], getActiveContractId()]);
       const { data, error } = await client
@@ -225,14 +231,14 @@
         .eq('household_id', householdId)
         .order('valid_until', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
-      if (state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return false;
+      if (!sameReadScope()) return false;
       if (error || !Array.isArray(data)) {
         if (showMessage && error) showToast(error.message || 'Smlouvy se nepovedlo načíst');
         return false;
       }
       // Přílohy se musí také dočíst, než se změní seznam smluv.
       const files = await cloudLoadContractFiles(false, { stage: true });
-      if (!files || state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return false;
+      if (!files || !sameReadScope()) return false;
       if (JSON.stringify([state.contracts || [], state.contractFiles || [], getActiveContractId()]) !== before) return false;
 
       const cloudContracts = data.map((item) => {
@@ -240,8 +246,8 @@
         return {
           id: existing?.id || uid(),
           cloudId: item.id,
-          householdId: currentHouseholdId(),
-          profileId: currentProfileId(),
+          householdId: localHouseholdId || householdId,
+          profileId: profileId,
           createdAt: item.created_at || new Date().toISOString(),
           name: item.title || 'Smlouva',
           type: item.type || '',
@@ -514,6 +520,12 @@
       }
       const householdId = state.cloud.householdId;
       const userId = state.cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => state.cloud?.householdId === householdId &&
+        state.cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       if (user.id !== userId) return options.stage ? null : false;
       const before = JSON.stringify([state.contracts || [], state.contractFiles || []]);
       const { data, error } = await client
@@ -521,7 +533,7 @@
         .select('id,household_id,contract_id,storage_path,file_name,mime_type,file_size,source,created_at')
         .eq('household_id', householdId)
         .order('created_at', { ascending: false });
-      if (state.cloud?.householdId !== householdId || state.cloud?.userId !== userId) return options.stage ? null : false;
+      if (!sameReadScope()) return options.stage ? null : false;
       if (error || !Array.isArray(data)) {
         if (showMessage && error) showToast(error.message || 'Přílohy se nepovedlo načíst');
         return options.stage ? null : false;

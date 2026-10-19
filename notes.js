@@ -586,6 +586,14 @@
       if (!client || !getState().cloud?.householdId) return false;
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      // Odložený SELECT nesmí přepsat stav po změně aktivního profilu
+      // nebo lokální domácnosti, ani když cloud household_id zůstane stejné.
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       const before = JSON.stringify(getState().homeTasks || []);
       const { data, error } = await client
         .from('household_tasks')
@@ -594,7 +602,7 @@
         .order('status', { ascending: false })
         .order('due_date', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
-      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (!sameReadScope()) return false;
       if (error) {
         if (showMessage) showToast(error.message || 'Úkoly se nepovedlo načíst z cloudu');
         return false;
@@ -603,8 +611,8 @@
       if (JSON.stringify(getState().homeTasks || []) !== before) return false;
       const cloudItems = data.map((item) => ({
         id: getState().homeTasks.find((task) => task.cloudId === item.id)?.id || `task-cloud-${item.id}`,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: localHouseholdId || householdId,
+        profileId: profileId,
         cloudId: item.id,
         title: item.title,
         due: item.due_date || '',

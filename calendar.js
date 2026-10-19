@@ -800,13 +800,19 @@
       }
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       const before = JSON.stringify(getCalendarSources());
       const { data, error } = await client
         .from('calendar_sources')
         .select('id,household_id,profile_id,name,provider,provider_calendar_id,provider_connection_id,color,is_enabled,sync_enabled,last_synced_at,note,created_at')
         .eq('household_id', householdId)
         .order('created_at', { ascending: true });
-      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return options.stage ? null : getCalendarSources();
+      if (!sameReadScope()) return options.stage ? null : getCalendarSources();
       if (error || !Array.isArray(data)) {
         if (showMessage && error) showToast(error.message || 'Zdroje kalendáře se nepovedlo načíst');
         return options.stage ? null : getCalendarSources();
@@ -1180,20 +1186,26 @@
       }
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       const before = JSON.stringify([
         getState().calendar || [],
         getState().calendarCloud || {},
         getState().cloud?.recordConflicts || []
       ]);
       const sources = await cloudLoadCalendarSources(false, { stage: true });
-      if (!sources || getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (!sources || !sameReadScope()) return false;
       const { data, error } = await client
         .from('calendar_events')
         .select('id,source_id,title,description,location,starts_at,ends_at,all_day,event_type,provider_event_id,provider_status,created_at,updated_at')
         .eq('household_id', householdId)
         .neq('status', 'cancelled')
         .order('starts_at', { ascending: true });
-      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (!sameReadScope()) return false;
       if (error || !Array.isArray(data)) {
         if (showMessage && error) showToast(error.message || 'Kalendář se nepovedlo načíst');
         return false;
@@ -1217,8 +1229,8 @@
           cloudId: item.id,
           externalId: item.provider_event_id || '',
           sourceId: item.source_id || '',
-          householdId: currentHouseholdId(),
-          profileId: currentProfileId(),
+          householdId: localHouseholdId || householdId,
+          profileId: profileId,
           createdAt: item.created_at || new Date().toISOString(),
           updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
           cloudUpdatedAt: item.updated_at || '',
@@ -1260,7 +1272,7 @@
         ...(existing || {}),
         id: existing?.id || localRecord.id || `event-cloud-${remoteRow.id}`,
         cloudId: remoteRow.id, externalId: remoteRow.provider_event_id || '', sourceId: remoteRow.source_id || '',
-        householdId: currentHouseholdId(), profileId: currentProfileId(),
+        householdId: localHouseholdId || householdId, profileId: profileId,
         title: remoteRow.title || localRecord.title || 'Událost', date: start.date, time: remoteRow.all_day ? '' : start.time,
         endDate: end.date && end.date !== start.date ? end.date : '', endTime: remoteRow.all_day ? '' : end.time || '',
         type: normalizeCalendarType(remoteRow.event_type), location: remoteRow.location || '', note: remoteRow.description || '',

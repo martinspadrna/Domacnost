@@ -12,7 +12,7 @@ function setup(kind) {
   const code=readFileSync(join(root,kind+'.js'),'utf8'),ctx={window:{},console};
   vm.runInNewContext(code,ctx,{filename:kind+'.js'});
   const state={cloud:{userId:'U',householdId:'A',provider:'supabase',lastSyncAt:'old-confirmed',recordConflicts:[]},
-    household:{id:'A'},calendar:[],calendarCloud:{sources:[]},contracts:[],contractFiles:[]};
+    household:{id:'A'},activeProfileId:'P1',calendar:[],calendarCloud:{sources:[]},contracts:[],contractFiles:[]};
   const req=[],actions=[];let active='';
   const client={from(table){const deferred=gate(),where=[];
     req.push({table,deferred,where});
@@ -20,7 +20,7 @@ function setup(kind) {
       then:(yes,no)=>deferred.promise.then(yes,no)};return q;
   }};
   const deps={getState:()=>state,getSupabaseClient:()=>client,refreshCloudSession:async()=>({id:'U'}),
-    currentHouseholdId:()=>state.cloud.householdId,currentProfileId:()=>null,
+    currentHouseholdId:()=>state.household.id,currentProfileId:()=>state.activeProfileId,
     getActiveContractId:()=>active,setActiveContractId:v=>{active=v;actions.push('select');},
     getCalendarViewMonth:()=> '2026-10',uid:()=> 'generated-local',
     touchState:()=>actions.push('touch'),saveState:()=>actions.push('save'),
@@ -38,12 +38,14 @@ const remote={
 };
 for(const kind of ['calendar','contracts']){
   const name=kind==='calendar'?'cloudLoadCalendar':'cloudLoadContracts';
-  for(const scenario of ['error','missing','household','user','localEdit']){
+  for(const scenario of ['error','missing','household','user','profile','localHousehold','localEdit']){
     const e=setup(kind),job=e.mod[name](false);
     await count(e,1);e.respond(0,kind==='calendar'?remote.source:remote.contract);
     await count(e,2);
     if(scenario==='household')e.state.cloud.householdId='B';
     if(scenario==='user')e.state.cloud.userId='V';
+    if(scenario==='profile')e.state.activeProfileId='P2';
+    if(scenario==='localHousehold')e.state.household.id='B';
     if(scenario==='localEdit'){
       if(kind==='calendar')e.state.calendar.push({id:'mine',title:'Changed in flight'});
       else e.state.contracts.push({id:'mine',name:'Changed in flight'});
@@ -93,4 +95,4 @@ for(const kind of ['calendar','contracts']){
  await count(e,1);e.respond(0,[]);
  assert.equal(await job,true);assert.equal(e.state.cloud.lastSyncAt,'old-confirmed');
 }
-console.log('PASS P1/P2 calendar and contract attachments: atomic, delayed, tenant, local edit, mapping and sync status');
+console.log('PASS P1/P2 calendar and contract attachments: atomic, delayed, tenant/profile, local edit, mapping and sync status');

@@ -12,7 +12,7 @@ const flush=async()=>{for(let i=0;i<32;i++)await Promise.resolve();};
 function environment() {
   const state={
     cloud:{userId:'U',householdId:'A',provider:'supabase',lastSyncAt:'old-confirmed'},
-    household:{id:'A'},
+    household:{id:'A'},activeProfileId:'P1',
     warranties:[{id:'war-1',name:'TV',cloudId:'w1'}],
     warrantyFiles:[{id:'local-file',warrantyId:'war-1',fileName:'draft.pdf'}]
   };
@@ -28,7 +28,7 @@ function environment() {
   vm.runInNewContext(readFileSync(join(root,'warranty.js'),'utf8'),context,{filename:'warranty.js'});
   const deps={
     getState:()=>state,getSupabaseClient:()=>client,refreshCloudSession:async()=>({id:'U'}),
-    currentHouseholdId:()=>state.cloud.householdId,currentProfileId:()=>null,
+    currentHouseholdId:()=>state.household.id,currentProfileId:()=>state.activeProfileId,
     touchState:()=>operations.push('touch'),saveState:()=>operations.push('save'),
     render:()=>operations.push('render'),showToast:()=>operations.push('toast')
   };
@@ -38,13 +38,15 @@ function environment() {
 }
 const row={id:'file-1',household_id:'A',warranty_key:'war-1',storage_path:'A/warr/file.pdf',
   file_name:'receipt.pdf',mime_type:'application/pdf',file_size:100,source:'upload',created_at:'2026-10-18'};
-for(const scenario of ['household','user','warrantyEdit','fileEdit','null','network']){
+for(const scenario of ['household','user','profile','localHousehold','warrantyEdit','fileEdit','null','network']){
  const e=environment(),job=e.warranty.cloudLoadWarrantyFiles(false);
  await flush();assert.equal(e.requests.length,1);
  assert.equal(e.requests[0].table,'household_warranty_files');
  assert(e.requests[0].filters.some(([k,v])=>k==='household_id'&&v==='A'));
  if(scenario==='household')e.state.cloud.householdId='B';
  if(scenario==='user')e.state.cloud.userId='OtherUser';
+ if(scenario==='profile')e.state.activeProfileId='P2';
+ if(scenario==='localHousehold')e.state.household.id='B';
  if(scenario==='warrantyEdit')e.state.warranties[0].name='Edited in flight';
  if(scenario==='fileEdit')e.state.warrantyFiles.push({id:'new-local',fileName:'later.pdf'});
  const before=e.snapshot();
@@ -83,4 +85,4 @@ assert(full.includes('        cloudLoadContracts,'));
 assert(!full.includes('        cloudLoadCalendarSources,'));
 assert(!full.includes('        cloudLoadContractFiles,'));
 assert(full.includes('return { loaded: ok, total: loaders.length };'));
-console.log('PASS warranty file remote isolation, partial errors, local changes, composite cloud module dedupe');
+console.log('PASS warranty file remote isolation, profile switch, partial errors, local changes, composite cloud module dedupe');

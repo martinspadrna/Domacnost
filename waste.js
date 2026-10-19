@@ -180,13 +180,21 @@
       }
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      // Odložený SELECT nesmí přepsat stav po změně aktivního profilu
+      // nebo lokální domácnosti, ani když cloud household_id zůstane stejné.
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       const before = JSON.stringify(getState().waste || []);
       const { data, error } = await client
         .from('waste_schedules')
         .select('id,title,pickup_date,repeat_rule,notify_before_hours,is_enabled,note')
         .eq('household_id', householdId)
         .order('pickup_date', { ascending: true });
-      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (!sameReadScope()) return false;
       if (error) {
         if (showMessage) showToast(error.message || 'Svoz odpadu se nepovedlo načíst');
         return false;
@@ -197,8 +205,8 @@
       const cloudItems = normalizeWasteStorageItems(data.map((item) => ({
         id: getState().waste.find((entry) => entry.cloudId === item.id)?.id || `waste-cloud-${item.id}`,
         cloudId: item.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: localHouseholdId || householdId,
+        profileId: profileId,
         createdAt: new Date().toISOString(),
         type: item.title || 'Svoz odpadu',
         date: item.pickup_date || '',

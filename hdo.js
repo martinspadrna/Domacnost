@@ -409,8 +409,16 @@
       }
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      // Odložený SELECT nesmí přepsat stav po změně aktivního profilu
+      // nebo lokální domácnosti, ani když cloud household_id zůstane stejné.
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       const before = JSON.stringify([getState().hdoWindows || [], getState().hdoCloud || {}]);
-      const stillCurrent = () => getState().cloud?.householdId === householdId && getState().cloud?.userId === userId;
+      const stillCurrent = sameReadScope;
       const { data: settings, error: settingsError } = await client
         .from('hdo_settings')
         .select('id,title,note')
@@ -444,8 +452,8 @@
       const cloudItems = data.map((item) => ({
         id: `hdo-cloud-${item.id}`,
         cloudId: item.id,
-        householdId: getState().household.id,
-        profileId: currentProfileId(),
+        householdId: localHouseholdId || householdId,
+        profileId: profileId,
         label: item.label || 'HDO okno',
         start: String(item.start_time || '').slice(0, 5),
         end: String(item.end_time || '').slice(0, 5),

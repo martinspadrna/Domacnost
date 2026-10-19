@@ -590,6 +590,12 @@
       if (!user || !getState().cloud?.householdId) return false;
       const householdId = getState().cloud.householdId;
       const userId = getState().cloud.userId;
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => getState().cloud?.householdId === householdId &&
+        getState().cloud?.userId === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId;
       if (!userId || user.id !== userId) return false;
       // Starý SELECT nesmí přepsat nové přílohy nebo upravené záruky
       // (mapCloudWarrantyFile závisí na jejich aktuálních lokálních ID).
@@ -599,7 +605,7 @@
         .select('id,household_id,warranty_key,storage_path,file_name,mime_type,file_size,source,created_at')
         .eq('household_id', householdId)
         .order('created_at', { ascending: false });
-      if (getState().cloud?.householdId !== householdId || getState().cloud?.userId !== userId) return false;
+      if (!sameReadScope()) return false;
       if (error || !Array.isArray(data)) {
         if (showMessage && error) showToast(error.message || 'Přílohy záruk se nepovedlo načíst');
         return false;
