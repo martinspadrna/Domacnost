@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_574';
-  const APP_BUILD = 574;
+  const APP_VERSION = 'Domácnost+ v.0.1_575';
+  const APP_BUILD = 575;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -16694,6 +16694,11 @@
     const workspace = cloudSyncWorkspaceScope();
     if (!cloudSyncWorkspaceMatches(workspace) || workspace.userId !== user.id) return false;
     const householdId = workspace.householdId;
+    const readProfileId = currentProfileId();
+    const readLocalHouseholdId = currentHouseholdId(false);
+    const sameReadContext = () => cloudSyncWorkspaceMatches(workspace) &&
+      currentProfileId() === readProfileId &&
+      currentHouseholdId(false) === readLocalHouseholdId;
     // Odložený SELECT nesmí přepsat editaci vytvořenou během čekání.
     // Celý nákup obnovit atomicky až po úspěchu VŠECH pěti požadavků.
     const localBeforeRead = JSON.stringify([state.shoppingLists || [], state.shopping || [], state.shoppingCloud || {}]);
@@ -16705,7 +16710,7 @@
       client.from('shopping_lists').select('id,name,status,created_at,updated_at').eq('household_id', householdId).eq('status', 'active').order('created_at', { ascending: true })
     ]);
 
-    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (!sameReadContext()) return false;
     const firstError = unitsRes.error || categoriesRes.error || catalogRes.error || listsRes.error;
     if (firstError) {
       if (showMessage) showToast(firstError.message || 'Nákupy se nepovedlo načíst');
@@ -16721,7 +16726,7 @@
         .select('id,list_id,catalog_item_id,name,quantity,unit,note,is_done,position,done_at,created_at,updated_at')
         .eq('household_id', householdId).in('list_id', cloudListIds).order('position').order('created_at')
       : { data: [], error: null };
-    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (!sameReadContext()) return false;
     if (itemsRes.error) {
       if (showMessage) showToast(itemsRes.error.message || 'Položky nákupu se nepovedlo načíst');
       return false;
@@ -16736,8 +16741,8 @@
         id: existing?.id || `shopping-list-cloud-${list.id}`,
         cloudId: list.id,
         cloudListId: list.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: readLocalHouseholdId || householdId,
+        profileId: readProfileId,
         name: list.name || `Seznam ${index + 1}`,
         status: list.status || 'active',
         createdAt: list.created_at || new Date().toISOString(),
@@ -16787,8 +16792,8 @@
         id: state.shopping.find((local) => local.cloudId === item.id)?.id || uid(),
         cloudId: item.id,
         cloudListId: item.list_id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: readLocalHouseholdId || householdId,
+        profileId: readProfileId,
         createdAt: item.created_at || new Date().toISOString(),
         updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
         cloudUpdatedAt: item.updated_at || '',
@@ -17471,6 +17476,11 @@
     const user = await refreshCloudSession(false);
     if (!user) { if (showMessage) showToast('Nejdřív se přihlas'); return false; }
     const workspace = cloudSyncWorkspaceScope();
+    const readProfileId = currentProfileId();
+    const readLocalHouseholdId = currentHouseholdId(false);
+    const sameReadContext = () => cloudSyncWorkspaceMatches(workspace) &&
+      currentProfileId() === readProfileId &&
+      currentHouseholdId(false) === readLocalHouseholdId;
     if (!cloudSyncWorkspaceMatches(workspace) || workspace.userId !== user.id) return false;
     const localBeforeRead = JSON.stringify([state.vehicles || [], state.fuel || [], state.services || []]);
 
@@ -17479,7 +17489,7 @@
       client.from('fuel_logs').select('*').eq('household_id', workspace.householdId).order('date', { ascending: true }),
       client.from('service_logs').select('*').eq('household_id', workspace.householdId).order('date', { ascending: true })
     ]);
-    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (!sameReadContext()) return false;
     if (vehicleError || fuelError || serviceError) {
       if (showMessage) showToast(vehicleError?.message || fuelError?.message || serviceError?.message || 'Garáž se nepovedlo načíst');
       return false;
@@ -17493,8 +17503,8 @@
       const item = {
         id: existing.id || uid(),
         cloudId: vehicle.id,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: readLocalHouseholdId || workspace.householdId,
+        profileId: readProfileId,
         createdAt: vehicle.created_at || existing.createdAt || new Date().toISOString(),
         updatedAt: vehicle.updated_at || existing.updatedAt || vehicle.created_at || existing.createdAt || new Date().toISOString(),
         name: keepExistingGarageValue(vehicle.name, existing.name || 'Auto') || 'Auto',
@@ -17530,8 +17540,8 @@
     const cloudFuel = (fuel || []).map((item) => ({
       id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
-      householdId: currentHouseholdId(),
-      profileId: currentProfileId(),
+      householdId: readLocalHouseholdId || workspace.householdId,
+      profileId: readProfileId,
       createdAt: item.created_at || new Date().toISOString(),
       updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
       source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
@@ -17549,8 +17559,8 @@
     const cloudServices = (services || []).map((item) => ({
       id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
-      householdId: currentHouseholdId(),
-      profileId: currentProfileId(),
+      householdId: readLocalHouseholdId || workspace.householdId,
+      profileId: readProfileId,
       createdAt: item.created_at || new Date().toISOString(),
       updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
       source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
@@ -19885,6 +19895,11 @@
     const client = getSupabaseClient();
     if (!client) return false;
     const workspace = cloudSyncWorkspaceScope();
+    const readProfileId = currentProfileId();
+    const readLocalHouseholdId = currentHouseholdId(false);
+    const sameReadContext = () => cloudSyncWorkspaceMatches(workspace) &&
+      currentProfileId() === readProfileId &&
+      currentHouseholdId(false) === readLocalHouseholdId;
     // Zápis lokálních změn během SELECT má přednost před starou odpovědí.
     const localBeforeRead = JSON.stringify(state[collection] || []);
     let query = client
@@ -19893,7 +19908,7 @@
       .eq('household_id', workspace.householdId);
     if (config.order) query = query.order(config.order.column, { ascending: config.order.ascending });
     const { data, error } = await query;
-    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (!sameReadContext()) return false;
     if (error || !Array.isArray(data)) {
       if (showMessage) showToast(error?.message || 'Cloud data se nepovedlo načíst');
       return false;
@@ -19903,7 +19918,7 @@
     // Offline/čekající lokální edit nesmí přepsat čerstvé cloud načtení.
     // Potvrzené cloud řádky se obnoví, ale položky se syncStatus zůstávají
     // lokálně zdrojem pravdy do chvíle, než je autosync skutečně odešle.
-    if (!cloudSyncWorkspaceMatches(workspace) ||
+    if (!sameReadContext() ||
         JSON.stringify(state[collection] || []) !== localBeforeRead) return false;
     state[collection] = mergeCloudExtraCollectionPreservingPending(collection, cloudItems);
     state.householdExtrasCloud = { ...(state.householdExtrasCloud || {}), loadedAt: new Date().toISOString() };
@@ -19918,20 +19933,25 @@
   async function cloudLoadExtraCollections(showMessage = false) {
     if (!cloudReady()) return false;
     const workspace = cloudSyncWorkspaceScope();
+    const readProfileId = currentProfileId();
+    const readLocalHouseholdId = currentHouseholdId(false);
+    const sameReadContext = () => cloudSyncWorkspaceMatches(workspace) &&
+      currentProfileId() === readProfileId &&
+      currentHouseholdId(false) === readLocalHouseholdId;
     const collections = Object.keys(CLOUD_EXTRA_COLLECTIONS);
     let count = 0;
     for (const collection of collections) {
-      if (!cloudSyncWorkspaceMatches(workspace)) return false;
+      if (!sameReadContext()) return false;
       try {
         const ok = await cloudLoadExtraCollection(collection, false);
-        if (!cloudSyncWorkspaceMatches(workspace)) return false;
+        if (!sameReadContext()) return false;
         if (ok) count += 1;
       } catch (error) {
-        if (!cloudSyncWorkspaceMatches(workspace)) return false;
+        if (!sameReadContext()) return false;
         console.warn('Cloud extra load failed', collection, error);
       }
     }
-    if (!cloudSyncWorkspaceMatches(workspace)) return false;
+    if (!sameReadContext()) return false;
     touchState();
     saveState();
     render();

@@ -16,6 +16,7 @@ const pending = () => { let resolve; const promise=new Promise(r=>resolve=r); re
 const row = (id,text) => ({ id, text, status:'active', created_at:'2026-10-16T12:00:00.000Z' });
 const deferredContext=() => {
   const state={cloud:{provider:'supabase',householdId:'A',userId:'person1',lastSyncAt:'confirmed-original'},
+    household:{id:'A'},activeProfileId:'profile-A',
     notes:[{id:'local-1',cloudId:'id-1',text:'Old',syncStatus:''}],
     coupons:[],warranties:[],householdExtrasCloud:{loadedAt:''}};
   const queries=[],saves=[],toasts=[];
@@ -46,6 +47,7 @@ const deferredContext=() => {
     cloudReady:()=>matching(scope()),
     getSupabaseClient:()=>({from:queryFor}),
     cloudSyncWorkspaceScope:scope,cloudSyncWorkspaceMatches:matching,
+    currentProfileId:()=>state.activeProfileId,currentHouseholdId:()=>state.household.id,
     touchState:()=>{},saveState:()=>saves.push(state.cloud.householdId),render:()=>{},
     showToast:x=>toasts.push(x),
     mergeCloudExtraCollectionPreservingPending:null
@@ -99,6 +101,18 @@ for(const switchedUser of [false,true]) {
   assert.equal(e.saves.length,0);
   assert.equal(e.toasts.length,0);
 }
+// The same cloud household with a different active profile/local household is not a valid read context.
+for (const switched of ['profile','localHousehold']) {
+  const e=deferredContext(),job=e.loader('notes',true);
+  if(switched==='profile') e.state.activeProfileId='profile-B';
+  else e.state.household.id='B';
+  const original=JSON.stringify(e.state.notes);
+  e.queries[0].gate.resolve({data:[row('id-1','Wrong profile')],error:null});
+  assert.equal(await job,false,switched+' must not commit');
+  assert.equal(JSON.stringify(e.state.notes),original);
+  assert.equal(e.saves.length,0);
+  assert.equal(e.toasts.length,0);
+}
 // DB partial/invalid response must not silently wipe the collection.
 {
   const e=deferredContext(),job=e.loader('notes');
@@ -116,6 +130,16 @@ for(const switchedUser of [false,true]) {
   assert.equal(e.queries.length,1);
   assert.equal(e.saves.length,0);
 }
+// If the active profile changes during a batch, do not fetch subsequent collections.
+{
+  const e=deferredContext(),job=e.batch();
+  assert.equal(e.queries.length,1);
+  e.state.activeProfileId='profile-B';
+  e.queries[0].gate.resolve({data:[row('id-1','Wrong profile')],error:null});
+  assert.equal(await job,false);
+  assert.equal(e.queries.length,1);
+  assert.equal(e.saves.length,0);
+}
 // Batch partial fetch must truthfully report unsuccessful (vs the previous unconditional true).
 {
   const e=deferredContext(),job=e.batch();
@@ -129,4 +153,4 @@ for(const switchedUser of [false,true]) {
   assert.equal(await job,false);
 }
 
-console.log('PASS extras read: pending merge, stale in-flight edit, household switch, partial batch and truthful timestamp');
+console.log('PASS extras read: pending merge, stale in-flight edit, household/profile switch, partial batch and truthful timestamp');

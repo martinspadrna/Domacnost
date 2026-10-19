@@ -639,3 +639,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Regresní testy VM rozšířené o aktivní profil a lokální domácnost na opožděných odpovědích. Full CI + browser E2E prošly na větvi i po merge. Uživatel fyzický PC/mobil scénář tohoto releasu dosud nepotvrdil.
 - Další **P0**: ověřit autorizovaný Supabase Domácnost+ projekt a schema `finance_accounts` pro serverové CAS / idempotentní účetní INSERT. Pak reálný PC↔mobil, offline→online, restart, současné změny a skutečné konflikty; bez správného DB projektu nepoužívat cizí databázi.
 - Následující P1/P2: audit dalších nechráněných asynchronních loaderů, pending UX a možnost retry po změně profilu, P3 výkon/start a mobilní regrese.
+
+
+### 19.10.2026 — kandidát v0.1_575 (P1/P2) + Supabase DB P0 blokátor ověřen
+- Výchozí produkce v0.1_574; main `397f6064face94eac00f5f5dce802e6de21b2f3c`; pracovní branch `fix/p1-p2-shopping-garage-extras-profile-575`.
+- **Supabase autorizace ověřena**: frontend Domácnost+ používá samostatný Supabase projekt `hyyehcskthqmncqlechi`, ale připojení Supabase umožňuje jen RaK test (`cgshssdjgzzuprlwnabl`) a RaK hlavní (`bkqamcbkiwumsvelahxr`). **Neprovádět žádné migrace/SQL na RaK**; schema Finance Domácnost+ není možné read-only potvrdit. Backend CAS/idempotentní INSERT proto stále není hotový a nelze ho čestně deklarovat.
+- `app.js`: `cloudLoadShoppingData`, `cloudLoadGarageData`, `cloudLoadExtraCollection`, `cloudLoadExtraCollections` nyní drží aktivní profil a lokální household ID vedle už existujícího user/cloud household scope přes každou asynchronní fázi. Stará cloud odpověď se neaplikuje do nového profilu/domácnosti. Mapped Shopping/Garage záznamy nesou zachycená ID.
+- Regrese `tools/check-cloud-shopping-garage-read.mjs` a `tools/check-cloud-extra-read-race.mjs`: switch profilu a lokální domácnosti během SELECT, celá extra dávka se zastaví bez dalších query, žádný nepravdivý sync ACK. Dříve pokrytý user/cloud household switch, partial network failure, lokální pending a merge nedotčeny.
+- Release surface sjednocena v app, index, SW cache, loader, package, release.json na v0.1_575. Žádný zásah do Supabase DB, RLS, auth, outbox, PWA dat ani destruktivní operace.
+- **Kandidát, CI/E2E ještě neověřeny**; po PASS sloučit na main, Vercel READY/alias a main CI zkontrolovat. Přetrvává nutnost fyzického PC↔mobil/offline→online/restart/konflikt testu a backend Finance SQL/CAS v autorizovaném projektu.
+- Další P0 práce po připojení projektu: read-only inventura `finance_accounts`, `finance_transactions`, existujících revizí a unique/index constraints; až poté navrhnout a samostatně ověřit CAS/idempotentní INSERT bez přepsání novějších změn.
