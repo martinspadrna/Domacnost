@@ -78,7 +78,7 @@ const pendingFn=['async function cloudSyncLocalPendingData(', 'async function cl
    householdUiSnapshotMatchesRemote:()=>true,clearHouseholdUiPendingState:()=>{},
    settleRecoveredCloudSyncState:()=>true
  };
- const run=compile('function reconcileConfirmedHouseholdUiPending(', 'function markHouseholdUiConflict(',ctx);
+ const run=compile('function reconcileConfirmedHouseholdUiPending(', 'function shouldApplyRemoteHouseholdUi(',ctx);
  assert.equal(run({}),true);
  assert.equal(ctx.state.cloud.lastSyncAt,'older-confirmed','single household UI snapshot is not a full refresh');
 }
@@ -87,7 +87,7 @@ const all=fragment('async function cloudLoadAllModules(', 'function cloudSyncCom
 assert(bulk.includes('if (clean) state.cloud.lastSyncAt ='));
 assert(all.includes('if (ok === loaders.length && !cloudLocalPendingCount()'));
 const switchBody=fragment('async function cloudSwitchHousehold(', 'async function cloudLoadInvitations(');
-const acceptBody=fragment('async function cloudAcceptInvitation(', 'async function cloudCreateInvitation(');
+const acceptBody=fragment('async function cloudAcceptInvitation(', 'async function bootstrapCloudHousehold(');
 assert(!switchBody.includes('lastSyncAt = new Date().toISOString()'));
 assert(!acceptBody.includes('lastSyncAt = new Date().toISOString()'));
 const uiSave=fragment('async function performCloudSaveHouseholdUiSettings(', 'async function cloudSwitchHousehold(');
