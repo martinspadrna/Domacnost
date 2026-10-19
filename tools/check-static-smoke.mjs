@@ -139,7 +139,7 @@ if (manifestSource) {
     } else {
       let checkedIcons = 0;
       icons.forEach((icon, i) => {
-        const src = String(icon.src || '').replace(/^\.\//, '');
+        const src = stripQuery(String(icon.src || '')).replace(/^\.\//, '');
         if (!src) {
           errors.push(`manifest.webmanifest icons[${i}].src je prázdné.`);
           return;
