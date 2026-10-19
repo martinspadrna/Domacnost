@@ -15,6 +15,7 @@ const flush=async()=>{for(let i=0;i<32;i++)await Promise.resolve();};
 const create=()=>{
   const state={
     cloud:{userId:'U',householdId:'A',provider:'supabase',lastSyncAt:'old-confirmed'},
+    household:{id:'A'},activeProfileId:'profile-A',
     shoppingLists:[{id:'local-list',name:'Local'}],shopping:[{id:'local-item',name:'Bread',syncStatus:'pending'}],
     shoppingCloud:{units:[],categories:[],catalog:[],activeListId:'',loadedAt:'old'},
     activeShoppingListId:'local-list',vehicles:[{id:'local-car',name:'Local',syncStatus:'pending'}],
@@ -35,7 +36,7 @@ const create=()=>{
     state,console,getSupabaseClient:()=>client,refreshCloudSession:async()=>({id:'U'}),
     cloudSyncWorkspaceScope:()=>({householdId:state.cloud.householdId,userId:state.cloud.userId}),
     cloudSyncWorkspaceMatches:x=>x.householdId===state.cloud.householdId&&x.userId===state.cloud.userId,
-    currentHouseholdId:()=>state.cloud.householdId,currentProfileId:()=>null,
+    currentHouseholdId:()=>state.household.id,currentProfileId:()=>state.activeProfileId,
     normalizeKey:x=>String(x||'').toLowerCase(),normalizeShoppingListRecord:x=>x,
     normalizeShoppingLists:(lists)=>lists,markShoppingCatalogDirty:()=>actions.push('catalog'),
     mergeShoppingCloudItemsPreservingPending:cloud=>[...state.shopping.filter(x=>x.syncStatus==='pending'),...cloud],
@@ -69,11 +70,13 @@ const resolveGarage=async(e,sets=[[],[],[]])=>{
   e.queries.forEach((q,i)=>q.gate.resolve({data:sets[i],error:null}));
 };
 const snap=e=>JSON.stringify({shopping:e.state.shopping,shoppingLists:e.state.shoppingLists,shoppingCloud:e.state.shoppingCloud,vehicles:e.state.vehicles,fuel:e.state.fuel,services:e.state.services});
-for(const changed of ['household','user','localEdit']){
+for(const changed of ['household','user','profile','localHousehold','localEdit']){
   const e=create(),start=snap(e),job=fShopping(e)();
   await flush();
   if(changed==='household')e.state.cloud.householdId='B';
   else if(changed==='user')e.state.cloud.userId='V';
+  else if(changed==='profile')e.state.activeProfileId='profile-B';
+  else if(changed==='localHousehold')e.state.household.id='B';
   else e.state.shopping[0].name='My later edit';
   await resolveShoppingBasic(e,[]);
   assert.equal(await job,false,'shopping '+changed);
@@ -109,11 +112,13 @@ for(const changed of ['household','user','localEdit']){
  assert.equal(e.state.shopping[0].name,'Bread','pending item survives');
  assert.equal(e.state.cloud.lastSyncAt,'old-confirmed');
 }
-for(const changed of ['household','user','localEdit','partial']){
+for(const changed of ['household','user','profile','localHousehold','localEdit','partial']){
  const e=create(),job=fGarage(e)(false);
  await flush();
  if(changed==='household')e.state.cloud.householdId='B';
  else if(changed==='user')e.state.cloud.userId='V';
+ else if(changed==='profile')e.state.activeProfileId='profile-B';
+ else if(changed==='localHousehold')e.state.household.id='B';
  else if(changed==='localEdit')e.state.vehicles[0].name='My garage edit';
  const original=snap(e);
  await resolveGarage(e,changed==='partial'?[null,[],[]]:[[],[],[]]);
@@ -133,4 +138,4 @@ for(const changed of ['household','user','localEdit','partial']){
 const bulk=source.slice(source.indexOf('  async function cloudLoadAllModules('),source.indexOf('  function cloudSyncCompletionState('));
 assert(bulk.includes('result !== false && result !== null'),'explicit null cannot count as a loaded component');
 assert(bulk.includes('!cloudOutboxHasPermanentFailure()'),'permanent failure prevents successful sync timestamp');
-console.log('PASS P1/P2 shopping & garage: atomic read, tenant switch, local pending, partial and cloud timestamp');
+console.log('PASS shopping/garage: atomic read, tenant + profile + local household, pending, partial and truthful timestamp');
