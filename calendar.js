@@ -1092,7 +1092,7 @@
             .eq('id', source.cloudId)
             .eq('household_id', getState().cloud.householdId);
           if (error) { console.warn('Cloud sync (smazání zdroje kalendáře) na pozadí selhal', error.message); return; }
-          if (getState().cloud) { getState().cloud.lastSyncAt = new Date().toISOString(); saveState(); }
+          if (getState().cloud) saveState();
         }
       });
     }
@@ -1126,7 +1126,6 @@
       event.cloudId = data.id;
       event.cloudUpdatedAt = data.updated_at || '';
       event.sourceId = data.source_id || sourceId || '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
@@ -1170,7 +1169,6 @@
         }
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 

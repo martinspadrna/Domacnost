@@ -94,4 +94,10 @@ const uiSave=fragment('async function performCloudSaveHouseholdUiSettings(', 'as
 assert(!uiSave.includes('lastSyncAt: syncedAt'));
 assert(app.includes("Poslední úplná synchronizace:"));
 assert(app.includes("'zatím nepotvrzena'"));
+for(const moduleName of ['warranty.js','hdo.js','waste.js','notes.js','calendar.js','contracts.js']) {
+ const moduleSource=readFileSync(join(dirname(fileURLToPath(import.meta.url)),'..',moduleName),'utf8');
+ assert(!/(?:state|getState\(\))\.cloud\.lastSyncAt\s*=/.test(moduleSource),
+   moduleName+' individual cloud ACK must not attest full sync');
+}
+assert(!app.includes('lastSyncAt: syncedAt'),'household settings write is not global sync');
 console.log('PASS v572 global sync truth: pending-only vs aggregate, partial reads, workspace timestamps and UI reconciliation');

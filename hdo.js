@@ -346,7 +346,6 @@
       }
       item.cloudId = data.id;
       item.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
@@ -366,7 +365,6 @@
         return false;
       }
       item.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -378,7 +376,6 @@
         showToast(error.message || 'HDO okno se nepovedlo smazat z cloudu');
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 

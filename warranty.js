@@ -560,7 +560,6 @@
         showToast(error.message || 'Metadata přílohy záruky se nepovedlo uložit');
         return null;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return mapCloudWarrantyFile(data);
     }
 
@@ -710,7 +709,6 @@
         deleteStoredWarrantyFile(meta.id).catch(() => {});
         uploaded += 1;
       }
-      if (uploaded) getState().cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       if (showMessage) {
@@ -761,7 +759,6 @@
         const { error: dbError } = await client.from('household_warranty_files').delete().eq('id', meta.cloudId).eq('household_id', getState().cloud.householdId);
         if (dbError) { console.warn('Cloud sync (smazání přílohy záruky) na pozadí selhal', dbError.message); return; }
         if (meta.storagePath && !options.preserveStorage) await client.storage.from('warranty-files').remove([meta.storagePath]).catch?.(() => {});
-        getState().cloud.lastSyncAt = new Date().toISOString();
         saveState();
       } else if (!options.preserveStorage) {
         await deleteStoredWarrantyFile(meta.id).catch(() => {});
