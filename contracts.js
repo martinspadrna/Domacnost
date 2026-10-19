@@ -154,7 +154,6 @@
       }
       contract.cloudId = data.id;
       contract.syncStatus = '';
-      state.cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
@@ -179,7 +178,6 @@
         return false;
       }
       contract.syncStatus = '';
-      state.cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -330,7 +328,6 @@
         showToast(error.message || 'Cloud smlouvu se nepovedlo smazat');
         return false;
       }
-      state.cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -463,7 +460,6 @@
         showToast(error.message || 'Metadata přílohy se nepovedlo uložit');
         return null;
       }
-      state.cloud.lastSyncAt = new Date().toISOString();
       return mapCloudContractFile(data, contract.id);
     }
 
@@ -645,7 +641,6 @@
         deleteStoredContractFile(meta.id).catch(() => {});
         uploaded += 1;
       }
-      if (uploaded) state.cloud.lastSyncAt = new Date().toISOString();
       touchState();
       saveState();
       render();
@@ -723,7 +718,6 @@
         const { error: storageError } = await client.storage.from('contract-files').remove([meta.storagePath]);
         if (storageError) showToast('Metadata smazaná, soubor ve Storage může zůstat k dočištění');
       }
-      state.cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 

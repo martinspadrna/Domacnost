@@ -143,7 +143,6 @@
         showToast(error.message || 'Svoz se nepovedlo uložit do cloudu');
         return null;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
@@ -159,7 +158,6 @@
         showToast(error.message || 'Svoz se nepovedlo upravit v cloudu');
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -171,7 +169,6 @@
         showToast(error.message || 'Svoz se nepovedlo smazat z cloudu');
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 

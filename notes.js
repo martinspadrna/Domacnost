@@ -520,7 +520,6 @@
       }
       task.cloudId = data.id;
       task.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return data;
     }
 
@@ -546,7 +545,6 @@
         return false;
       }
       task.syncStatus = '';
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
@@ -558,7 +556,6 @@
         showToast(error.message || 'Úkol se nepovedlo smazat v cloudu');
         return false;
       }
-      getState().cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
 
