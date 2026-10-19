@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_579** (PR #69, squash `0a72d92bbd2e67cfcc0a43db0a87c0809d56fae9`, Vercel READY; full CI a Chrome E2E PASS na PR #69 a produkční v0.1_578; produkční `main` v0.1_579 CI workflow `39289030386` při tomto zápisu teprve probíhá). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_580** (PR #70, squash `e471ed1da4c5568c1f33ab3f215eee8625cbc139`, Vercel READY na domacnost-plus.vercel.app; full CI a skutečné Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -760,3 +760,14 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Nové regresní ověření `tools/check-pwa-icon-alpha.mjs` testuje přesnou shodu PNG z originálu, per-pixel alfa rohy, barevný obsah/motiv, ICO, Apple touch, manifest `any`, správné versionování favicon/linků i SW cache. `tools/check-static-smoke.mjs` nyní při kontrole manifestových ikon správně odstraní URL query parametry.
 - Zvýšena verze na 580 konzistentně v app/index/module-loader/sw/package/release. Žádné změny JS/CSS aplikačních funkcí, Supabase, financí, dat, layoutu ani UI. Pouze ikony a jejich zdroje, HTML metadata, service worker a ověřovací testy.
 - **Kandidát čeká na závěrečný full CI a skutečné Chrome E2E, merge a kontrolu produkční Vercel READY.** Následně dopsat skutečný release commit/deployment a výsledky. Původní main v579 zachován pro návrat.
+
+
+### 19.10.2026 — Domácnost+ v0.1_580 PRODUKCE: sjednocené transparentní systémové ikony
+- PR #70 https://github.com/martinspadrna/Domacnost/pull/70 **MERGED**, squash `e471ed1da4c5568c1f33ab3f215eee8625cbc139`.
+- Vercel production **READY** `dpl_GyciU93TsxPTJqDUiLqP5VVyG5Mt`, git SHA `e471ed1da4c5568c1f33ab3f215eee8625cbc139`, aktivní `domacnost-plus.vercel.app`, aliasError=null.
+- PR workflow `39292906710` complete/success při opakování po selhání infrastruktury Chrome `ECONNREFUSED 127.0.0.1:9341`; úspěšný finální běh měl **plné CI PASS + Chrome E2E PASS**. Produkční main workflow `39293262103` rovněž **plné CI PASS + Chrome E2E PASS**.
+- Originál barevného loga z v579 uložen nepoškozeně v `icons/source/domacnost-plus-original-512.png`; návrat možný přes `git revert` PR #70 / revert merge sha `e471ed1`. Z originálu deterministicky generováno 14 alpha souborů (9 PNG velikostí, 2 Apple touch, 2 historické kompatibilní cesty, Windows ICO).
+- Úplná alfa kontrola `check:pwa-icon-alpha` porovnává každou binární ikonu s reprodukovaným originálem a nulovou alfu v rozích. Manifest deklaruje jen `purpose: any` (192,384,512), žádné maskable; Android/iOS/Windows mohou systémově použít své pozadí, app mu ale žádný neprůhledný čtverec neposílá.
+- HTML favicon/touch/tile linky i manifest URL mají nový cache-busting build `v=0-1-580`; SW `CACHE_NAME=v0-1-580` a aktuální průhledné PNG/ICO v precache, bez deprecated maskable cesty.
+- Bez změn funkcí, modulu, UI, Supabase a uživatelských dat. Předchozí P0 status a původní historické pending nejsou těmito grafickými změnami dotčeny.
+- **Uživatelská instalace**: zástupce na iPhone často drží screenshot/ikonu mimo běžnou web cache; pro garantovanou výměnu doporučit odstranit z plochy a znovu přidat ze Safari. Windows a Android mohou aktualizovat ikonu samy, ale pokud drží starou, odebrat zástupce či přeinstalovat PWA a znovu přidat. *Neodstraňovat neodeslaná lokální data*, pozor při odinstalaci PWA: nejdřív zkontrolovat pending.
