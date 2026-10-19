@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_571';
-  const APP_BUILD = 571;
+  const APP_VERSION = 'Domácnost+ v.0.1_572';
+  const APP_BUILD = 572;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -6109,7 +6109,7 @@
 
     const activeWidgets = normalizeHomeWidgetIds(state.settings?.homeWidgets);
     const hasWidget = (id) => activeWidgets.includes(id);
-    const lastSync = state.cloud?.lastSyncAt ? formatDateTime(state.cloud.lastSyncAt) : formatDateTime(now);
+    const lastSync = state.cloud?.lastSyncAt ? formatDateTime(state.cloud.lastSyncAt) : 'zatím nepotvrzena';
 
     return `
       <div class="home-dash">
@@ -6137,7 +6137,7 @@
         ${hasWidget('subscriptions') ? renderHomeSubscriptionsWidget(ctx) : ''}
         ${hasWidget('polishHolidays') ? renderHomePolishHolidaysWidget(ctx) : ''}
         ${hasWidget('quick') ? renderHomeQuickWidget(ctx) : ''}
-        <div class="home-dash-sync"><span aria-hidden="true">⟳</span> Poslední aktualizace: ${escapeHtml(lastSync)}</div>
+        <div class="home-dash-sync"><span aria-hidden="true">⟳</span> Poslední úplná synchronizace: ${escapeHtml(lastSync)}</div>
       </div>
     `;
   }
@@ -16850,7 +16850,6 @@
       showToast(error.message || 'Seznam se nepovedlo vytvořit v cloudu');
       return null;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -16885,7 +16884,6 @@
       showToast(error.message || 'Cloud seznam se nepovedlo smazat');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -16902,7 +16900,6 @@
       showToast(error.message || 'Cloud seznam se nepovedlo přejmenovat');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -16921,7 +16918,6 @@
       showToast(error.message || 'Položku katalogu se nepovedlo smazat v cloudu');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -16975,7 +16971,6 @@
       showToast(error.message || 'Cloud položka se nepovedla uložit');
       return null;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -17036,7 +17031,6 @@
     item.cloudUpdatedAt = data.updated_at || nextRevision;
     item.updatedAt = item.cloudUpdatedAt;
     item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17068,7 +17062,6 @@
       }
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17243,7 +17236,6 @@
     }
     vehicle.cloudId = data.id;
     vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -17284,7 +17276,6 @@
     }
     if (decision === 'confirmed') {
       vehicle.syncStatus = '';
-      state.cloud.lastSyncAt = new Date().toISOString();
       return true;
     }
     if (decision !== 'update' || !stillCurrent()) return false;
@@ -17304,7 +17295,6 @@
     }
     if (garageVehicleCloudDifference(vehicle, data).type !== 'same') return false;
     vehicle.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17316,7 +17306,6 @@
       showToast(error.message || 'Auto se nepovedlo smazat v cloudu');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17355,7 +17344,6 @@
     }
     item.cloudId = data.id;
     item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -17391,7 +17379,6 @@
     }
     item.cloudId = data.id;
     item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -17427,7 +17414,6 @@
       return false;
     }
     item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17460,7 +17446,6 @@
       return false;
     }
     item.syncStatus = '';
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -17474,7 +17459,6 @@
       showToast(error.message || 'Záznam se nepovedlo smazat v cloudu');
       return false;
     }
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -18304,7 +18288,6 @@
     profile.cloudId = data.id;
     profile.householdId = state.cloud.householdId;
     state.cloud.profilesLoadedAt = new Date().toISOString();
-    state.cloud.lastSyncAt = new Date().toISOString();
     return data;
   }
 
@@ -18322,7 +18305,6 @@
       return false;
     }
     state.cloud.profilesLoadedAt = new Date().toISOString();
-    state.cloud.lastSyncAt = new Date().toISOString();
     return true;
   }
 
@@ -20023,7 +20005,7 @@
     return withDeferredRender(async () => {
       if (!cloudReady()) {
         if (showMessage) showToast('Nejdřív napoj domácnost na cloud');
-        return;
+        return false;
       }
       const workspace = cloudSyncWorkspaceScope();
       // I ruční synchronizace musí před prvním replay obnovit ztracený DELETE po pádu Undo.
@@ -20067,19 +20049,26 @@
         }
       });
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
-      if (showMessage) await withMutedToasts(() => cloudLoadAllModules(false));
+      // U interaktivní kontroly ověřit skutečně celý cloud. Samotný replay
+      // pending fronty nikdy nesmí posouvat čas posledního full syncu.
+      const loadResult = showMessage ? await withMutedToasts(() => cloudLoadAllModules(false)) : null;
       if (!cloudSyncWorkspaceMatches(workspace)) return false;
       setupCloudRealtimeSubscriptions(false);
       const remaining = cloudLocalPendingCount();
       const blocked = cloudHasBlockingConflict() || cloudOutboxHasPermanentFailure();
-      // Last successful sync must not change when requests are still waiting.
-      if (!remaining && !blocked) state.cloud.lastSyncAt = new Date().toISOString();
+      const verification = showMessage ? cloudSyncCompletionState(loadResult) : null;
+      const complete = Boolean(verification?.complete);
       touchState();
       saveState();
       requestBackgroundRender();
       if (showMessage) showToast(remaining || blocked
         ? `Kontrola cloudu dokončena, ještě čeká ${remaining} změn`
-        : 'Lokální záznamy jsou v cloudu');
+        : complete
+          ? 'Všechno je synchronizované'
+          : 'Lokální zápisy byly zkontrolované, ale některé cloudové moduly se nenačetly');
+      // false v autosync fázi znamená pouze chybějící full read; volající
+      // runUnifiedCloudSync provádí vlastní kompletní načtení a verifikaci.
+      return showMessage ? complete : !remaining && !blocked;
     });
   }
 
@@ -22528,7 +22517,6 @@
     clearHouseholdUiPendingState();
     state.cloud = {
       ...(state.cloud || {}),
-      lastSyncAt: confirmedAt,
       householdUiRevision: remoteRevision,
       householdUiConflict: null,
       lastAutosyncError: '',
@@ -22838,6 +22826,7 @@
     const currentCloudHouseholdValid = households.some((item) => item.id === state.cloud.householdId);
     if (state.cloud.householdId && !currentCloudHouseholdValid) {
       state.cloud.householdId = '';
+      state.cloud.lastSyncAt = '';
       state.cloud.householdUiRevision = '';
       state.cloud.householdUiConflict = null;
       state.cloud.recordConflicts = [];
@@ -23201,7 +23190,6 @@
     const sentSnapshotStillCurrent = householdUiSnapshotMatchesRemote(updatePayload);
     state.cloud = {
       ...(state.cloud || {}),
-      lastSyncAt: syncedAt,
       householdUiPendingAt: sentSnapshotStillCurrent ? '' : (state.cloud?.householdUiPendingAt || syncedAt),
       householdUiRevision: normalizeText(data?.updated_at || nextRevision),
       householdUiConflict: null,
@@ -23425,7 +23413,8 @@
     state.cloud.recordConflicts = [];
     restoreHouseholdWorkspace(householdId, name);
     state.household.name = name || state.household.name || 'Domácnost';
-    state.cloud.lastSyncAt = new Date().toISOString();
+    // restoreHouseholdWorkspace obnoví poslední potvrzený čas POUZE této domácnosti.
+    // Samotný switch není cloudová synchronizace.
     activeModule = 'home';
     touchState();
     saveState();
@@ -23577,7 +23566,7 @@
     state.cloud.householdUiConflict = null;
     state.cloud.recordConflicts = [];
     restoreHouseholdWorkspace(householdId, accepted?.householdName || 'Sdílená domácnost');
-    state.cloud.lastSyncAt = new Date().toISOString();
+    // Přijetí pozvánky není potvrzení úplného načtení sdílené domácnosti.
     await cloudLoadProfilesForCurrentHousehold();
     await cloudLoadAllModules(false);
     await cloudLoadInvitations(false);
@@ -23719,7 +23708,8 @@
       userId: user.id,
       email: user.email || '',
       householdId: cloudHouseholdId,
-      lastSyncAt: new Date().toISOString()
+      // Nově vytvořená domácnost ještě neprošla úplným čtením všech modulů.
+      lastSyncAt: ''
     };
     setupCloudRealtimeSubscriptions(true);
     saveState();
