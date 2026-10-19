@@ -659,3 +659,14 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Regresní testy `tools/check-cloud-shopping-garage-read.mjs` a `tools/check-cloud-extra-read-race.mjs` pokrývají nový profil a lokální domácnost bez SQL zásahů.
 - **Stále P0 otevřené:** target Supabase `hyyehcskthqmncqlechi` nepřístupný přes aktuální konektor (zobrazuje pouze RaK projekty), backend revizní CAS Finance a serverově idempotentní INSERT nelze bezpečně opravit ani fyzicky otestovat. Fyzický dvouzařízení PC↔mobil/offline/restart/konflikty stále nebyl proveden. Otestováno jen na CI/Chrome E2E a kontrolou release.
 - Další krok: připojit správný Supabase projekt Domácnost+ (bez sdílení tokenů v chatu), read-only inventura DB schématu a následně transakčně bezpečná revizní ochrana `finance_accounts` + idempotence.
+
+
+### 19.10.2026 — kandidát v0.1_576 (P0: Finance CAS bez nebezpečného přijetí remote revize)
+- Výchozí main `4d5dd39690439329b142d587a0ba958877022dbb`, produkce v0.1_575; pracovní branch `fix/p0-finance-revision-cas-576`.
+- `finance.js` `cloudUpdateFinance`: při chybějícím `cloudUpdatedAt` dosud SELECT načetl nejnovější `updated_at` a hned použil jako CAS `expectedRevision`. To může bez varování přepsat vzdálenou novější změnu, i když lokální zápis žádnou známou základní revizi nemá.
+- Opraveno: bez potvrzené lokální revize UPDATE vůbec neproběhne; remote SELECT slouží jen k nabídnutí záznamového konfliktu (pokud remote vrací `id` a `updated_at`). Uživatelsky zvolený remote `options.expectedRevision` z explicitního řešení konfliktu nadále umožní podmíněný UPDATE. Při chybě remote či chybějící revizi záznam zůstává pending; žádný force overwrite.
+- `cloudUpdateFinance` teď chrání síťovou odpověď i mezikrok dotazu na konflikt capturem cloud household, přihlášeného uživatele, aktivního profilu, lokální household a identity aktuálního pohybu + payload. Opožděný konflikt/ACK se po switchi jiného kontextu nesmí zapsat.
+- Nový vykonatelný regresní test `tools/check-finance-cas-safe.mjs`: absent base revision, explicit conflict resolution, CAS miss, oddálený remote SELECT, switch user/profile/household, lokální edit a opožděný ACK; součást `npm run check`.
+- Release marker sjednocený na 576 v app, HTML, SW cache, module-loader, package a release.json. Není žádná DB migrace, změna RLS, manipulace s daty ani force overwrite.
+- **P0 backend stále blokován**: Supabase app (ChatGPT) sice nainstalována, ale přístup `list_projects` vrací přesně `link_id must identify an eligible linked account` i po opakované uživatelské autorizaci. Nelze ověřit project `hyyehcskthqmncqlechi`, backend Finance CAS a idempotentní INSERT. Do RaK DB nezasahovat. Cross-device PC↔mobil/offline/restart/konflikty nejsou fyzicky ověřené.
+- **Stav kandidát před CI/E2E/merge/produkční Vercel;** po úspěšných kontrolách sloučit do main a doplnit důkazy.

@@ -1247,36 +1247,73 @@
       const householdId = getState().cloud?.householdId;
       const cloudId = item?.cloudId;
       if (!client || !cloudId || !householdId) return false;
+      const userId = String(getState().cloud?.userId || '');
+      const profileId = currentProfileId();
+      const localHouseholdId = currentHouseholdId(false);
+      const sameWriteScope = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === userId &&
+        currentProfileId() === profileId &&
+        currentHouseholdId(false) === localHouseholdId &&
+        item.cloudId === cloudId &&
+        (getState().finance || []).includes(item);
       const user = await refreshCloudSession(false);
-      if (!user) return false;
-      if (!(await ensureFinanceTransactionAccounts(item, householdId))) {
-        showToast('Úprava pohybu čeká na uložení souvisejících účtů');
+      if (!user || !sameWriteScope() || (userId && user.id !== userId)) return false;
+      if (!(await ensureFinanceTransactionAccounts(item, householdId)) || !sameWriteScope()) {
+        if (sameWriteScope()) showToast('Úprava pohybu čeká na uložení souvisejících účtů');
         return false;
       }
       const payload = cloudFinancePayload(item, user.id);
       if (!financeTransactionAccountsBound(item, payload) ||
-          getState().cloud?.householdId !== householdId || item.cloudId !== cloudId) return false;
+          payload.household_id !== householdId || !sameWriteScope()) return false;
       delete payload.created_by;
-      const current = options.expectedRevision ? null : (!item.cloudUpdatedAt ? await cloudFinanceRow(item.cloudId) : null);
-      const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || current?.updated_at || '';
-      // Bez známé revize nelze bezpečně použít CAS; žádný UPDATE naslepo.
-      if (!expectedRevision || getState().cloud?.householdId !== householdId || item.cloudId !== cloudId) return false;
       const sentPayloadSnapshot = JSON.stringify(payload);
+      const sameLocalRecord = () => {
+        if (!sameWriteScope()) return false;
+        const latest = cloudFinancePayload(item, user.id);
+        delete latest.created_by;
+        return JSON.stringify(latest) === sentPayloadSnapshot;
+      };
+      const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || '';
+
+      // Bez lokálně potvrzené revize NESMÍME převzít právě načtenou remote
+      // revizi jako základ CAS. Tím by stará lokální editace přepsala novější
+      // změnu z jiného zařízení. Nabídneme obě verze jako konflikt.
+      if (!expectedRevision) {
+        const remoteRow = await cloudFinanceRow(cloudId);
+        if (!sameLocalRecord()) return false;
+        if (remoteRow?.id && remoteRow.updated_at && options.skipConflict !== true) {
+          item.syncStatus = 'conflict';
+          registerCloudRecordConflict({
+            collection: 'finance', table: 'finance_transactions', cloudId, localId: item.id,
+            operation: 'update', label: item.title || 'Finanční pohyb', expectedRevision: '',
+            remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
+          });
+          return 'conflict';
+        }
+        return false;
+      }
+
+      if (!sameLocalRecord()) return false;
       const nextRevision = new Date().toISOString();
       payload.updated_at = nextRevision;
-      let query = client.from('finance_transactions').update(payload).eq('id', item.cloudId).eq('household_id', getState().cloud.householdId);
-      if (expectedRevision) query = query.eq('updated_at', expectedRevision);
-      const { data, error } = await query.select('id,updated_at').maybeSingle();
+      const { data, error } = await client.from('finance_transactions')
+        .update(payload)
+        .eq('id', cloudId)
+        .eq('household_id', householdId)
+        .eq('updated_at', expectedRevision)
+        .select('id,updated_at').maybeSingle();
+      if (!sameLocalRecord()) return false;
       if (error) {
         showToast(error.message || 'Finance se nepovedlo upravit v cloudu');
         return false;
       }
       if (!data) {
-        const remoteRow = await cloudFinanceRow(item.cloudId);
+        const remoteRow = await cloudFinanceRow(cloudId);
+        if (!sameLocalRecord()) return false;
         if (remoteRow && options.skipConflict !== true) {
           item.syncStatus = 'conflict';
           registerCloudRecordConflict({
-            collection: 'finance', table: 'finance_transactions', cloudId: item.cloudId, localId: item.id,
+            collection: 'finance', table: 'finance_transactions', cloudId, localId: item.id,
             operation: 'update', label: item.title || 'Finanční pohyb', expectedRevision,
             remoteRevision: remoteRow.updated_at, localRecord: item, remoteRow
           });
@@ -1284,15 +1321,7 @@
         }
         return false;
       }
-      if (!financeCloudUpdateAcknowledged(data, cloudId) ||
-          getState().cloud?.householdId !== householdId ||
-          item.cloudId !== cloudId ||
-          !(getState().finance || []).includes(item) ||
-          JSON.stringify((() => {
-            const currentPayload = cloudFinancePayload(item, user.id);
-            delete currentPayload.created_by;
-            return currentPayload;
-          })()) !== sentPayloadSnapshot) return false;
+      if (!financeCloudUpdateAcknowledged(data, cloudId)) return false;
       item.cloudUpdatedAt = data.updated_at || nextRevision;
       item.updatedAt = item.cloudUpdatedAt;
       item.syncStatus = '';
