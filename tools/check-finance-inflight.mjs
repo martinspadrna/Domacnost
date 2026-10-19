@@ -15,7 +15,7 @@ const cut=(src,start,end)=>{
 const delay=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
 const history=[],queued=[];
 const state={
-  cloud:{householdId:'home-1',lastSyncAt:''},
+  cloud:{householdId:'home-1',userId:'user',lastSyncAt:''},household:{id:'home-1'},activeProfileId:'p1',
   finance:[],financeAccounts:[],trash:[]
 };
 const activeUndoTrashIds=new Set(),pendingUndoTrashIds=new Set();
@@ -41,21 +41,21 @@ const client={from(table){
 }};
 const record=(id,title)=>({id,title,amount:123,type:'expense',syncStatus:'pending_add',householdId:'home-1'});
 const transaction=new Function('getSupabaseClient','getState','refreshCloudSession',
- 'ensureFinanceTransactionAccounts','cloudFinancePayload','financeTransactionAccountsBound',
+ 'currentProfileId','currentHouseholdId','ensureFinanceTransactionAccounts','cloudFinancePayload','financeTransactionAccountsBound',
  'showToast','linkFinanceLateInsertToTrash','markFinanceCloudPending','persistStateSnapshot',
  cut(finance,'    const financeTransactionInsertInFlight = new Map();','    async function cloudFinanceRow(')+
  '\nreturn {cloudAddFinance,financeTransactionInsertConfirmed};'
 )(
- ()=>client,()=>state,async()=>({id:'user'}),
+ ()=>client,()=>state,async()=>({id:'user'}),()=>state.activeProfileId,()=>state.household.id,
  async()=>true,(item,user)=>({household_id:state.cloud.householdId,title:item.title,amount:item.amount,created_by:user}),
  ()=>true,()=>{notif++;},link,reason=>history.push(reason),()=>{snapshots++;}
 );
 const account=new Function('getSupabaseClient','getState','refreshCloudSession',
- 'cloudFinanceAccountPayload','showToast','linkFinanceLateInsertToTrash','markFinanceCloudPending','persistStateSnapshot',
+ 'currentProfileId','currentHouseholdId','cloudFinanceAccountPayload','showToast','linkFinanceLateInsertToTrash','markFinanceCloudPending','persistStateSnapshot',
  cut(finance,'    const financeAccountInsertInFlight = new Map();','    function financeCloudUpdateAcknowledged(')+
  '\nreturn {cloudAddFinanceAccount,financeAccountInsertConfirmed};'
 )(
- ()=>client,()=>state,async()=>({id:'user'}),
+ ()=>client,()=>state,async()=>({id:'user'}),()=>state.activeProfileId,()=>state.household.id,
  (item,user)=>({household_id:state.cloud.householdId,name:item.name,created_by:user}),
  ()=>{notif++;},link,reason=>history.push(reason),()=>{snapshots++;}
 );
@@ -136,7 +136,30 @@ const account=new Function('getSupabaseClient','getState','refreshCloudSession',
  inserts.finance_transactions.shift().resolve({data:{id:'remote-e',updated_at:'rev-e'},error:null});
  assert.equal((await b)?.id,'remote-e');
 }
+
+// Do not attach delayed transaction/account INSERT receipts to another active
+// user or profile in the same cloud household.
+for(const kind of ['finance_transactions','finance_accounts']){
+ for(const changed of ['user','profile','localHousehold']){
+  state.cloud.userId='user';state.activeProfileId='p1';state.household.id='home-1';
+  const localId=kind+'-'+changed;
+  const entry=kind==='finance_transactions'?record(localId,'Pending'): {id:localId,name:'Cash',syncStatus:'pending_add',householdId:'home-1'};
+  if(kind==='finance_transactions')state.finance=[entry];
+  else state.financeAccounts=[entry];
+  const job=kind==='finance_transactions'?transaction.cloudAddFinance(entry):account.cloudAddFinanceAccount(entry);
+  await delay();
+  assert.equal(inserts[kind].length,1);
+  if(changed==='user')state.cloud.userId='other-user';
+  else if(changed==='profile')state.activeProfileId='p2';
+  else state.household.id='different-local-home';
+  inserts[kind].shift().resolve({data:{id:'remote-'+localId,updated_at:'rev'},error:null});
+  assert.equal(await job,null,kind+' '+changed);
+  assert.equal(entry.cloudId,undefined,kind+' '+changed+' must keep pending');
+  assert.equal(entry.syncStatus,'pending_add');
+ }
+}
+state.cloud.userId='user';state.activeProfileId='p1';state.household.id='home-1';
 // Never append a remote ACK to a different household's trash.
 assert.equal(link('finance','c','wrong-home',{id:'remote-x'}),false);
 assert(snapshots>=3);
-console.log('PASS finance concurrent insert, modified snapshot, late delete, Undo, archival and retry');
+console.log('PASS finance concurrent insert, user/profile scope, modified snapshot, late delete, Undo, archival and retry');
