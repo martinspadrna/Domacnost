@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_572** (PR #62, squash `d538de1325414332bf50f1f0ff90ae6d4032a51d`, Vercel READY; plné CI a Chrome E2E PASS na PR i produkčním `main` po opakování nestabilního E2E). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_573** (PR #63, squash `7ba18aaf7b5a28e3f6bd6f660ea1330ad49d8c52`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -608,3 +608,14 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Verze 573 v app, loaderu, HTML, SW cache, package a síťovém release markeru. Bez SQL, migrací, zásahů do RLS a bez mazání dat.
 - **Kandidát — CI/E2E, merge, produkční Vercel a fyzický test zatím nepotvrzeny.** Po testech doplnit výsledky; pokud PASS, podle release pravidla sloučit.
 - P0 stále blokuje skutečný Supabase Domácnost+ backend (účetní CAS/idempotence INSERT) a fyzický PC↔mobil/offline/restart/konflikt. Další P1/P2: cílený audit session guards dalších modulů, P3 stabilizace zbylých E2E.
+
+
+### 19. 10. 2026 — v0.1_573 PRODUKCE (P1/P3)
+- PR #63 https://github.com/martinspadrna/Domacnost/pull/63 **MERGED**, head `3f050fc87e19568bb1741477bd2f11d52d283a5d`, squash `7ba18aaf7b5a28e3f6bd6f660ea1330ad49d8c52`.
+- PR plné CI + skutečné Chrome E2E **PASS**: run `39221674637`. Produkční `main` plné CI + Chrome E2E **PASS**: run `39221796624`, oba kroky na přesných SHA.
+- Vercel production **READY**, deployment `dpl_FrkohsuPrG6EgvmWPqkgWV9nuGBn`, git SHA `7ba18aaf7b5a28e3f6bd6f660ea1330ad49d8c52`, aktivní alias `domacnost-plus.vercel.app` ověřen.
+- `finance.js`: read-only SELECT účetních účtů a pohybů drží user+profile+lokální a cloud domácnost scope přes síť i na commit hranici, tím je zabráněno přepsání dat starým SELECT po přihlášení jiného člena či profilu. Společný snapshot zachovává pending a Koš.
+- `tools/check-finance-read-race.mjs` nově opravdu simuluje user switch při stejném household a profile switch po SELECT; závod po první fázi se zastaví před druhým SELECT. Stávající testování lokální editace a pozdního Koše zachováno.
+- Browser offline recovery E2E jednou nastaví test data a počká na DOM při pomalejším renderu; nestabilní jednoúčelový assertion se stal determinističtějším. Na tomto release Chrome E2E na PR i `main` prošly napoprvé.
+- **P0 otevřené:** autorizace ke správnému Supabase Domácnost+, backend CAS `finance_accounts`/serverová idempotence INSERT a fyzické testy PC↔mobil/offline→online/restart/konflikty. Backend DB beze změn, neprováděno žádné mazání ani force overwrite.
+- Další etapa: audit zbývajících asynchronních cloud načítání proti přepínání účtu/profilu a konzistence přehledu pending; P3 vyhodnotit časově citlivé testy bez oslabování asercí.
