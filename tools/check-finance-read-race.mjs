@@ -13,7 +13,7 @@ function between(src, start, end) {
   assert(a >= 0 && b > a, 'Missing source section '+start);
   return src.slice(a,b);
 }
-let state, renders, saves, requests, showToasts;
+let state, renders, saves, requests, showToasts, activeProfile = 'p';
 const household='h1';
 const createClient=()=>{
   requests=[];
@@ -39,7 +39,7 @@ const load=factory(()=>client,()=>state,m=>showToasts.push(m),
   collection=>new Set((state.trash||[]).flatMap(entry=>(entry.records||[])
     .filter(x=>x.collection===collection && x.record.cloudId)
     .map(x=>String(x.record.cloudId)))),
-  ()=>household,()=> 'p',()=> '2026-10-16',()=>false,
+  ()=>household,()=> activeProfile,()=> '2026-10-16',()=>false,
   ()=>{},()=>{saves++;},()=>{renders++;});
 
 const accountRow={
@@ -56,9 +56,10 @@ const txRow={
 const tick=async()=>{for(let i=0;i<8;i++) await Promise.resolve();};
 const reset=()=>{
   state={
-    cloud:{householdId:household},
+    cloud:{householdId:household,userId:'user-1'},
     financeAccounts:[],finance:[],financeCloud:{},trash:[]
   };
+  activeProfile='p';
   client=createClient();renders=0;saves=0;showToasts=[];
 };
 reset();
@@ -91,6 +92,43 @@ assert.equal(state.finance[0].cloudId,'tx-cloud');
 assert.equal(state.finance[0].accountId,state.financeAccounts[0].id);
 assert.equal(renders,1);
 
+// User switch within the same household: old read may not populate a new session.
+reset();
+promise=load(false);
+requests.shift().resolve({data:[accountRow],error:null,count:1});
+await tick();
+assert.equal(requests.length,1);
+state.cloud.userId='user-2';
+requests.shift().resolve({data:[txRow],error:null,count:1});
+assert.equal(await promise,false);
+assert.equal(state.financeAccounts.length,0);
+assert.equal(state.finance.length,0);
+assert.equal(renders,0);
+assert.equal(saves,0);
+
+// A profile switch with the same user + household must also keep the current view.
+reset();
+promise=load(false);
+requests.shift().resolve({data:[accountRow],error:null,count:1});
+await tick();
+assert.equal(requests.length,1);
+activeProfile='different-profile';
+requests.shift().resolve({data:[txRow],error:null,count:1});
+assert.equal(await promise,false);
+assert.equal(state.financeAccounts.length,0);
+assert.equal(state.finance.length,0);
+assert.equal(renders,0);
+assert.equal(saves,0);
+
+// Scope switches after the FIRST SELECT also prevent unnecessary second-phase queries.
+reset();
+promise=load(false);
+state.cloud.userId='user-2';
+requests.shift().resolve({data:[accountRow],error:null,count:1});
+assert.equal(await promise,false);
+assert.equal(requests.length,0);
+assert.equal(saves,0);
+
 // Trash may change AFTER the first SELECT and before the transactions SELECT.
 // Recheck tombstones immediately before committing staged remote data.
 reset();
@@ -118,4 +156,4 @@ assert(pendingSync.includes('recoverFinanceTrashCloudDeletes();'));
 assert(pendingSync.indexOf('recoverFinanceTrashCloudDeletes();') <
   pendingSync.indexOf('{ run: replayCloudOutbox }'),
   'manual sync must recover missing deletes before replay');
-console.log('PASS finance delayed remote SELECT, late trash, manual recovery and pending visibility');
+console.log('PASS finance delayed remote SELECT, account/profile switches, late trash, manual recovery and pending visibility');
