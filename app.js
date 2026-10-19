@@ -19094,7 +19094,7 @@
           reconcileConfirmedSubscriptionPending(saved);
         }
         if (allMatched) state.cloud.householdUiRevision = householdUiRemoteRevision(saved);
-        state.cloud.lastSyncAt = new Date().toISOString();
+        // Jediná potvrzená platba neznamená, že jsou synchronizované ostatní moduly.
         subscriptionCloudRecoveryAvailable = false;
         subscriptionCloudDiagnosticHouseholdId = householdId;
         subscriptionCloudDiagnosticReport = state.subscriptionsCloud?.pendingAt
