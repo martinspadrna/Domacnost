@@ -1,9 +1,9 @@
 # Domácnost+ — centrální handoff
 
-Aktualizováno: 18. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
+Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_571** (PR #61, squash `c4bf563c6cbc3dafdc444c80b274be25e0f6767e`, Vercel READY, full checks + Chrome E2E PASS na finálním PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_572** (PR #62, squash `d538de1325414332bf50f1f0ff90ae6d4032a51d`, Vercel READY; plné CI a Chrome E2E PASS na PR i produkčním `main` po opakování nestabilního E2E). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -587,3 +587,14 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `cloudSyncLocalPendingData`: pending-only režim čas nezmění; ruční režim navíc skutečně prověří výsledek kompletního `cloudLoadAllModules` pomocí `cloudSyncCompletionState` a při partial failure už nehlásí všechno synchronizováno. Poslední kompletní čas zůstává výhradně na aggregate verifikačních loaderech (`cloudLoadAllModules`, `cloudBackgroundLoadAllModules`, `runUnifiedCloudSync`).
 - Home odstraněn vymyšlený fallback na aktuální čas: místo toho při absenci full-sync uvede `zatím nepotvrzena` a přesný label `Poslední úplná synchronizace`.
 - Přidané vykonatelné regresní testy `tools/check-cloud-last-sync-truth.mjs`, zaintegrovány do `npm run check`. Bez DB migrací, změn RLS či mazání pending; fyzické PC↔mobil offline/restart/konflikt testy P0 a přístup ke správnému Supabase projektu stále čekají. Po ověření full CI + Chrome E2E sloučit a Vercel ověřit.
+
+
+### 19. 10. 2026 — v0.1_572 PRODUKCE, pravdivá kompletní synchronizace
+- PR #62 https://github.com/martinspadrna/Domacnost/pull/62 **MERGED**; final head `4b9c9e49227f071879239e4f29b58e199a6f67f5`, squash `d538de1325414332bf50f1f0ff90ae6d4032a51d`.
+- Úplné CI + reálný Chrome E2E **PASS** na PR `39216103223`; meziverze testu opravily stávající textový assertion `check-cloud-sync-status.mjs` a omezení mockovaného `reconcileConfirmedHouseholdUiPending` na jednu funkci (bez zásahu do prod logiky). Produkční main CI run `39216240248`: první attempt se jedinou nestabilní kontrolou E2E „Dlouho čekající offline změna“ nedokončil; opakované spuštění všech failed jobs s identickým commitem **PASS** full checks + Chrome E2E. Doporučeno stabilizovat tento časově citlivý browser assertion při příští práci na P3 test stability (PR E2E pass bez opakování).
+- Vercel prod deployment `dpl_H7ioKb797M5Ub27e8YGc1PjpYZT1` **READY**, správný squash SHA `d538de...`, aktivní `domacnost-plus.vercel.app` a `aliasError=null`.
+- `app.js`: odstraněny zavádějící globální `cloud.lastSyncAt` zápisy při dílčích CRUD akcích Nákupu/Garáže/profilů, recovery jedné platby, household UI CAS zápisu/reconciliation, přepínání domácností a přijetí pozvánky; bootstrap nové domácnosti začíná bez potvrzeného času. Zachovány `loadedAt` daných sekcí, `pending`, CAS a všechny write ACK.
+- `warranty.js`, `hdo.js`, `waste.js`, `notes.js`, `calendar.js`, `contracts.js`: odstraněny zbývající single-record CRUD změny globálního času. Nyní ho smí měnit pouze ověřený `cloudLoadAllModules`, `cloudBackgroundLoadAllModules` a kompletní `runUnifiedCloudSync`; status čte i trvale selhaný outbox.
+- `cloudSyncLocalPendingData`: interaktivní režim po pending replay kontroluje `cloudSyncCompletionState(loadResult)`, při partial network fail nehlásí „Všechno synchronizováno“; tichý autosync replay už sám žádný čas kompletního syncu nenastavuje. Home nyní místo aktuálního času bez ověření píše `Poslední úplná synchronizace: zatím nepotvrzena`.
+- Testy: `tools/check-cloud-last-sync-truth.mjs` vykonává režimy pending-only vs full, chybu dílčího SELECT, switch A→B a household UI reconciliation, audit modulových ACK; upraven starší `tools/check-cloud-sync-status.mjs`. Vše integrované do `npm run check`.
+- **P0 nadále otevřeno:** správný autorizovaný Supabase projekt Domácnost+, backend CAS `finance_accounts` a serverová idempotence INSERT, skutečné PC↔mobil/offline/restart/konflikt. P1/P2 rozpracované. P3 k prověření flaky E2E offline panelu; bez DB migrací nebo smazání uživatelských dat.
