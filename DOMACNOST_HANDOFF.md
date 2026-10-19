@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_577** (PR #67, squash `b9c9b6c722943ea8809fa45194f3074874a04833`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_578** (PR #68, squash `181974b882960b3c84f280256f6d8df24853e898`, Vercel READY; full CI a Chrome E2E PASS na PR. Produkční `main` workflow `39284012475` bylo při zápisu stále ve frontě). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -708,3 +708,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `tools/check-finance-account-update-scope.mjs` má nové reálné single-flight testy; `tools/check-finance-sync-batch-scope.mjs` otestuje přepnutí user/profile/household, batch abort, nezměněné happy-path obou kolekcí i orchestrace. Zapojeno do `npm run check:finance`.
 - Verze na 578 sjednocena v app/index/sw/module-loader/package/release.json. Žádná SQL/RLS migrace, mazání, force overwrite; stávající PWA a local-first/UI zůstávají.
 - **Kandidát, před CI/E2E, merge a produkcí**. P0 backend Finance CAS `finance_accounts`, idempotence 2 zařízení a reálné PC↔mobil offline/restart/konflikty nadále otevřené, bez cílového Supabase přístupu.
+
+
+### 19.10.2026 — v0.1_578 nasazena do produkce (P0 Finance)
+- Uživatelské výslovné schválení: „rovnou to nasad“; vychází z produkční v0.1_577, bez safepointu.
+- PR #68 https://github.com/martinspadrna/Domacnost/pull/68 **MERGED**, PR HEAD `8725bae932cea18b64edd795ad1be2cccc2591ea`, squash `181974b882960b3c84f280256f6d8df24853e898`. PR workflow `39280760441` **completed/success**: plné kontroly **PASS**, Chrome E2E **PASS**.
+- Vercel produkční deployment `dpl_2d62wRKY981NmvyHsQJmJ6eXAqq4`: **READY**, git sha `181974b882960b3c84f280256f6d8df24853e898`, produkční alias `domacnost-plus.vercel.app` aktivní, `aliasError=null`.
+- Produkční main CI workflow `39284012475` bylo při kontrole **queued**; neoznačovat jako PASS, dokud se nedokončí a neověří. PR testy ale byly úspěšné před sloučením.
+- `finance.js`: serializace paralelních UPDATE stejného finančního účtu v jedné instanci; čekající druhý caller nesmí nepravdivě potvrdit starý snapshot. `cloudSyncFinanceAccountById`, `cloudSyncLocalFinanceAccounts`, `cloudSyncFinanceById`, `cloudSyncLocalFinance`, `cloudSyncAllFinance` nyní po awaited network/yield kontrolují user/profile/cloud+local household a při přepnutí nepokračují do nového workspace.
+- `tools/check-finance-account-update-scope.mjs` a nový `tools/check-finance-sync-batch-scope.mjs`: potvrzené izolované regresní scénáře i celé PR full CI E2E. Verze sjednocená v app/index/service worker/loader/package/release.json na 578.
+- Žádná SQL/RLS migrace ani zásah do reálné DB. Připojený Supabase nástroj vracel `link_id must identify an eligible linked account`; backend Finance CAS a idempotence INSERT mezi různými zařízeními stále nehotové; fyzické PC↔mobil/offline/restart/konflikty nebyly otestovány.
