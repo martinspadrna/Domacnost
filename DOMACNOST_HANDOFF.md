@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_575** (PR #65, squash `014b8a5dfcba67e101fc12ec7cc8bcd5d4389cef`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_576** (PR #66, squash `ca074bd56aa3d425ba46c4d62641d999513ec8d9`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -670,3 +670,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Release marker sjednocený na 576 v app, HTML, SW cache, module-loader, package a release.json. Není žádná DB migrace, změna RLS, manipulace s daty ani force overwrite.
 - **P0 backend stále blokován**: Supabase app (ChatGPT) sice nainstalována, ale přístup `list_projects` vrací přesně `link_id must identify an eligible linked account` i po opakované uživatelské autorizaci. Nelze ověřit project `hyyehcskthqmncqlechi`, backend Finance CAS a idempotentní INSERT. Do RaK DB nezasahovat. Cross-device PC↔mobil/offline/restart/konflikty nejsou fyzicky ověřené.
 - **Stav kandidát před CI/E2E/merge/produkční Vercel;** po úspěšných kontrolách sloučit do main a doplnit důkazy.
+
+
+### 19.10.2026 — v0.1_576 PRODUKCE: Finance CAS guard
+- PR #66 https://github.com/martinspadrna/Domacnost/pull/66 MERGED; branch head `0aa91a67e441fee0b936f448ebbac6700b7382db`, squash `ca074bd56aa3d425ba46c4d62641d999513ec8d9`.
+- Full CI + skutečné Chrome E2E na PR **PASS** run `39271570325`; full CI a skutečné Chrome E2E na produkčním `main` **PASS** run `39271745157`.
+- Vercel production READY, deployment `dpl_DjT6KHnKXze1c9TNEvBNv8n7zhRs`, git sha `ca074bd56aa3d425ba46c4d62641d999513ec8d9`, aktivní alias `domacnost-plus.vercel.app`, `aliasError=null`.
+- Oprava nebezpečného CAS fallbacku: UPDATE finančního pohybu bez potvrzené lokální revize již nemůže převzít nejnovější remote updated_at a zapsat přes souběžnou změnu. Místo toho zůstane pending či nabídne záznamový konflikt. Explicitní expectedRevision z UI řešení konfliktů a běžný CAS zachovány.
+- Závodní asynchronní síťové potvrzení Finance UPDATE/conflict je nyní hlídané user/profile/household a referencí na stále aktivní lokální pohyb. Nový `check-finance-cas-safe.mjs` ověřuje případy s neznámou revizí, CAS miss, scope switch, explicit resolution a ACK.
+- **P0 stále není dokončeno:** autorizované Supabase připojení vrací `link_id must identify an eligible linked account`; frontend používá projekt `hyyehcskthqmncqlechi`, DB přístup nebyl úspěšný a žádná SQL/RLS migrace neproběhla. CAS finance_accounts/idempotentní finance INSERT musí být řešeny na správném backendu až po autorizovaném read-only schema auditu. Fyzický PC↔mobil offline/restart/konflikty také neověřeny.
