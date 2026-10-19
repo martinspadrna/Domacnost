@@ -81,7 +81,8 @@ assert(completion.includes('const incompleteLoad = !loadResult'));
 assert(unified.includes('return !failed;'));
 const pendingSource=between('  async function cloudSyncLocalPendingData(showMessage = true) {',
   '  async function cloudWarmStartLoad(');
-assert(pendingSource.includes('if (!remaining && !blocked) state.cloud.lastSyncAt ='));
+assert(!pendingSource.includes('state.cloud.lastSyncAt = new Date().toISOString()'), 'pending-only replay must not fake full-sync time');
+assert(pendingSource.includes('cloudSyncCompletionState(loadResult)'), 'manual replay validates the subsequent complete read');
 assert(!pendingSource.includes("showToast('Lokální záznamy byly zkontrolované a cloud je načtený')"));
 const loadSource=between('  async function cloudLoadAllModules(showMessage = true, options = {}) {',
   '  function cloudSyncCompletionState(loadResult) {');
