@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-580`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-581`;
 const APP_ASSETS = [
   './',
   './index.html',
@@ -14,15 +14,20 @@ const APP_ASSETS = [
   './sw.js',
   './manifest.webmanifest',
   './icons/favicon.ico',
+  './icons/domacnost-plus-windows.ico',
   './icons/apple-touch-icon.png',
   './icons/apple-touch-icon-precomposed.png',
   './icons/domacnost-plus-icon-16.png',
   './icons/domacnost-plus-icon-32.png',
+  './icons/domacnost-plus-icon-48.png',
+  './icons/domacnost-plus-icon-64.png',
   './icons/domacnost-plus-icon-120.png',
+  './icons/domacnost-plus-icon-128.png',
   './icons/domacnost-plus-icon-152.png',
   './icons/domacnost-plus-icon-167.png',
   './icons/domacnost-plus-icon-180.png',
   './icons/domacnost-plus-icon-192.png',
+  './icons/domacnost-plus-icon-256.png',
   './icons/domacnost-plus-icon-384.png',
   './icons/domacnost-plus-icon-512.png'
 ];
