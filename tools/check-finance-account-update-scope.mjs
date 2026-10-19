@@ -84,7 +84,7 @@ for(const scenario of ['user','profile','localHousehold','replacement']) {
  assert.equal(e.requests.length,1,'duplicate account UPDATE must share an in-flight slot');
  e.requests[0].gate.resolve({data:{id:'cloud-account'},error:null});
  assert.equal(await first,true,'first matching request may ACK');
- assert.equal(await second,false,'second caller must not ACK a possibly newer snapshot');
+ assert.equal(await second,true,'second caller shares confirmed ACK for unchanged account');
 }
 {
  const e=harness(),first=e.api(e.row);
@@ -101,4 +101,31 @@ for(const scenario of ['user','profile','localHousehold','replacement']) {
  e.requests[1].gate.resolve({data:{id:'cloud-account'},error:null});
  assert.equal(await retry,true);
 }
-console.log('PASS Finance account UPDATE: serialized writes, pending retry, late user/profile/workspace ACK, replaced row, edit, no remote match');
+
+// Two concurrent sync callers of the same unchanged record must not restore
+// a false pending marker after the single successful network ACK.
+{
+ const e=harness();
+ const first=e.api(e.row);
+ e.session.resolve({id:'u1'});await flush();
+ const second=e.api(e.row);
+ e.requests[0].gate.resolve({data:{id:'cloud-account'},error:null});
+ if(await first === true)e.row.syncStatus='';
+ if(await second !== true)e.row.syncStatus='pending_update';
+ assert.equal(e.row.syncStatus,'','duplicate caller must not re-open pending after confirmed UPDATE');
+ assert.equal(e.requests.length,1);
+}
+for(const scenario of ['user','profile','localHousehold','replacement']) {
+ const e=harness(),first=e.api(e.row);
+ e.session.resolve({id:'u1'});await flush();
+ if(scenario==='user')e.state.cloud.userId='u2';
+ else if(scenario==='profile')e.state.activeProfileId='p2';
+ else if(scenario==='localHousehold')e.state.household.id='h2';
+ else e.state.financeAccounts=[{...e.row}];
+ const second=e.api(e.row);
+ e.requests[0].gate.resolve({data:{id:'cloud-account'},error:null});
+ assert.equal(await first,false,scenario+' stale first');
+ assert.equal(await second,false,scenario+' stale second');
+ assert.equal(e.requests.length,1,scenario+' duplicate in-flight request');
+}
+console.log('PASS Finance account UPDATE: shared confirmed ACK, no false pending, new edits, user/profile/workspace and valid retry');

@@ -1093,10 +1093,34 @@
       // Neexistující spojení ani chybějící ID nesmějí znamenat potvrzený zápis.
       if (!client || !cloudId || !householdId) return false;
       const flightKey = [householdId, cloudId].join(':');
-      if (financeAccountUpdateInFlight.has(flightKey)) {
-        // Starší write nesmí potvrdit novější lokální snapshot.
-        await financeAccountUpdateInFlight.get(flightKey);
-        return false;
+      const requesterScope = {
+        userId: String(getState().cloud?.userId || ''),
+        profileId: currentProfileId(),
+        localHouseholdId: currentHouseholdId(false)
+      };
+      const requesterStillCurrent = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === requesterScope.userId &&
+        currentProfileId() === requesterScope.profileId &&
+        currentHouseholdId(false) === requesterScope.localHouseholdId &&
+        account.cloudId === cloudId &&
+        (getState().financeAccounts || []).includes(account);
+      const existingFlight = financeAccountUpdateInFlight.get(flightKey);
+      if (existingFlight) {
+        // Dvě shodné UPDATE čekají na jediný DB zápis. Pokud server první
+        // potvrdil a účet zůstal nezměněný, je potvrzen i druhý caller.
+        // Jiný uživatel/profil nebo novější lokální editace zůstanou pending.
+        const sameOrigin = existingFlight.scope.userId === requesterScope.userId &&
+          existingFlight.scope.profileId === requesterScope.profileId &&
+          existingFlight.scope.localHouseholdId === requesterScope.localHouseholdId;
+        if (!sameOrigin || !requesterStillCurrent() || !requesterScope.userId) {
+          await existingFlight.job;
+          return false;
+        }
+        const requestedSnapshot = JSON.stringify(cloudFinanceAccountPayload(account, requesterScope.userId));
+        const confirmed = await existingFlight.job;
+        return confirmed === true && requesterStillCurrent() &&
+          account.syncStatus !== 'conflict' &&
+          JSON.stringify(cloudFinanceAccountPayload(account, requesterScope.userId)) === requestedSnapshot;
       }
       const job = (async () => {
       const requestedUserId = String(getState().cloud?.userId || '');
@@ -1136,11 +1160,11 @@
           })()) !== snapshot) return false;
       return true;
       })();
-      financeAccountUpdateInFlight.set(flightKey, job);
+      financeAccountUpdateInFlight.set(flightKey, { job, scope: requesterScope });
       try {
         return await job;
       } finally {
-        if (financeAccountUpdateInFlight.get(flightKey) === job) financeAccountUpdateInFlight.delete(flightKey);
+        if (financeAccountUpdateInFlight.get(flightKey)?.job === job) financeAccountUpdateInFlight.delete(flightKey);
       }
     }
 
