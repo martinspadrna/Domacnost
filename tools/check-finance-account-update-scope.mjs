@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=join(dirname(fileURLToPath(import.meta.url)),'..');
 const source=readFileSync(join(root,'finance.js'),'utf8');
-const first=source.indexOf('    async function cloudUpdateFinanceAccount(account) {');
+const first=source.indexOf('    const financeAccountUpdateInFlight = new Map();');
 const last=source.indexOf('    function cloudFinancePayload(item, userId)', first);
 assert(first>=0 && last>first);
 const slice=source.slice(first,last);
@@ -74,4 +74,31 @@ for(const scenario of ['user','profile','localHousehold','replacement']) {
  assert.equal(await job,false,'0 matching rows are not a successful account update');
  assert.equal(e.row.syncStatus,'pending_update');
 }
-console.log('PASS Finance account UPDATE: late user/profile/workspace ACK, replaced row, edit, no remote match');
+
+{
+ const e=harness(),first=e.api(e.row);
+ e.session.resolve({id:'u1'});await flush();
+ assert.equal(e.requests.length,1);
+ const second=e.api(e.row);
+ await flush();
+ assert.equal(e.requests.length,1,'duplicate account UPDATE must share an in-flight slot');
+ e.requests[0].gate.resolve({data:{id:'cloud-account'},error:null});
+ assert.equal(await first,true,'first matching request may ACK');
+ assert.equal(await second,false,'second caller must not ACK a possibly newer snapshot');
+}
+{
+ const e=harness(),first=e.api(e.row);
+ e.session.resolve({id:'u1'});await flush();
+ const second=e.api(e.row);
+ e.row.name='Updated while first request was running';
+ e.requests[0].gate.resolve({data:{id:'cloud-account'},error:null});
+ assert.equal(await first,false,'older snapshot cannot ACK changed local record');
+ assert.equal(await second,false);
+ assert.equal(e.row.syncStatus,'pending_update');
+ const retry=e.api(e.row);
+ await flush();
+ assert.equal(e.requests.length,2,'slot must clear and next sync can safely retry');
+ e.requests[1].gate.resolve({data:{id:'cloud-account'},error:null});
+ assert.equal(await retry,true);
+}
+console.log('PASS Finance account UPDATE: serialized writes, pending retry, late user/profile/workspace ACK, replaced row, edit, no remote match');
