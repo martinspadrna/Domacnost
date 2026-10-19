@@ -1083,12 +1083,22 @@
       return Boolean(expectedId && data?.id && String(data.id) === String(expectedId));
     }
 
+    // Paralelní UPDATE stejného účtu v jedné instanci nesmí přeházet pořadí DB zápisů.
+    const financeAccountUpdateInFlight = new Map();
+
     async function cloudUpdateFinanceAccount(account) {
       const client = getSupabaseClient();
       const householdId = getState().cloud?.householdId;
       const cloudId = account?.cloudId;
       // Neexistující spojení ani chybějící ID nesmějí znamenat potvrzený zápis.
       if (!client || !cloudId || !householdId) return false;
+      const flightKey = [householdId, cloudId].join(':');
+      if (financeAccountUpdateInFlight.has(flightKey)) {
+        // Starší write nesmí potvrdit novější lokální snapshot.
+        await financeAccountUpdateInFlight.get(flightKey);
+        return false;
+      }
+      const job = (async () => {
       const requestedUserId = String(getState().cloud?.userId || '');
       const requestedProfileId = currentProfileId();
       const requestedLocalHouseholdId = currentHouseholdId(false);
@@ -1125,6 +1135,13 @@
             return current;
           })()) !== snapshot) return false;
       return true;
+      })();
+      financeAccountUpdateInFlight.set(flightKey, job);
+      try {
+        return await job;
+      } finally {
+        if (financeAccountUpdateInFlight.get(flightKey) === job) financeAccountUpdateInFlight.delete(flightKey);
+      }
     }
 
     function cloudFinancePayload(item, userId) {
@@ -2334,10 +2351,29 @@
       showToast(savings > 0 ? `Refinancování vychází o ${formatCurrency(savings)} lépe` : 'Refinancování podle zadaných parametrů nevychází lépe');
     }
 
+    // Dávka Finance nikdy nepokračuje do nového přihlášení/profilu/domácnosti.
+    function financeSyncBatchScope() {
+      return {
+        householdId: getState().cloud?.householdId,
+        userId: String(getState().cloud?.userId || ''),
+        profileId: currentProfileId(),
+        localHouseholdId: currentHouseholdId(false)
+      };
+    }
+
+    function financeSyncBatchMatches(scope) {
+      return Boolean(scope && getState().cloud?.householdId === scope.householdId &&
+        String(getState().cloud?.userId || '') === scope.userId &&
+        currentProfileId() === scope.profileId &&
+        currentHouseholdId(false) === scope.localHouseholdId);
+    }
+
     async function cloudSyncFinanceAccountById(id) {
+      const scope = financeSyncBatchScope();
       const account = getState().financeAccounts.find((entry) => entry.id === id);
       if (!account || account.syncStatus === 'conflict') return;
       const saved = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
+      if (!financeSyncBatchMatches(scope)) return;
       if (!(getState().financeAccounts || []).includes(account)) return;
       if (!financeAccountInsertConfirmed(account, saved) && saved !== true) {
         account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
@@ -2354,6 +2390,7 @@
     }
 
     async function cloudSyncLocalFinanceAccounts() {
+      const scope = financeSyncBatchScope();
       const local = (getState().financeAccounts || []).filter((item) =>
         (!item.cloudId || item.syncStatus) && item.syncStatus !== 'conflict');
       if (!local.length) {
@@ -2366,7 +2403,9 @@
       }
       let count = 0;
       for (const account of local) {
+        if (!financeSyncBatchMatches(scope)) return count;
         const ok = account.cloudId ? await cloudUpdateFinanceAccount(account) : await cloudAddFinanceAccount(account);
+        if (!financeSyncBatchMatches(scope)) return count;
         if (!(getState().financeAccounts || []).includes(account)) continue;
         if (ok === true || financeAccountInsertConfirmed(account, ok)) {
           account.syncStatus = '';
@@ -2376,7 +2415,9 @@
           markFinanceCloudPending('sync-finance-account-failed');
         }
         await yieldToMainThread();
+        if (!financeSyncBatchMatches(scope)) return count;
       }
+      if (!financeSyncBatchMatches(scope)) return count;
       clearFinanceCloudPendingIfClean();
       touchState();
       saveState();
@@ -2386,9 +2427,11 @@
     }
 
     async function cloudSyncFinanceById(id) {
+      const scope = financeSyncBatchScope();
       const item = getState().finance.find((entry) => entry.id === id);
       if (!item) return;
       const ok = item.cloudId ? await cloudUpdateFinance(item) : await cloudAddFinance(item);
+      if (!financeSyncBatchMatches(scope)) return;
       if (!(getState().finance || []).includes(item) || (!financeTransactionInsertConfirmed(item, ok) && ok !== true)) return;
       item.syncStatus = '';
       clearFinanceCloudPendingIfClean();
@@ -2399,6 +2442,7 @@
     }
 
     async function cloudSyncLocalFinance() {
+      const scope = financeSyncBatchScope();
       const local = (getState().finance || []).filter((item) => (!item.cloudId || item.syncStatus) && item.syncStatus !== 'conflict');
       if (!local.length) {
         if (clearFinanceCloudPendingIfClean()) {
@@ -2410,7 +2454,9 @@
       }
       let count = 0;
       for (const item of local) {
+        if (!financeSyncBatchMatches(scope)) return count;
         const ok = item.cloudId ? await cloudUpdateFinance(item) : await cloudAddFinance(item);
+        if (!financeSyncBatchMatches(scope)) return count;
         if (!(getState().finance || []).includes(item)) continue;
         if (financeTransactionInsertConfirmed(item, ok) || ok === true) {
           item.syncStatus = '';
@@ -2420,7 +2466,9 @@
           markFinanceCloudPending('sync-finance-failed');
         }
         await yieldToMainThread();
+        if (!financeSyncBatchMatches(scope)) return count;
       }
+      if (!financeSyncBatchMatches(scope)) return count;
       clearFinanceCloudPendingIfClean();
       touchState();
       saveState();
@@ -2430,8 +2478,11 @@
     }
 
     async function cloudSyncAllFinance() {
+      const scope = financeSyncBatchScope();
       const accounts = await cloudSyncLocalFinanceAccounts();
+      if (!financeSyncBatchMatches(scope)) return Number(accounts || 0);
       const transactions = await cloudSyncLocalFinance();
+      if (!financeSyncBatchMatches(scope)) return Number(accounts || 0) + Number(transactions || 0);
       if (clearFinanceCloudPendingIfClean()) {
         touchState();
         persistStateSnapshot();
