@@ -133,11 +133,41 @@ export function resizeLogo(logo,size){
   }
   return encodePng(size,size,rgba);
 }
+function makeWindowsDib(size, png) {
+  // Windows Shell reliably understands BITMAPINFOHEADER/BGRA + AND masks
+  // at 16–64 px. PNG-compressed ICO entries should be reserved for 256 px.
+  const img=decodePng(png);
+  if(img.width!==size || img.height!==size)throw Error('Invalid Windows ICO source size');
+  const xorStride=size*4, andStride=Math.ceil(size/32)*4;
+  const dib=Buffer.alloc(40+xorStride*size+andStride*size);
+  dib.writeUInt32LE(40,0);                   // BITMAPINFOHEADER
+  dib.writeInt32LE(size,4);
+  dib.writeInt32LE(size*2,8);                // XOR and AND bitmap heights
+  dib.writeUInt16LE(1,12);dib.writeUInt16LE(32,14);
+  dib.writeUInt32LE(0,16);                   // BI_RGB
+  dib.writeUInt32LE(xorStride*size+andStride*size,20);
+  for(let y=0;y<size;y++) {
+    const inputY=size-1-y;                  // DIB bottom-up rows
+    for(let x=0;x<size;x++){
+      const src=(inputY*size+x)*4,dst=40+y*xorStride+x*4;
+      dib[dst]=img.pixels[src+2];            // B
+      dib[dst+1]=img.pixels[src+1];          // G
+      dib[dst+2]=img.pixels[src];            // R
+      dib[dst+3]=img.pixels[src+3];          // A
+      if(img.pixels[src+3]===0){            // monochrome AND transparency
+        const index=40+xorStride*size+y*andStride+(x>>3);
+        dib[index] |= (0x80>>(x&7));
+      }
+    }
+  }
+  return dib;
+}
 function makeIco(entries){
   let offset=6+16*entries.length;const header=Buffer.alloc(offset);
   header.writeUInt16LE(0,0);header.writeUInt16LE(1,2);header.writeUInt16LE(entries.length,4);
   const segments=[];
-  entries.forEach(([size,data],i)=>{
+  entries.forEach(([size,png],i)=>{
+    const data=size>=256?png:makeWindowsDib(size,png);
     const p=6+i*16;header[p]=size===256?0:size;header[p+1]=size===256?0:size;
     header[p+2]=0;header[p+3]=0;header.writeUInt16LE(1,p+4);header.writeUInt16LE(32,p+6);
     header.writeUInt32LE(data.length,p+8);header.writeUInt32LE(offset,p+12);
@@ -147,10 +177,10 @@ function makeIco(entries){
 }
 export function buildIcons(original){
   const logo=isolateLogo(decodePng(original));
-  const sizes=[16,32,48,64,120,152,167,180,192,256,384,512];
+  const sizes=[16,32,48,64,120,128,152,167,180,192,256,384,512];
   const pngs=new Map(sizes.map(size=>[size,resizeLogo(logo,size)]));
   const result=new Map();
-  for(const size of [16,32,120,152,167,180,192,384,512])
+  for(const size of [16,32,48,64,120,128,152,167,180,192,256,384,512])
     result.set('icons/domacnost-plus-icon-'+size+'.png',pngs.get(size));
   result.set('icons/apple-touch-icon.png',pngs.get(180));
   result.set('icons/apple-touch-icon-precomposed.png',pngs.get(180));
@@ -158,7 +188,9 @@ export function buildIcons(original){
   // in the manifest, and even direct requests now return the alpha logo.
   result.set('icons/domacnost-plus-maskable-192.png',pngs.get(192));
   result.set('icons/domacnost-plus-maskable-512.png',pngs.get(512));
-  result.set('icons/favicon.ico',makeIco([16,32,48,256].map(size=>[size,pngs.get(size)])));
+  const windowsIco=makeIco([16,32,48,64,256].map(size=>[size,pngs.get(size)]));
+  result.set('icons/favicon.ico',windowsIco);
+  result.set('icons/domacnost-plus-windows.ico',windowsIco);
   return {result,logo};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){

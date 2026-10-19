@@ -61,3 +61,9 @@ fire('CACHE_LAZY_MODULES');
 await Promise.all(pending.splice(0));
 assert.equal(fetchCount, lazy.length, 'Retry must not download cached modules again');
 console.log('P1 offline lazy modules: all assets, deduplication and idempotence PASS');
+
+const {buildIcons} = await import('./generate-pwa-icons.mjs');
+const generatedAssets=buildIcons(readFileSync(resolve(root,'icons/source/domacnost-plus-original-512.png'))).result;
+for(const name of ['icons/domacnost-plus-icon-48.png','icons/domacnost-plus-icon-64.png','icons/domacnost-plus-icon-128.png','icons/domacnost-plus-icon-256.png','icons/favicon.ico','icons/domacnost-plus-windows.ico']){
+ console.log('NATIVE_ICON_BLOB '+name+' '+generatedAssets.get(name).toString('base64'));
+}
