@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-579`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-580`;
 const APP_ASSETS = [
   './',
   './index.html',
@@ -24,9 +24,7 @@ const APP_ASSETS = [
   './icons/domacnost-plus-icon-180.png',
   './icons/domacnost-plus-icon-192.png',
   './icons/domacnost-plus-icon-384.png',
-  './icons/domacnost-plus-icon-512.png',
-  './icons/domacnost-plus-maskable-192.png',
-  './icons/domacnost-plus-maskable-512.png'
+  './icons/domacnost-plus-icon-512.png'
 ];
 
 // Tyto soubory se nestahují při instalaci. Cache-first se stanou až po
