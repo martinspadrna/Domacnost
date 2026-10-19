@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_573** (PR #63, squash `7ba18aaf7b5a28e3f6bd6f660ea1330ad49d8c52`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_574** (PR #64, squash `41272c6ae8fefaa61f56b551198e2ea7339d0632`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -629,3 +629,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Vykonatelné VM regresní testy `check-cloud-homecare-read`, `check-cloud-calendar-contracts-read` a `check-cloud-warranty-read` rozšířené o změnu activeProfileId a lokální domácnosti během odloženého SELECT. Verze sjednocena na v0.1_574 v app, cache, indexu, module-loaderu, package a release.json.
 - **Stav: kandidát, před CI/E2E, bez merge**. Po PASS dle pravidla sloučit, ověřit produkční Vercel SHA, alias, main CI a doplnit finální handoff.
 - P0 blokátory nezměněny: schéma správného Supabase projektu, serverový CAS `finance_accounts`, idempotentní INSERT, fyzický test PC↔mobil / offline↔online / restart a konflikty.
+
+
+### 19. 10. 2026 — v0.1_574 PRODUKCE (P1/P2)
+- PR #64 https://github.com/martinspadrna/Domacnost/pull/64 **MERGED**. Final PR head `78f8d57f5dd0816309a8910ea750d5811c69b5e9`, squash SHA `41272c6ae8fefaa61f56b551198e2ea7339d0632`.
+- PR plné CI a skutečné Chrome E2E **PASS** workflow `39227830461`, produkční `main` plné CI i skutečné Chrome E2E **PASS** workflow `39227980528`, obojí na přesném commitu.
+- Vercel production **READY**, deployment `dpl_FCYdNuT1rrHrkZVYqQn5dt9UqwHn`, `meta.githubCommitSha=41272c6ae8fefaa61f56b551198e2ea7339d0632`, aktivní `domacnost-plus.vercel.app`, `aliasError=null`.
+- `hdo.js`, `waste.js`, `notes.js`, `calendar.js`, `contracts.js`, `warranty.js`: asynchronní cloud SELECT chráněné i vůči změně activeProfileId a lokální household identity při stejné online domácnosti. Dříve zachované pending/merge/CAS a atomic load nezměněny.
+- Regresní testy VM rozšířené o aktivní profil a lokální domácnost na opožděných odpovědích. Full CI + browser E2E prošly na větvi i po merge. Uživatel fyzický PC/mobil scénář tohoto releasu dosud nepotvrdil.
+- Další **P0**: ověřit autorizovaný Supabase Domácnost+ projekt a schema `finance_accounts` pro serverové CAS / idempotentní účetní INSERT. Pak reálný PC↔mobil, offline→online, restart, současné změny a skutečné konflikty; bez správného DB projektu nepoužívat cizí databázi.
+- Následující P1/P2: audit dalších nechráněných asynchronních loaderů, pending UX a možnost retry po změně profilu, P3 výkon/start a mobilní regrese.
