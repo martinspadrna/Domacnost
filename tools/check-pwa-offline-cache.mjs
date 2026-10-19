@@ -62,5 +62,8 @@ await Promise.all(pending.splice(0));
 assert.equal(fetchCount, lazy.length, 'Retry must not download cached modules again');
 console.log('P1 offline lazy modules: all assets, deduplication and idempotence PASS');
 
-// Temporary icon source inspection (removed before release).
-console.log('ICON_SOURCE_512_BASE64='+readFileSync(resolve(root,'icons/domacnost-plus-icon-512.png')).toString('base64'));
+// Temporary binary export for preparation of the committed release icons.
+const {buildIcons} = await import('./generate-pwa-icons.mjs');
+const {result:assetBytes,logo:sourceLogo} = buildIcons(readFileSync(resolve(root,'icons/domacnost-plus-icon-512.png')));
+console.log('PWA_ICON_SAMPLES='+JSON.stringify(sourceLogo.samples));
+for (const [path,bytes] of assetBytes)console.log('PWA_ICON_BLOB '+path+' '+bytes.toString('base64'));
