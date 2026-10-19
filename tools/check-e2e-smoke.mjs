@@ -1983,7 +1983,12 @@ async function run() {
     const accountInsertSource = financeSource.split('async function cloudAddFinanceAccount(account) {')[1]?.split('function financeCloudUpdateAcknowledged')[0] || '';
     if (!accountInsertSource.includes('financeAccountInsertInFlight.has(flightKey)') ||
         !accountInsertSource.includes('financeAccountInsertInFlight.set(flightKey, job)') ||
-        !accountInsertSource.includes('getState().cloud?.householdId !== householdId') ||
+        // The new scope guard is stronger than the old household-only check.
+        !accountInsertSource.includes('const sameWriteScope = () =>') ||
+        !accountInsertSource.includes("String(getState().cloud?.userId || '') === requestedUserId") ||
+        !accountInsertSource.includes('currentProfileId() === requestedProfileId') ||
+        !accountInsertSource.includes('currentHouseholdId(false) === requestedLocalHouseholdId') ||
+        !accountInsertSource.includes('if (!sameWriteScope()) return null;') ||
         !accountInsertSource.includes('live.cloudId = data.id') ||
         !accountInsertSource.includes("live.syncStatus = unchanged ? '' : 'pending_update'") ||
         !accountInsertSource.includes('persistStateSnapshot()') ||

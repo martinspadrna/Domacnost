@@ -1023,26 +1023,35 @@
       const client = getSupabaseClient();
       const householdId = getState().cloud?.householdId;
       if (!client || !householdId || !account?.id) return null;
+      const requestedUserId = String(getState().cloud?.userId || '');
+      const requestedProfileId = currentProfileId();
+      const requestedLocalHouseholdId = currentHouseholdId(false);
+      const sameWriteScope = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === requestedUserId &&
+        currentProfileId() === requestedProfileId &&
+        currentHouseholdId(false) === requestedLocalHouseholdId;
+
       const flightKey = [householdId, account.id].join(':');
       if (financeAccountInsertInFlight.has(flightKey)) return financeAccountInsertInFlight.get(flightKey);
       if (account.cloudId) return null;
 
       const job = (async () => {
         const user = await refreshCloudSession(false);
-        if (!user || getState().cloud?.householdId !== householdId) return null;
+        if (!user || !sameWriteScope() || (requestedUserId && String(user.id) !== requestedUserId)) return null;
         // Po obnovení relace vycházíme z nejnovější lokální verze účtu.
         const current = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
         if (!current || current.cloudId) return null;
         const payload = cloudFinanceAccountPayload(current, user.id);
-        if (payload.household_id !== householdId) return null;
+        if (payload.household_id !== householdId || !sameWriteScope()) return null;
         const sentSnapshot = JSON.stringify(payload);
         const { data, error } = await client.from('finance_accounts').insert(payload).select('id').single();
+        if (!sameWriteScope()) return null;
         if (error) {
           showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
           return null;
         }
         if (!data?.id) return null;
-        if (getState().cloud?.householdId !== householdId) return null;
+        if (!sameWriteScope()) return null;
         const live = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
         if (!live) {
           // Uživatel účet mezitím smazal: ID patří do Koše, ne do zaniklého objektu.
@@ -1080,17 +1089,28 @@
       const cloudId = account?.cloudId;
       // Neexistující spojení ani chybějící ID nesmějí znamenat potvrzený zápis.
       if (!client || !cloudId || !householdId) return false;
+      const requestedUserId = String(getState().cloud?.userId || '');
+      const requestedProfileId = currentProfileId();
+      const requestedLocalHouseholdId = currentHouseholdId(false);
+      const sameWriteScope = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === requestedUserId &&
+        currentProfileId() === requestedProfileId &&
+        currentHouseholdId(false) === requestedLocalHouseholdId;
+      const sameAccount = () => sameWriteScope() && account.cloudId === cloudId &&
+        (getState().financeAccounts || []).includes(account);
       const user = await refreshCloudSession(false);
-      if (!user || getState().cloud?.householdId !== householdId || account.cloudId !== cloudId) return false;
+      if (!user || !sameAccount() || (requestedUserId && String(user.id) !== requestedUserId)) return false;
       const payload = cloudFinanceAccountPayload(account, user.id);
       delete payload.created_by;
       const snapshot = JSON.stringify(payload);
+      if (!sameAccount()) return false;
       const { data, error } = await client.from('finance_accounts')
         .update(payload)
         .eq('id', cloudId)
         .eq('household_id', householdId)
         .select('id')
         .maybeSingle();
+      if (!sameAccount()) return false;
       if (error) {
         showToast(error.message || 'Účet se nepovedlo upravit v cloudu');
         return false;
@@ -1098,9 +1118,7 @@
       // 0 řádků = chyba / neexistující účet; nic se nesmí označit za uložené.
       if (!financeCloudUpdateAcknowledged(data, cloudId)) return false;
       // Mezitím se mohla změnit domácnost, záznam nebo lokální hodnoty.
-      if (getState().cloud?.householdId !== householdId ||
-          account.cloudId !== cloudId ||
-          !(getState().financeAccounts || []).includes(account) ||
+      if (!sameAccount() ||
           JSON.stringify((() => {
             const current = cloudFinanceAccountPayload(account, user.id);
             delete current.created_by;
@@ -1174,33 +1192,43 @@
       const client = getSupabaseClient();
       const householdId = getState().cloud?.householdId;
       if (!client || !householdId || !item?.id) return null;
+      const requestedUserId = String(getState().cloud?.userId || '');
+      const requestedProfileId = currentProfileId();
+      const requestedLocalHouseholdId = currentHouseholdId(false);
+      const sameWriteScope = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === requestedUserId &&
+        currentProfileId() === requestedProfileId &&
+        currentHouseholdId(false) === requestedLocalHouseholdId;
+
       const flightKey = [householdId, item.id].join(':');
       if (financeTransactionInsertInFlight.has(flightKey)) return financeTransactionInsertInFlight.get(flightKey);
       if (item.cloudId) return null;
 
       const job = (async () => {
         const user = await refreshCloudSession(false);
-        if (!user || getState().cloud?.householdId !== householdId) return null;
+        if (!user || !sameWriteScope() || (requestedUserId && String(user.id) !== requestedUserId)) return null;
         let current = (getState().finance || []).find((entry) => entry.id === item.id);
         if (!current || current.cloudId) return null;
         if (!(await ensureFinanceTransactionAccounts(current, householdId))) {
+          if (!sameWriteScope()) return null;
           showToast('Pohyb čeká na uložení souvisejících účtů do cloudu');
           return null;
         }
         // Účet se mohl vytvořit během await; použij aktuální pohyb.
         current = (getState().finance || []).find((entry) => entry.id === item.id);
-        if (!current || current.cloudId || getState().cloud?.householdId !== householdId) return null;
+        if (!current || current.cloudId || !sameWriteScope()) return null;
         const payload = cloudFinancePayload(current, user.id);
         if (!financeTransactionAccountsBound(current, payload) ||
-            payload.household_id !== householdId) return null;
+            payload.household_id !== householdId || !sameWriteScope()) return null;
         const sentSnapshot = JSON.stringify(payload);
         const { data, error } = await client.from('finance_transactions')
           .insert(payload).select('id,updated_at').single();
+        if (!sameWriteScope()) return null;
         if (error) {
           showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
           return null;
         }
-        if (!data?.id || getState().cloud?.householdId !== householdId) return null;
+        if (!data?.id || !sameWriteScope()) return null;
         const live = (getState().finance || []).find((entry) => entry.id === item.id);
         if (!live) {
           // Záznam smazaný během requestu: propojit pozdní ACK s Košem/outboxem.

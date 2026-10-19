@@ -13,7 +13,7 @@ assert(start >= 0 && end > start, 'Finance account INSERT guard was not found');
 const codeUnderTest = source.slice(start, end);
 
 function harness(record) {
-  const state = { cloud: { householdId: 'house-a', lastSyncAt: '' }, financeAccounts: [record] };
+  const state = { cloud: { householdId: 'house-a', userId: 'user-a', lastSyncAt: '' }, household: { id: 'house-a' }, activeProfileId: 'p1', financeAccounts: [record] };
   const requests = [];
   const pendingReasons = [];
   const toasts = [];
@@ -40,7 +40,7 @@ function harness(record) {
   // Only the actual production functions under test are evaluated.
   const factory = new Function(
     'getSupabaseClient', 'getState', 'refreshCloudSession',
-    'cloudFinanceAccountPayload', 'markFinanceCloudPending',
+    'currentProfileId', 'currentHouseholdId', 'cloudFinanceAccountPayload', 'markFinanceCloudPending',
     'persistStateSnapshot', 'showToast',
     codeUnderTest + '\nreturn {cloudAddFinanceAccount, financeAccountInsertConfirmed};'
   );
@@ -48,6 +48,7 @@ function harness(record) {
     () => client,
     () => state,
     async () => ({ id: 'user-a' }),
+    () => state.activeProfileId, () => state.household.id,
     (account, userId) => ({
       household_id: state.cloud.householdId,
       name: account.name,
@@ -156,4 +157,23 @@ function respond(request, id = 'remote-1') {
   assert.equal(h.snapshots(), 0);
 }
 
-console.log('PASS Finance account INSERT single-flight / pending race checks');
+
+// A late successful INSERT must not ACK data into a different logged-in user,
+// even when both accounts share the same cloud household.
+for (const changed of ['user', 'profile', 'localHousehold']) {
+  const record = { id: 'user-switch-'+changed, name: 'Shared account', syncStatus: 'pending_add' };
+  const h = harness(record);
+  const job = h.api.cloudAddFinanceAccount(record);
+  await flushRequests();
+  assert.equal(h.requests.length, 1);
+  if (changed === 'user') h.state.cloud.userId = 'user-b';
+  else if (changed === 'profile') h.state.activeProfileId = 'p2';
+  else h.state.household.id = 'house-b';
+  respond(h.requests[0]);
+  assert.equal(await job, null, 'stale account '+changed+' ACK');
+  assert.equal(record.cloudId, undefined, 'stale account receipt must not be linked');
+  assert.equal(record.syncStatus, 'pending_add');
+  assert.equal(h.snapshots(), 0);
+  assert.deepEqual(h.toasts, []);
+}
+console.log('PASS Finance account INSERT single-flight, user/profile/workspace and pending race checks');
