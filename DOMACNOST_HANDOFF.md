@@ -598,3 +598,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `cloudSyncLocalPendingData`: interaktivní režim po pending replay kontroluje `cloudSyncCompletionState(loadResult)`, při partial network fail nehlásí „Všechno synchronizováno“; tichý autosync replay už sám žádný čas kompletního syncu nenastavuje. Home nyní místo aktuálního času bez ověření píše `Poslední úplná synchronizace: zatím nepotvrzena`.
 - Testy: `tools/check-cloud-last-sync-truth.mjs` vykonává režimy pending-only vs full, chybu dílčího SELECT, switch A→B a household UI reconciliation, audit modulových ACK; upraven starší `tools/check-cloud-sync-status.mjs`. Vše integrované do `npm run check`.
 - **P0 nadále otevřeno:** správný autorizovaný Supabase projekt Domácnost+, backend CAS `finance_accounts` a serverová idempotence INSERT, skutečné PC↔mobil/offline/restart/konflikt. P1/P2 rozpracované. P3 k prověření flaky E2E offline panelu; bez DB migrací nebo smazání uživatelských dat.
+
+
+### 19. 10. 2026 — v0.1_573 kandidát: Finance tenant/user/profile read guard + P3 E2E stabilita
+- Výchozí produkce v0.1_572, main HEAD `1824c9acae469b24570e8fe7a07e33c3087e930a`, pracovní větev `fix/p1-p3-finance-session-e2e-573`.
+- `finance.js`: `cloudLoadFinance` nově kontroluje při obou SELECT i bezprostředně před commitem stejného přihlášeného uživatele, profil, lokální/cloud domácnost; pozdní odpověď staré relace nesmí přepsat novou. Staged account/transaction používají zachycené ID, nikoli proměnlivý aktuální profil během asynchronního načtení. Zachován stávající merge pending/Koš i stránkování.
+- `tools/check-finance-read-race.mjs`: vykonatelné simulace přepnutí uživatele (i ve stejné domácnosti), profilu a přepnutí už po první fázi, nadále local edit/trash.
+- `tools/check-e2e-smoke.mjs`: offline pending E2E fixture se nastaví právě jednou; vykreslení panelu se vyčká s časově omezeným pollingem, místo jednorázového závodního DOM read. Produkční logika upozornění beze změny.
+- Verze 573 v app, loaderu, HTML, SW cache, package a síťovém release markeru. Bez SQL, migrací, zásahů do RLS a bez mazání dat.
+- **Kandidát — CI/E2E, merge, produkční Vercel a fyzický test zatím nepotvrzeny.** Po testech doplnit výsledky; pokud PASS, podle release pravidla sloučit.
+- P0 stále blokuje skutečný Supabase Domácnost+ backend (účetní CAS/idempotence INSERT) a fyzický PC↔mobil/offline/restart/konflikt. Další P1/P2: cílený audit session guards dalších modulů, P3 stabilizace zbylých E2E.

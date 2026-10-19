@@ -1899,25 +1899,26 @@ async function run() {
     if (unifiedCloudValue.unified !== 1 || unifiedCloudValue.legacy !== 0 || unifiedCloudValue.retry !== 0 || !/změn[a-y ]*ček/i.test(unifiedCloudValue.text)) fail('Cloud nastavení nemá jediný automatický stav bez nadbytečné ruční akce.');
     else ok('Cloud: běžný stav i čekající změny jsou sjednocené bez ručních synchronizačních tlačítek.');
 
-    const offlineQueueCheck = await page.send('Runtime.evaluate', {
+    // Set the fixture ONCE. DOM rendering is async under slow CI/Chrome;
+    // retry only the read assertion, not the fixture mutation.
+    const offlineFixture = await page.send('Runtime.evaluate', {
       returnByValue: true,
-      expression: `(() => {
-        const result = window.__DOMACNOST_E2E_SET_OFFLINE_QUEUE__?.() || {};
-        const panel = document.querySelector('[data-cloud-recovery-panel]');
-        return {
-          panel: panel?.classList.contains('has-pending') || false,
-          detail: /Offline nákup E2E/i.test(panel?.innerText || ''),
-          age: /čeká (?:2[89]|3[01]) min/i.test(panel?.innerText || ''),
-          connection: /Připojení přerušeno/i.test(panel?.innerText || ''),
-          alert: Boolean(result.alert),
-          notificationType: result.notification?.type || '',
-          notificationNav: result.notification?.nav || '',
-          notificationTab: result.notification?.tab || ''
-        };
-      })()`
+      expression: 'window.__DOMACNOST_E2E_SET_OFFLINE_QUEUE__?.()'
     });
-    const offlineQueueValue = offlineQueueCheck.result?.value || {};
-    if (!offlineQueueValue.panel || !offlineQueueValue.detail || !offlineQueueValue.age || !offlineQueueValue.connection || !offlineQueueValue.alert || offlineQueueValue.notificationType !== 'cloudSync' || offlineQueueValue.notificationNav !== 'settings' || offlineQueueValue.notificationTab !== 'cloud') fail('Dlouho čekající offline změna nemá konkrétní detail a upozornění na obnovu synchronizace.');
+    const offlinePanelReady = await waitForExpression(page, `(() => {
+      const panel = document.querySelector('[data-cloud-recovery-panel]');
+      const content = panel?.innerText || '';
+      return Boolean(panel?.classList.contains('has-pending') &&
+        /Offline nákup E2E/i.test(content) &&
+        /čeká (?:2[89]|3[01]) min/i.test(content) &&
+        /Připojení přerušeno/i.test(content));
+    })()`, 2800, 60);
+    const offlineQueueValue = offlineFixture.result?.value || {};
+    if (!offlinePanelReady || !offlineQueueValue.alert ||
+        offlineQueueValue.notification?.type !== 'cloudSync' ||
+        offlineQueueValue.notification?.nav !== 'settings' ||
+        offlineQueueValue.notification?.tab !== 'cloud')
+      fail('Dlouho čekající offline změna nemá konkrétní detail a upozornění na obnovu synchronizace.');
     else ok('Cloud: offline fronta ukazuje konkrétní položku, stáří čekání a samostatné upozornění.');
     await page.send('Runtime.evaluate', { expression: `window.__DOMACNOST_E2E_CLEAR_OFFLINE_QUEUE__?.()` });
     await page.send('Runtime.evaluate', { expression: `window.DomacnostModuleLoader?.ensure?.('tasks')`, awaitPromise: true });

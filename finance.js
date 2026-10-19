@@ -1391,6 +1391,15 @@
       const client = getSupabaseClient();
       const requestedHouseholdId = getState().cloud?.householdId;
       if (!client || !requestedHouseholdId) return false;
+      // Pozdní cloud SELECT nepatří nově přihlášenému uživateli ani jinému profilu.
+      // Samotné household_id nestačí: dvě relace mohou používat stejnou domácnost.
+      const requestedUserId = String(getState().cloud?.userId || '');
+      const requestedProfileId = currentProfileId();
+      const requestedLocalHouseholdId = currentHouseholdId(false);
+      const sameReadScope = () => getState().cloud?.householdId === requestedHouseholdId &&
+        String(getState().cloud?.userId || '') === requestedUserId &&
+        currentProfileId() === requestedProfileId &&
+        currentHouseholdId(false) === requestedLocalHouseholdId;
       // Cloud má dvě SELECT fáze. Uživatel může mezitím přidat, smazat nebo
       // změnit účet/pohyb. Starý snapshot pak nesmí přepsat nové lokální změny.
       const localRevisionBeforeRead = JSON.stringify({
@@ -1402,6 +1411,7 @@
         'id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at',
         requestedHouseholdId
       );
+      if (!sameReadScope()) return false;
       if (accountError) {
         showToast(accountError.message || 'Finanční účty se nepovedlo načíst z cloudu');
         return false;
@@ -1413,8 +1423,8 @@
       const pendingAccountCloudIds = new Set(localAccounts.map((item) => item.cloudId).filter(Boolean));
       const cloudAccounts = (accountData || []).filter((item) => !pendingAccountCloudIds.has(item.id) && !hiddenAccountIds.has(String(item.id))).map((item) => ({
         id: getState().financeAccounts.find((entry) => entry.cloudId === item.id)?.id || `finance-account-cloud-${item.id}`,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: requestedLocalHouseholdId || requestedHouseholdId,
+        profileId: requestedProfileId,
         cloudId: item.id,
         name: item.name || 'Účet',
         accountType: item.account_type || 'other',
@@ -1432,6 +1442,7 @@
         'id,type,title,amount,transaction_date,payment_method,note,created_at,updated_at,account_id,transfer_account_id',
         requestedHouseholdId
       );
+      if (!sameReadScope()) return false;
       if (error) {
         showToast(error.message || 'Finance se nepovedlo načíst z cloudu');
         return false;
@@ -1441,8 +1452,8 @@
       const pendingFinanceCloudIds = new Set(localOnly.map((item) => item.cloudId).filter(Boolean));
       const cloudItems = (data || []).filter((item) => !pendingFinanceCloudIds.has(item.id) && !hiddenTransactionIds.has(String(item.id))).map((item) => ({
         id: getState().finance.find((entry) => entry.cloudId === item.id)?.id || `finance-cloud-${item.id}`,
-        householdId: currentHouseholdId(),
-        profileId: currentProfileId(),
+        householdId: requestedLocalHouseholdId || requestedHouseholdId,
+        profileId: requestedProfileId,
         cloudId: item.id,
         type: item.type === 'transfer' || item.transfer_account_id ? 'transfer' : item.type || 'expense',
         title: item.title || 'Záznam',
@@ -1457,7 +1468,7 @@
         updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
         cloudUpdatedAt: item.updated_at || ''
       }));
-      if (getState().cloud?.householdId !== requestedHouseholdId) return false;
+      if (!sameReadScope()) return false;
       if (JSON.stringify({
         accounts: getState().financeAccounts || [],
         transactions: getState().finance || []
