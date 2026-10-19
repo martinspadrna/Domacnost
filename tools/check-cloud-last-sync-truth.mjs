@@ -78,7 +78,7 @@ const pendingFn=['async function cloudSyncLocalPendingData(', 'async function cl
    householdUiSnapshotMatchesRemote:()=>true,clearHouseholdUiPendingState:()=>{},
    settleRecoveredCloudSyncState:()=>true
  };
- const run=compile('function reconcileConfirmedHouseholdUiPending(', 'function shouldApplyRemoteHouseholdUi(',ctx);
+ const run=compile('function reconcileConfirmedHouseholdUiPending(', 'function reconcileConfirmedSubscriptionPending(',ctx);
  assert.equal(run({}),true);
  assert.equal(ctx.state.cloud.lastSyncAt,'older-confirmed','single household UI snapshot is not a full refresh');
 }
