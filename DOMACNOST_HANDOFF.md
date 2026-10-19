@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_580** (PR #70, squash `e471ed1da4c5568c1f33ab3f215eee8625cbc139`, Vercel READY na domacnost-plus.vercel.app; full CI a skutečné Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_581** (PR #71, squash `3f48d4c4c0a3364230b954eb737587690798de49`, Vercel READY, full CI a skutečné Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -781,3 +781,14 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Test `check-pwa-icon-alpha` rozšířen o rozměry, přesné binární shody vygenerovaných alfa PNG, DIB/AND transparentní ICO vrstvu a PNG256. Výslovně ověřujeme Windows soubor. Rollback: předchozí plně funkční v0.1_580 na Git `e471ed1da4c5568c1f33ab3f215eee8625cbc139` / následný docs HEAD `7c1b5cb...`, revert PR #71.
 - Nezaměňovat úspěch manifestu/CI s potvrzením, že Windows Shell přímo na počítači uživatele přestane doplňovat systémovou plochu nebo cache; je potřeba fyzické ověření screenshotem pokud problém přetrvá. NIKDY neodstraňovat neodeslaná lokální data pro icon refresh.
 - **PŘED RELEASE: čeká finální CI + skutečný Chrome E2E a potvrzení produkčního Vercel READY.**
+
+
+### 19. 10. 2026 — v0.1_581 NASAZENO (Windows nativní ICO pro transparentní desktop PWA)
+- PR #71 https://github.com/martinspadrna/Domacnost/pull/71 MERGED. Final commit PR `c15d901c3180a6dbc0b18ca0e617d1f26493f13e`, squash `3f48d4c4c0a3364230b954eb737587690798de49`.
+- Na PR full CI i skutečné Chrome E2E **PASS** workflow `39296998024`; na main full CI i Chrome E2E **PASS** workflow `39297239320`.
+- Vercel production `dpl_EU1kQi9xhfnpGyqsmbyjc6vM56zs` **READY**, správný commit `3f48d4c4c0a3364230b954eb737587690798de49`, aktivní alias `domacnost-plus.vercel.app`, bez aliasError.
+- Opravena binární Windows kompatibilita .ico: čtyři nativní DIB32/AND-alpha vrstvy 16/32/48/64 a PNG-alfa 256. Soubor `icons/domacnost-plus-windows.ico` je identický s nově vygenerovaným `favicon.ico`, přímo odkazován z HTML. Žádný modrý/černý čtverec není součástí obrazových pixelů.
+- PNG 48/64/128/256 jsou nové ze stejného originálu; manifest nyní používá `purpose:any` 48/64/128/192/256/384/512 s novým cache-busting parametrem v581. SW cache v581 obsahuje všechny aktivní obrázky včetně Windows ICO.
+- Vykonatelný test `tools/check-pwa-icon-alpha.mjs` kontroluje přesnou PNG alfu, AND masku/DIB strukturu ICO i manifest a precache; full pipeline a Chrome E2E PASS. Nepřepisují se jiné funkce ani uživatelská data.
+- **Fyzická kontrola Windows ikony ještě není uživatelem potvrzena.** Nainstalované PWA ikonky spravují Windows/Chromium a mohou mít vlastní cache/backplate, i když zdroj je RGBA. Pokud se problém objeví i na 581, nabídnout uživateli ruční nastavení desktop shortcut ikony pomocí `https://domacnost-plus.vercel.app/icons/domacnost-plus-windows.ico?v=0-1-581` (Vlastnosti → Zástupce → Změnit ikonu). Pokud nezafunguje, vyžádat screenshot + zda Chrome/Edge + Windows 10/11; další commit bez přesné diagnózy by byl nepodložený.
+- Návrat dostupný k `v0.1_580` na commitu `7c1b5cb3791e086e9f1a54200330b7781700f2c1`, případně revert PR #71. Před odinstalací PWA ověřit pending lokální data.
