@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_576** (PR #66, squash `ca074bd56aa3d425ba46c4d62641d999513ec8d9`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_577** (PR #67, squash `b9c9b6c722943ea8809fa45194f3074874a04833`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -689,3 +689,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Sjednocení verze 577 v app, index, cache SW, module-loader, package, release.json. Žádná SQL/RLS změna ani mazání DB.
 - **Nezměněný blokátor P0:** Supabase připojení opět vrací `link_id must identify an eligible linked account`, projekt `hyyehcskthqmncqlechi` stále bez autorizovaného přístupu. Opravu serverového CAS `finance_accounts`/idempotentního INSERT nelze bez read-only auditu provést; fyzické PC↔mobil/offline/restart/konflikt také neověřeny. Tento client-side scope guard sám o sobě nezaručuje serverovou idempotenci dvou paralelních zařízení.
 - **Kandidát** před PR CI/Chrome E2E, merge a Vercel produkcí; po PASS dokončit release a handoff.
+
+
+### 19.10.2026 — v0.1_577 PRODUKCE (P0 Finance zápisy mezi relacemi)
+- PR #67 https://github.com/martinspadrna/Domacnost/pull/67 **MERGED**. Finální PR head `3fd496715a808767419a468aed6c911978fb52a0` (včetně aktualizovaného E2E kontrolního pravidla), squash `b9c9b6c722943ea8809fa45194f3074874a04833`.
+- PR full CI + reálné Chrome E2E **PASS** workflow `39274211752`; produkční main full CI i Chrome E2E **PASS** workflow `39274378251`.
+- Vercel production **READY**, deployment `dpl_BijfCoJyiYyFsaN14fwQ8xqykocQ`, git sha `b9c9b6c722943ea8809fa45194f3074874a04833`, aktivní `domacnost-plus.vercel.app`, `aliasError=null`.
+- `cloudAddFinanceAccount`, `cloudAddFinance`, `cloudUpdateFinanceAccount`: asynchronní uživatelský/profile/lokální a cloud household scope přes síťové hranice; opožděný ACK z jiné relace stejné domácnosti se neaplikuje na lokální finance. Update účtu vyžaduje stále stejný lokální objekt bez editace během čekání. Offline/pending/Koš a původní single-flight beze změn.
+- Testy `check-finance-account-insert`, `check-finance-inflight` a nový `check-finance-account-update-scope` pokrývají prohození relací, pozdní receipt, lokální edity a validní ACK. Po prvním PR CI full PASS Chrome E2E odhalilo zastaralý statický assertion na původní household-only guard; E2E assertion se **zpřísnil na user/profile/household scope**, neoslabil. Následný PR CI+E2E PASS a main CI+E2E PASS.
+- Žádná SQL změna, RLS, mazání, force overwrite, fyzické reálné dvouzařízení testy. P0 otevřeno: Supabase target `hyyehcskthqmncqlechi` nepřístupný přes aktuální plugin (`link_id must identify an eligible linked account`), backend revizní CAS `finance_accounts`/serverová idempotence INSERT nelze potvrdit a opravit. Souběžné dvouzařízení klientské INSERT tedy stále vyžaduje backendové řešení.
+- Další pokračování: ověřit dostupnost oprávněného Supabase připojení, pokud stále nedostupné pokračovat v bezpečných lokálních regresních auditech a připravit read-only DB audity pro připojení. Nepoužívat cizí RaK databázi.
