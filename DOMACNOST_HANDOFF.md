@@ -3,7 +3,7 @@
 Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_574** (PR #64, squash `41272c6ae8fefaa61f56b551198e2ea7339d0632`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_575** (PR #65, squash `014b8a5dfcba67e101fc12ec7cc8bcd5d4389cef`, Vercel READY; full CI a Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -649,3 +649,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Release surface sjednocena v app, index, SW cache, loader, package, release.json na v0.1_575. Žádný zásah do Supabase DB, RLS, auth, outbox, PWA dat ani destruktivní operace.
 - **Kandidát, CI/E2E ještě neověřeny**; po PASS sloučit na main, Vercel READY/alias a main CI zkontrolovat. Přetrvává nutnost fyzického PC↔mobil/offline→online/restart/konflikt testu a backend Finance SQL/CAS v autorizovaném projektu.
 - Další P0 práce po připojení projektu: read-only inventura `finance_accounts`, `finance_transactions`, existujících revizí a unique/index constraints; až poté navrhnout a samostatně ověřit CAS/idempotentní INSERT bez přepsání novějších změn.
+
+
+### 19.10.2026 — v0.1_575 PRODUKCE (P1/P2)
+- PR #65 https://github.com/martinspadrna/Domacnost/pull/65 **MERGED**, final PR head `775221fc5c71ea17830d18fe493b744e8d02831e`, squash `014b8a5dfcba67e101fc12ec7cc8bcd5d4389cef`.
+- PR plné CI i skutečný Chrome E2E **PASS** workflow `39242266360`; produkční `main` plné CI a Chrome E2E **PASS** workflow `39242436534` na squash SHA.
+- Vercel production **READY**, deployment `dpl_FJwYUaqHbx2Nrge9jx5gW4LWWTYU`, commit `014b8a5dfcba67e101fc12ec7cc8bcd5d4389cef`, alias `domacnost-plus.vercel.app` aktivní, `aliasError=null`.
+- Nákupy/Garáž/Extras: opožděná cloud SELECT po změně profilu nebo lokální domácnosti se neaplikuje ani nepotvrdí kompletní synchronizaci. Stávající ochrana pending, lokálních editací a owner scope beze změny; extra batch při změně kontextu nepokračuje v jiných kolekcích.
+- Regresní testy `tools/check-cloud-shopping-garage-read.mjs` a `tools/check-cloud-extra-read-race.mjs` pokrývají nový profil a lokální domácnost bez SQL zásahů.
+- **Stále P0 otevřené:** target Supabase `hyyehcskthqmncqlechi` nepřístupný přes aktuální konektor (zobrazuje pouze RaK projekty), backend revizní CAS Finance a serverově idempotentní INSERT nelze bezpečně opravit ani fyzicky otestovat. Fyzický dvouzařízení PC↔mobil/offline/restart/konflikty stále nebyl proveden. Otestováno jen na CI/Chrome E2E a kontrolou release.
+- Další krok: připojit správný Supabase projekt Domácnost+ (bez sdílení tokenů v chatu), read-only inventura DB schématu a následně transakčně bezpečná revizní ochrana `finance_accounts` + idempotence.
