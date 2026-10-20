@@ -1687,7 +1687,9 @@
           });
           return true;
         }
-        return await cloudUpdateFinanceAccount(account, { expectedRevision: conflict.remoteRevision, skipConflict: true }) === true;
+        const ok = await cloudUpdateFinanceAccount(account, { expectedRevision: conflict.remoteRevision, skipConflict: true });
+        if (ok === true && (getState().financeAccounts || []).includes(account)) account.syncStatus = '';
+        return ok === true;
       }
       if (strategy === 'cloud') {
         if (!conflict.remoteRow) return false;
