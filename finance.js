@@ -1010,8 +1010,44 @@
       };
     }
 
-    // Souběžný formulář / sync fronta nesmí pro jedno lokální ID vytvořit dva účty.
-    // Ochrana platí pro jednu běžící instanci; serverovou idempotenci řešit zvlášť.
+    // Stejné lokální finanční ID musí pro každý opakovaný pokus využít
+    // jeden stabilní UUID primární klíč. Uložit PŘED síťovým požadavkem.
+    const FINANCE_INSERT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    function ensureFinanceInsertId(record) {
+      if (!record) return '';
+      const saved = String(record.cloudInsertId || '');
+      if (FINANCE_INSERT_UUID.test(saved)) return saved;
+      // Nepoužívat odhadovaný UUID nebo serverem vygenerovaný klíč:
+      // ztracený ACK by při retry vytvořil druhý účet/pohyb.
+      const uuid = globalThis.crypto?.randomUUID?.();
+      if (!FINANCE_INSERT_UUID.test(uuid || '')) return '';
+      record.cloudInsertId = uuid;
+      persistStateSnapshot({ immediate: true });
+      return uuid;
+    }
+
+    // Retry po přerušení spojení: server mohl INSERT potvrdit, přestože
+    // klient odpověď neviděl. Reuse ACK jen při přesné shodě celé odeslané
+    // business payload (bez serverové updated_at). Cizí/změněný záznam
+    // NESMÍ být bez potvrzení převzat nebo přepsán.
+    async function financeConfirmedInsertById(client, table, householdId, id, payload) {
+      if (!client || !FINANCE_INSERT_UUID.test(id || '') ||
+          !['finance_accounts', 'finance_transactions'].includes(table)) return null;
+      const fields = [...new Set(['id', 'updated_at', ...Object.keys(payload)])];
+      try {
+        const { data, error } = await client.from(table).select(fields.join(','))
+          .eq('id', id).eq('household_id', householdId).maybeSingle();
+        if (error || data?.id !== id || data.household_id !== householdId) return null;
+        if (!Object.entries(payload).every(([key, expected]) =>
+          String(data[key] ?? '') === String(expected ?? ''))) return null;
+        return { id: data.id, updated_at: data.updated_at || '' };
+      } catch {
+        return null;
+      }
+    }
+
+    // Per-instance single-flight; serverové opakované zápisy blokuje stejný UUID PK.
     const financeAccountInsertInFlight = new Map();
 
     function financeAccountInsertConfirmed(account, saved) {
@@ -1041,16 +1077,28 @@
         // Po obnovení relace vycházíme z nejnovější lokální verze účtu.
         const current = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
         if (!current || current.cloudId) return null;
-        const payload = cloudFinanceAccountPayload(current, user.id);
+        const insertId = ensureFinanceInsertId(current);
+        if (!insertId || !sameWriteScope()) return null;
+        if (account !== current) account.cloudInsertId = insertId;
+        const payload = { ...cloudFinanceAccountPayload(current, user.id), id: insertId };
         if (payload.household_id !== householdId || !sameWriteScope()) return null;
         const sentSnapshot = JSON.stringify(payload);
-        const { data, error } = await client.from('finance_accounts').insert(payload).select('id,updated_at').single();
+        let response;
+        try {
+          response = await client.from('finance_accounts').insert(payload).select('id,updated_at').single();
+        } catch (error) {
+          response = { data: null, error };
+        }
         if (!sameWriteScope()) return null;
-        if (error) {
-          showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
+        let { data, error } = response;
+        if (error || !data?.id) {
+          data = await financeConfirmedInsertById(client, 'finance_accounts', householdId, insertId, payload);
+          if (!sameWriteScope()) return null;
+        }
+        if (data?.id !== insertId) {
+          if (error) showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
           return null;
         }
-        if (!data?.id) return null;
         if (!sameWriteScope()) return null;
         const live = (getState().financeAccounts || []).find((entry) => entry.id === account.id);
         if (!live) {
@@ -1067,7 +1115,7 @@
         live.cloudUpdatedAt = data.updated_at || '';
         account.cloudId = data.id;
         account.cloudUpdatedAt = data.updated_at || '';
-        const unchanged = JSON.stringify(cloudFinanceAccountPayload(live, user.id)) === sentSnapshot;
+        const unchanged = JSON.stringify({ ...cloudFinanceAccountPayload(live, user.id), id: insertId }) === sentSnapshot;
         live.syncStatus = unchanged ? '' : 'pending_update';
         if (!unchanged) markFinanceCloudPending('finance-account-changed-during-insert');
         persistStateSnapshot();
@@ -1270,18 +1318,30 @@
         // Účet se mohl vytvořit během await; použij aktuální pohyb.
         current = (getState().finance || []).find((entry) => entry.id === item.id);
         if (!current || current.cloudId || !sameWriteScope()) return null;
-        const payload = cloudFinancePayload(current, user.id);
+        const insertId = ensureFinanceInsertId(current);
+        if (!insertId || !sameWriteScope()) return null;
+        if (item !== current) item.cloudInsertId = insertId;
+        const payload = { ...cloudFinancePayload(current, user.id), id: insertId };
         if (!financeTransactionAccountsBound(current, payload) ||
             payload.household_id !== householdId || !sameWriteScope()) return null;
         const sentSnapshot = JSON.stringify(payload);
-        const { data, error } = await client.from('finance_transactions')
-          .insert(payload).select('id,updated_at').single();
+        let response;
+        try {
+          response = await client.from('finance_transactions')
+            .insert(payload).select('id,updated_at').single();
+        } catch (error) {
+          response = { data: null, error };
+        }
         if (!sameWriteScope()) return null;
-        if (error) {
-          showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
+        let { data, error } = response;
+        if (error || !data?.id) {
+          data = await financeConfirmedInsertById(client, 'finance_transactions', householdId, insertId, payload);
+          if (!sameWriteScope()) return null;
+        }
+        if (data?.id !== insertId) {
+          if (error) showToast(error.message || 'Finance se nepovedlo uložit do cloudu');
           return null;
         }
-        if (!data?.id || !sameWriteScope()) return null;
         const live = (getState().finance || []).find((entry) => entry.id === item.id);
         if (!live) {
           // Záznam smazaný během requestu: propojit pozdní ACK s Košem/outboxem.
@@ -1297,7 +1357,7 @@
         live.cloudUpdatedAt = data.updated_at || '';
         item.cloudId = data.id;
         item.cloudUpdatedAt = data.updated_at || '';
-        const unchanged = JSON.stringify(cloudFinancePayload(live, user.id)) === sentSnapshot;
+        const unchanged = JSON.stringify({ ...cloudFinancePayload(live, user.id), id: insertId }) === sentSnapshot;
         live.syncStatus = unchanged ? '' : 'pending_update';
         if (!unchanged) markFinanceCloudPending('finance-transaction-changed-during-insert');
         persistStateSnapshot({ immediate: true });
