@@ -16,6 +16,7 @@ const source = cut('    const FINANCE_INSERT_UUID =','    // Per-instance single
   cut('    const financeTransactionInsertInFlight = new Map();','    async function cloudFinanceRow(');
 const tick = async()=>{for(let n=0;n<35;n++)await Promise.resolve();};
 function harness(mode='ok') {
+  let responseMode=mode;
   const state={cloud:{householdId:'house-one',userId:'member-1'},
     household:{id:'house-one'},activeProfileId:'profile-one',financeAccounts:[],finance:[]};
   const tables={finance_accounts:new Map(),finance_transactions:new Map()};
@@ -30,11 +31,11 @@ function harness(mode='ok') {
             inserts.push({table,payload:structuredClone(payload)});
             const exists=tables[table].get(payload.id);
             if(exists) return {data:null,error:{code:'23505',message:'duplicate key'}};
-            if(mode==='offline') return {data:null,error:{message:'network unreachable'}};
+            if(responseMode==='offline') return {data:null,error:{message:'network unreachable'}};
             const row={...payload,updated_at:'revision-1'};
-            if(mode==='changed') row.note='DIFFERENT REMOTE';
+            if(responseMode==='changed') row.note='DIFFERENT REMOTE';
             tables[table].set(payload.id,row);
-            if(mode==='lost'||mode==='changed') return {data:null,error:{message:'response lost'}};
+            if(responseMode==='lost'||responseMode==='changed') return {data:null,error:{message:'response lost'}};
             return {data:{id:payload.id,updated_at:'revision-1'},error:null};
           }};
         }};
@@ -71,7 +72,7 @@ function harness(mode='ok') {
     linkFinanceLateInsertToTrash:()=>false
   };
   const api=new Function(...Object.keys(deps),source+'\nreturn {cloudAddFinance,cloudAddFinanceAccount};')(...Object.values(deps));
-  return {state,mode,tables,inserts,reads,pending,toasts,snapshots,...api};
+  return {state,setMode(value){responseMode=value;},tables,inserts,reads,pending,toasts,snapshots,...api};
 }
 const newAccount=(id='local')=>({id,name:'Cash',openingBalance:2,syncStatus:'pending_add'});
 const newTx=(id='tx')=>({id,title:'Buy',amount:7,type:'expense',syncStatus:'pending_add'});
@@ -101,11 +102,18 @@ for (const kind of ['account','transaction']) {
     const sameId=rec.cloudInsertId;
     assert.match(sameId,/^[0-9a-f-]{36}$/i);
     assert.equal(e.tables[kind==='account'?'finance_accounts':'finance_transactions'].size,0);
-    e.mode='ok'; // Client mock closes over original mode; check retry UUID even when still offline.
-    assert.equal(await write(rec),null);
-    assert.equal(rec.cloudInsertId,sameId,'retry must not generate a new UUID');
-    assert.equal(rec.cloudId,undefined);
+    assert.equal(e.snapshots[0][kind==='account'?'accounts':'finance'][0].cloudInsertId,sameId,
+      'UUID must survive the saved snapshot before any remote ACK');
+    // Simulate app restart: replace the active object with its persisted copy.
+    const restored=structuredClone(e.snapshots[0][kind==='account'?'accounts':'finance'][0]);
+    if(kind==='account') e.state.financeAccounts=[restored]; else e.state.finance=[restored];
+    e.setMode('ok');
+    const receipt=await write(restored);
+    assert.equal(receipt?.id,sameId);
+    assert.equal(restored.cloudId,sameId);
+    assert.equal(restored.cloudInsertId,sameId,'restart retry must not generate a new UUID');
     assert.equal(e.inserts.length,2);
+    assert.equal(e.tables[kind==='account'?'finance_accounts':'finance_transactions'].size,1);
   }
   {
     const {e,rec,result,table}=await runCase(kind,'changed');
