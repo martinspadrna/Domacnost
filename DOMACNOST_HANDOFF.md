@@ -836,3 +836,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Finance: revizní CAS pro účet, rozpoznání skutečného souběhu, bezpečné volby konfliktu, žádné mazání dat nebo zásahy do SQL. Zpětná kompatibilita původních účtů bez revize: pokud mají lokální čekající editaci, nelze ji bezpečně odeslat bez vyřešení konfliktu; nový cloud read i INSERT už revizi uchovává.
 - Zbývá P0: **serverová idempotence účetních INSERT napříč zařízeními**. Projektový plugin Supabase nyní správný DB projekt `hyyehcskthqmncqlechi` čte; další krok je návrh kompatibilní migrace (unikátní per-household idempotency key nebo klientem generované stabilní UUID s ACK recovery), revizní RLS audit a samostatné bezpečné nasazení. Fyzicky ověřit obě volby konfliktu na testovacích záznamech PC ↔ mobil. Historické pending Garáž/Nastavení bez mazání.
 - Rollback k produkčnímu `v0.1_582`, commit `55c28e6e9072a620e3212d643634b3df1693825b` (nebo app commit `34cff99b...`) a předchozí Vercel deployment `dpl_CKQTTYyYhFjwADRwYQaqa6gStjGH`.
+
+
+### 20. 10. 2026 — v0.1_584 ROZPRACOVÁNO, NESLUČOVAT
+- Výchozí MAIN/produkce v0.1_583 na `9ab5de8362483da48a17082422e5dc337c3a5723`, pracovní branch `fix/p0-finance-insert-idempotence-584`.
+- Read-only závěr Supabase auditu: finance_accounts a finance_transactions mají `id uuid PRIMARY KEY`, takže stabilní klientský UUID umožní DB idempotenci opakovaného INSERTu bez změny schématu.
+- Do `finance.js` na pracovní větvi je připraven `ensureFinanceInsertId` (perzistence UUID před odesláním), opakovaný INSERT pod stejným UUID a read-only ACK recovery ověřující celý payload i household; žádná DB úprava.
+- Jsou jen částečně upravené verze `index.html`, `manifest.webmanifest`, `sw.js`; při pokusu o aktualizaci `module-loader.js` nástroj dvakrát vrátil blokaci bezpečnostními kontrolami. **Verzování 584 JE NEKONZISTENTNÍ, automatické testy a reálné zařízení nebyly provedeny. NESLUČOVAT do main ani nenasazovat na produkci.**
+- Pro dokončení je nutné sjednotit `module-loader.js`, `app.js`, `package.json`, `release.json`, `ios-install.html`, testy PWA, upravit INSERT/ACK test harnessy na klientem dodávaná stabilní UUID, přidat test pro ztracený ACK a rozdílný obsah, spustit full CI/Chrome E2E. Následně auditovat skutečnou DB RLS přes read-only dotaz a ověřit všechny negative cases. Nepokoušet se obcházet bezpečnostní blokaci nástroje.
+- **Produkce zůstává v0.1_583 READY**, bez ztráty dat, bez změn SQL, bez merge.
