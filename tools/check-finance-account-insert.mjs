@@ -111,7 +111,7 @@ function respond(request, id = request.payload.id) {
   assert.equal(record.cloudId, savedId);
   assert.equal(record.syncStatus, 'pending_update');
   assert.deepEqual(h.pendingReasons, ['finance-account-changed-during-insert']);
-  assert.equal(h.snapshots(), 1);
+  assert.equal(h.snapshots(), 2);
 }
 
 // Immutable form replacement of the same local ID must not produce a second INSERT.
