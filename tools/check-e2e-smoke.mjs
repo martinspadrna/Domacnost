@@ -1979,7 +1979,7 @@ async function run() {
     else ok('Finance: chybějící / nesprávná DB odpověď není úspěšný zápis.');
 
     const financeSource = readFileSync(join(projectRoot, 'finance.js'), 'utf8');
-    const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
+    const accountUpdateSource = financeSource.split('async function cloudUpdateFinanceAccount(account, options = {}) {')[1]?.split('function cloudFinancePayload(item, userId)')[0] || '';
     const accountInsertSource = financeSource.split('async function cloudAddFinanceAccount(account) {')[1]?.split('function financeCloudUpdateAcknowledged')[0] || '';
     if (!accountInsertSource.includes('financeAccountInsertInFlight.has(flightKey)') ||
         !accountInsertSource.includes('financeAccountInsertInFlight.set(flightKey, job)') ||
@@ -2007,9 +2007,11 @@ async function run() {
     else ok('Finance: INSERT čeká na potvrzená ID všech propojených účtů.');
 
     const txUpdateSource = financeSource.split('async function cloudUpdateFinance(item, options = {}) {')[1]?.split('async function cloudLoadFinance(showMessage = true)')[0] || '';
-    if (!accountUpdateSource.includes(".select('id')") ||
+    if (!accountUpdateSource.includes(".select('id,updated_at')") ||
+        !accountUpdateSource.includes(".eq('updated_at', expectedRevision)") ||
+        !accountUpdateSource.includes('account.cloudUpdatedAt = data.updated_at') ||
         !accountUpdateSource.includes('financeCloudUpdateAcknowledged(data, cloudId)') ||
-        !accountUpdateSource.includes('if (!client || !cloudId || !householdId) return false;') ||
+        !accountUpdateSource.includes("if (!client || !cloudId || !householdId || (account.syncStatus === 'conflict' && !options.skipConflict)) return false;") ||
         !txUpdateSource.includes('if (!expectedRevision') ||
         !txUpdateSource.includes('await ensureFinanceTransactionAccounts(item, householdId)') ||
         !txUpdateSource.includes('financeTransactionAccountsBound(item, payload)') ||
