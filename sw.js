@@ -1,8 +1,9 @@
 const CACHE_PREFIX = 'domacnost-plus-';
-const CACHE_NAME = `${CACHE_PREFIX}v0-1-581`;
+const CACHE_NAME = `${CACHE_PREFIX}v0-1-582`;
 const APP_ASSETS = [
   './',
   './index.html',
+  './ios-install.html',
   './styles.css',
   './icon-assets.css',
   './module-loader.js',
@@ -17,6 +18,7 @@ const APP_ASSETS = [
   './icons/domacnost-plus-windows.ico',
   './icons/apple-touch-icon.png',
   './icons/apple-touch-icon-precomposed.png',
+  './icons/domacnost-plus-ios-180.png',
   './icons/domacnost-plus-icon-16.png',
   './icons/domacnost-plus-icon-32.png',
   './icons/domacnost-plus-icon-48.png',
@@ -170,7 +172,7 @@ self.addEventListener('fetch', (event) => {
 
   const isManifest = requestUrl.pathname.endsWith('/manifest.webmanifest');
   const isReleaseMarker = requestUrl.pathname.endsWith('/release.json');
-  const isInstallIcon = requestUrl.pathname.includes('/icons/') && /apple-touch-icon|favicon|domacnost-plus-icon|maskable/.test(requestUrl.pathname);
+  const isInstallIcon = requestUrl.pathname.includes('/icons/') && /apple-touch-icon|favicon|domacnost-plus-icon|domacnost-plus-ios|maskable/.test(requestUrl.pathname);
 
   if (isReleaseMarker) {
     event.respondWith(fetch(event.request, { cache: 'no-store' }));
@@ -182,6 +184,18 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request)
         .then((response) => cacheNetworkResponse(event.request, response))
         .catch(() => matchCached(event.request, null))
+    );
+    return;
+  }
+
+
+  // The iOS Edge install page must never fall back to index.html from the
+  // generic navigation cache; serve its own committed HTML, network-first.
+  if (requestUrl.pathname.endsWith('/ios-install.html')) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then((response) => cacheNetworkResponse(event.request, response))
+        .catch(() => matchCached(event.request, './ios-install.html'))
     );
     return;
   }

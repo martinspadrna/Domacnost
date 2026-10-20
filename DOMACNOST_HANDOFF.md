@@ -792,3 +792,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Vykonatelný test `tools/check-pwa-icon-alpha.mjs` kontroluje přesnou PNG alfu, AND masku/DIB strukturu ICO i manifest a precache; full pipeline a Chrome E2E PASS. Nepřepisují se jiné funkce ani uživatelská data.
 - **Fyzická kontrola Windows ikony ještě není uživatelem potvrzena.** Nainstalované PWA ikonky spravují Windows/Chromium a mohou mít vlastní cache/backplate, i když zdroj je RGBA. Pokud se problém objeví i na 581, nabídnout uživateli ruční nastavení desktop shortcut ikony pomocí `https://domacnost-plus.vercel.app/icons/domacnost-plus-windows.ico?v=0-1-581` (Vlastnosti → Zástupce → Změnit ikonu). Pokud nezafunguje, vyžádat screenshot + zda Chrome/Edge + Windows 10/11; další commit bez přesné diagnózy by byl nepodložený.
 - Návrat dostupný k `v0.1_580` na commitu `7c1b5cb3791e086e9f1a54200330b7781700f2c1`, případně revert PR #71. Před odinstalací PWA ověřit pending lokální data.
+
+
+### 20. 10. 2026 — v0.1_582 TEST ONLY (Edge iOS, RaK-ověřené PWA ikony)
+- Oddělená větev `test/ios-edge-pwa-icon-v582-20261020` založena z produkčního main 889f5eb (v0.1_581). Main ani produkce se touto změnou nemění.
+- Nový skutečný soubor `ios-install.html` v Git repozitáři, s neprůhledným originálním logem 180×180 px v `rel=apple-touch-icon` jako `data:image/png;base64` a okamžitým `location.replace` do `index.html?source=pwa` při spuštění z plochy.
+- Nová neprůhledná Apple ikona `icons/domacnost-plus-ios-180.png`, samostatná oproti zachovaným průhledným ICO/PNG Windows a Android. Hlavní index odkazuje pouze na nový neprůhledný Apple obrázek. Manifest pro Android ponechává `purpose:any` a existující průhledné ikony.
+- Verze, asset query, release marker, lazy loader a SW cache přecházejí na 582. SW přednačítá instalační soubor a iOS PNG, upřednostňuje síť u instalační stránky, takže předchozí navigační fallback neskryje její obsah.
+- Přidán samostatný test `tools/check-ios-install.mjs`; DB, synchronizace, vzhled a moduly beze změn.
+- **TEST nasazení a skutečné HTTP 200 je nutné ověřit po sestavení preview, nesmí být zaměněno za samotné READY.** Fyzickou ikonu na iPhonu potvrzuje uživatel.
+- Rollback testu: návrat testovací větve na commit `889f5eb`, produkční main i v0.1_581 jsou nedotčené.
