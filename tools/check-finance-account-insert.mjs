@@ -25,7 +25,7 @@ function harness(record) {
         insert(payload) {
           return {
             select(cols) {
-              assert.equal(cols, 'id');
+              assert.equal(cols, 'id,updated_at');
               return {
                 single() {
                   return new Promise(resolve => requests.push({ payload, resolve }));
@@ -71,7 +71,7 @@ async function flushRequests() {
 }
 
 function respond(request, id = 'remote-1') {
-  request.resolve({ data: { id }, error: null });
+  request.resolve({ data: { id, updated_at: 'rev-insert' }, error: null });
 }
 
 // Two concurrent callers share one INSERT and both see the confirmed ID.
@@ -87,6 +87,7 @@ function respond(request, id = 'remote-1') {
   assert.equal(a?.id, 'remote-1');
   assert.equal(b?.id, 'remote-1');
   assert.equal(record.cloudId, 'remote-1');
+  assert.equal(record.cloudUpdatedAt, 'rev-insert');
   assert.equal(record.syncStatus, '');
   assert(h.api.financeAccountInsertConfirmed(record, b));
   assert.equal(h.snapshots(), 1);
