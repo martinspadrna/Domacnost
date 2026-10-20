@@ -811,3 +811,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Z testovacího aliasu byla opětovně zjištěna skutečná HTTP odpověď 200 pro `ios-install.html`, `icons/domacnost-plus-ios-180.png?v=0-1-582`, `manifest.webmanifest?v=0-1-582`, `index.html`; Vercel API hlásí `protectionBypass.*.scope=alias-protection-override` na testovacím aliasu.
 - Vercel produkce stále READY z commitu `889f5eb19d077387278fabcde13b473e798eefea` (v0.1_581); žádné změny DB, sync ani aplikační logiky. UI instalované aplikace na fyzickém iPhone musí prověřit uživatel.
 - Při ukončení testu je možné preview výjimku odvolat (`alias-protection-override action=revoke`) bez dopadu na produkci. Oproti původnímu stavu jde pouze o změnu přístupu k testovacímu preview.
+
+### 20. 10. 2026 — v0.1_582 publikována na MAIN a produkci
+- Na výslovné přání uživatele se MAIN posunul bez force z `889f5eb19d077387278fabcde13b473e798eefea` na `34cff99bde76e3848e9defe0d450ae30ec8dee20`; předchozí produkční verze v0.1_581 je rollback bod.
+- Porovnání hlavní a testovací větve před nasazením: jen 12 souborů PWA/iOS ikon, instalační stránky, verzí, testů a handoffu; bez změn financí, databáze a synchronizace.
+- Vercel produkční deployment `dpl_8hNFNSUUQPZa5FLEGR93dj9F27H2` dosáhl stavu READY, doména `https://domacnost-plus.vercel.app` přidělena tomuto deploymentu. Produkční build prošel testy `check-ios-install`, `check-pwa-icon-alpha`, `check-release` a dalšími.
+- Produkční HTTP 200 ověřeno pro `/ios-install.html`, `/icons/domacnost-plus-ios-180.png?v=0-1-582`, `/index.html`, `/manifest.webmanifest?v=0-1-582`, `/sw.js`, `/release.json`, `/icons/domacnost-plus-windows.ico?v=0-1-582` a `/icons/domacnost-plus-icon-192.png?v=0-1-582`.
+- Používat veřejný iOS instalační odkaz `https://domacnost-plus.vercel.app/ios-install.html` namísto testovacího aliasu. Fyzické ověření výsledné ikony a spuštění standalone na uživatelově iPhone zůstává uživatelským úkolem; přes HTTP nelze ověřit SpringBoard cache.
+- Produkční runtime log pro nový deployment: žádné error/fatal za posledních 30 minut v okamžiku kontroly. Testovací alias má dosud explicitní Vercel výjimku z ochrany; pokud test skončí, zvážit odvolání této JEDINÉ výjimky.
