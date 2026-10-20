@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=join(dirname(fileURLToPath(import.meta.url)),'..');
 const source=readFileSync(join(root,'finance.js'),'utf8');
-const first=source.indexOf('    const financeAccountUpdateInFlight = new Map();');
+const first=source.indexOf('    async function cloudFinanceAccountRow(');
 const last=source.indexOf('    function cloudFinancePayload(item, userId)', first);
 assert(first>=0 && last>first);
 const slice=source.slice(first,last);
