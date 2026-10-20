@@ -802,3 +802,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Přidán samostatný test `tools/check-ios-install.mjs`; DB, synchronizace, vzhled a moduly beze změn.
 - **TEST nasazení a skutečné HTTP 200 je nutné ověřit po sestavení preview, nesmí být zaměněno za samotné READY.** Fyzickou ikonu na iPhonu potvrzuje uživatel.
 - Rollback testu: návrat testovací větve na commit `889f5eb`, produkční main i v0.1_581 jsou nedotčené.
+
+
+### 20. 10. 2026 večer — TEST v0.1_582: stabilní instalační alias bez dočasného Vercel share odkazu
+- Zjistilo se, že Vercel preview je pod `ssoProtection.enabled=true` (ochrana Vercel Authentication); dočasný `_vercel_share` odkaz expiruje 27. 10. 2026. Přidání přes Edge a otevření ve standalone iOS nemusí sdílet cookies.
+- Jen pro testovací branch alias `domacnost-git-test-ios-edge-pwa-df2aa1-martinspadrnas-projects.vercel.app` na preview `dpl_9MRcn2RVWCQrMUxc9mhZTWVscjBU` se nastavila Vercel `alias-protection-override` exception pro tento alias. Toto je přístupová výjimka: tento JEDINÝ preview hostname je veřejně dostupný; projektové pravidlo autentizace na ostatních doménách ani produkční alias se nemění.
+- Použít trvalý instalační odkaz `https://domacnost-git-test-ios-edge-pwa-df2aa1-martinspadrnas-projects.vercel.app/ios-install.html` bez query secretu. Je to testovací app s nezměněným stávajícím aplikačním Supabase přihlášením.
+- Z testovacího aliasu byla opětovně zjištěna skutečná HTTP odpověď 200 pro `ios-install.html`, `icons/domacnost-plus-ios-180.png?v=0-1-582`, `manifest.webmanifest?v=0-1-582`, `index.html`; Vercel API hlásí `protectionBypass.*.scope=alias-protection-override` na testovacím aliasu.
+- Vercel produkce stále READY z commitu `889f5eb19d077387278fabcde13b473e798eefea` (v0.1_581); žádné změny DB, sync ani aplikační logiky. UI instalované aplikace na fyzickém iPhone musí prověřit uživatel.
+- Při ukončení testu je možné preview výjimku odvolat (`alias-protection-override action=revoke`) bez dopadu na produkci. Oproti původnímu stavu jde pouze o změnu přístupu k testovacímu preview.
