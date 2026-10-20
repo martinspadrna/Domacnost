@@ -1,9 +1,9 @@
 # Domácnost+ — centrální handoff
 
-Aktualizováno: 19. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
+Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_581** (PR #71, squash `3f48d4c4c0a3364230b954eb737587690798de49`, Vercel READY, full CI a skutečné Chrome E2E PASS na PR i produkčním `main`). Při zahájení nového chatu vždy ověřit aktuální HEAD, release marker a produkční alias.
+- **Aktuální produkční verze: v0.1_583** (PR #72, squash `b61589143ba0937d216366a49df0b6d312816152`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_582 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -829,3 +829,10 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Vykonatelný test `tools/check-finance-account-cas.mjs` (přidán do check:finance) + adaptace stávajících testů Finance. Sjednocena verze v APP_BUILD, module loaderu, release.json, HTML, SW, manifestu a checkech.
 - **Bez databázových změn a mazání dat.** Zbytek P0: serverová idempotence Finance INSERT napříč zařízeními (nynější DB nabízí pouze UUID PK, klient dosud používá generovaný serverový UUID), ověření živé CAS souběžné editace na dvou zařízeních a dvou variant konfliktu, historické pending Garáž/Nastavení. Případné zavedení idempotency_key/DB migrace vyžaduje samostatný návrh kompatibility a bezpečné schválení.
 - Release podmínky: full CI + Chrome E2E PASS a preview ověření, následně PR merge do main a produkční Vercel READY + HTTP kontrola. Test musí zvlášť prověřit, že se conflict stav v úpravě účtu nepřepíše na pending_update.
+
+### 20. 10. 2026 — v0.1_583 PRODUKCE, P0 účetní CAS
+- PR #72 `https://github.com/martinspadrna/Domacnost/pull/72`, squash `b61589143ba0937d216366a49df0b6d312816152` do `main`; produkční Vercel `dpl_xajp6XTXBH4uHKM5ftcDQpDxigWC` READY, alias `domacnost-plus.vercel.app`.
+- GitHub PR full CI + Chrome E2E PASS run `39474651760`, produkční MAIN full CI + E2E PASS run `39474909643`. Vercel preview v583 `dpl_993yetGywYQ2KvpVtEXP8pdPfQV7` READY. Po merge produkční HTTP 200 pro `release.json`, `index.html`, `finance.js`, `ios-install.html`, `manifest.webmanifest`, `sw.js`; release marker v0.1_583.
+- Finance: revizní CAS pro účet, rozpoznání skutečného souběhu, bezpečné volby konfliktu, žádné mazání dat nebo zásahy do SQL. Zpětná kompatibilita původních účtů bez revize: pokud mají lokální čekající editaci, nelze ji bezpečně odeslat bez vyřešení konfliktu; nový cloud read i INSERT už revizi uchovává.
+- Zbývá P0: **serverová idempotence účetních INSERT napříč zařízeními**. Projektový plugin Supabase nyní správný DB projekt `hyyehcskthqmncqlechi` čte; další krok je návrh kompatibilní migrace (unikátní per-household idempotency key nebo klientem generované stabilní UUID s ACK recovery), revizní RLS audit a samostatné bezpečné nasazení. Fyzicky ověřit obě volby konfliktu na testovacích záznamech PC ↔ mobil. Historické pending Garáž/Nastavení bez mazání.
+- Rollback k produkčnímu `v0.1_582`, commit `55c28e6e9072a620e3212d643634b3df1693825b` (nebo app commit `34cff99b...`) a předchozí Vercel deployment `dpl_CKQTTYyYhFjwADRwYQaqa6gStjGH`.
