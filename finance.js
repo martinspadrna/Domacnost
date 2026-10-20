@@ -1044,7 +1044,7 @@
         const payload = cloudFinanceAccountPayload(current, user.id);
         if (payload.household_id !== householdId || !sameWriteScope()) return null;
         const sentSnapshot = JSON.stringify(payload);
-        const { data, error } = await client.from('finance_accounts').insert(payload).select('id').single();
+        const { data, error } = await client.from('finance_accounts').insert(payload).select('id,updated_at').single();
         if (!sameWriteScope()) return null;
         if (error) {
           showToast(error.message || 'Účet se nepovedlo uložit do cloudu');
@@ -1056,6 +1056,7 @@
         if (!live) {
           // Uživatel účet mezitím smazal: ID patří do Koše, ne do zaniklého objektu.
           account.cloudId = data.id;
+          account.cloudUpdatedAt = data.updated_at || '';
           linkFinanceLateInsertToTrash('financeAccounts', account.id, householdId, data);
           return null;
         }
@@ -1063,7 +1064,9 @@
         // ID uložit i tehdy, když uživatel během INSERT změnil hodnoty.
         // Další synchronizace pak provede UPDATE, ne duplicitní INSERT.
         live.cloudId = data.id;
+        live.cloudUpdatedAt = data.updated_at || '';
         account.cloudId = data.id;
+        account.cloudUpdatedAt = data.updated_at || '';
         const unchanged = JSON.stringify(cloudFinanceAccountPayload(live, user.id)) === sentSnapshot;
         live.syncStatus = unchanged ? '' : 'pending_update';
         if (!unchanged) markFinanceCloudPending('finance-account-changed-during-insert');
@@ -1083,87 +1086,96 @@
       return Boolean(expectedId && data?.id && String(data.id) === String(expectedId));
     }
 
-    // Paralelní UPDATE stejného účtu v jedné instanci nesmí přeházet pořadí DB zápisů.
+    // Serverové porovnání revizí a načtení pouze účtu vlastní domácnosti.
+    async function cloudFinanceAccountRow(cloudId, householdId) {
+      const client = getSupabaseClient();
+      if (!client || !cloudId || !householdId) return null;
+      const { data, error } = await client.from('finance_accounts')
+        .select('id,household_id,name,account_type,owner_label,opening_balance,include_in_total,note,is_archived,created_at,updated_at')
+        .eq('id', cloudId).eq('household_id', householdId).maybeSingle();
+      return !error && data?.id === cloudId && data.household_id === householdId ? data : null;
+    }
+
     const financeAccountUpdateInFlight = new Map();
 
-    async function cloudUpdateFinanceAccount(account) {
-      const client = getSupabaseClient();
-      const householdId = getState().cloud?.householdId;
+    async function cloudUpdateFinanceAccount(account, options = {}) {
+      const client = getSupabaseClient(), householdId = getState().cloud?.householdId;
       const cloudId = account?.cloudId;
-      // Neexistující spojení ani chybějící ID nesmějí znamenat potvrzený zápis.
-      if (!client || !cloudId || !householdId) return false;
+      if (!client || !cloudId || !householdId || (account.syncStatus === 'conflict' && !options.skipConflict)) return false;
       const flightKey = [householdId, cloudId].join(':');
-      const requesterScope = {
-        userId: String(getState().cloud?.userId || ''),
-        profileId: currentProfileId(),
-        localHouseholdId: currentHouseholdId(false)
-      };
-      const requesterStillCurrent = () => getState().cloud?.householdId === householdId &&
-        String(getState().cloud?.userId || '') === requesterScope.userId &&
-        currentProfileId() === requesterScope.profileId &&
-        currentHouseholdId(false) === requesterScope.localHouseholdId &&
-        account.cloudId === cloudId &&
-        (getState().financeAccounts || []).includes(account);
-      const existingFlight = financeAccountUpdateInFlight.get(flightKey);
-      if (existingFlight) {
-        // Dvě shodné UPDATE čekají na jediný DB zápis. Pokud server první
-        // potvrdil a účet zůstal nezměněný, je potvrzen i druhý caller.
-        // Jiný uživatel/profil nebo novější lokální editace zůstanou pending.
-        const sameOrigin = existingFlight.scope.userId === requesterScope.userId &&
-          existingFlight.scope.profileId === requesterScope.profileId &&
-          existingFlight.scope.localHouseholdId === requesterScope.localHouseholdId;
-        if (!sameOrigin || !requesterStillCurrent() || !requesterScope.userId) {
-          await existingFlight.job;
+      const scope = { userId: String(getState().cloud?.userId || ''),
+        profileId: currentProfileId(), localHouseholdId: currentHouseholdId(false) };
+      const sameAccount = () => getState().cloud?.householdId === householdId &&
+        String(getState().cloud?.userId || '') === scope.userId &&
+        currentProfileId() === scope.profileId &&
+        currentHouseholdId(false) === scope.localHouseholdId &&
+        account.cloudId === cloudId && (getState().financeAccounts || []).includes(account);
+      const flight = financeAccountUpdateInFlight.get(flightKey);
+      if (flight) {
+        const sameScope = flight.scope.userId === scope.userId &&
+          flight.scope.profileId === scope.profileId &&
+          flight.scope.localHouseholdId === scope.localHouseholdId;
+        if (!sameScope || !sameAccount() || !scope.userId) {
+          await flight.job;
           return false;
         }
-        const requestedSnapshot = JSON.stringify(cloudFinanceAccountPayload(account, requesterScope.userId));
-        const confirmed = await existingFlight.job;
-        return confirmed === true && requesterStillCurrent() &&
-          account.syncStatus !== 'conflict' &&
-          JSON.stringify(cloudFinanceAccountPayload(account, requesterScope.userId)) === requestedSnapshot;
+        const snapshot = JSON.stringify(cloudFinanceAccountPayload(account, scope.userId));
+        const ok = await flight.job;
+        return ok === true && sameAccount() && account.syncStatus !== 'conflict' &&
+          snapshot === JSON.stringify(cloudFinanceAccountPayload(account, scope.userId));
       }
       const job = (async () => {
-      const requestedUserId = String(getState().cloud?.userId || '');
-      const requestedProfileId = currentProfileId();
-      const requestedLocalHouseholdId = currentHouseholdId(false);
-      const sameWriteScope = () => getState().cloud?.householdId === householdId &&
-        String(getState().cloud?.userId || '') === requestedUserId &&
-        currentProfileId() === requestedProfileId &&
-        currentHouseholdId(false) === requestedLocalHouseholdId;
-      const sameAccount = () => sameWriteScope() && account.cloudId === cloudId &&
-        (getState().financeAccounts || []).includes(account);
-      const user = await refreshCloudSession(false);
-      if (!user || !sameAccount() || (requestedUserId && String(user.id) !== requestedUserId)) return false;
-      const payload = cloudFinanceAccountPayload(account, user.id);
-      delete payload.created_by;
-      const snapshot = JSON.stringify(payload);
-      if (!sameAccount()) return false;
-      const { data, error } = await client.from('finance_accounts')
-        .update(payload)
-        .eq('id', cloudId)
-        .eq('household_id', householdId)
-        .select('id')
-        .maybeSingle();
-      if (!sameAccount()) return false;
-      if (error) {
-        showToast(error.message || 'Účet se nepovedlo upravit v cloudu');
-        return false;
-      }
-      // 0 řádků = chyba / neexistující účet; nic se nesmí označit za uložené.
-      if (!financeCloudUpdateAcknowledged(data, cloudId)) return false;
-      // Mezitím se mohla změnit domácnost, záznam nebo lokální hodnoty.
-      if (!sameAccount() ||
-          JSON.stringify((() => {
-            const current = cloudFinanceAccountPayload(account, user.id);
-            delete current.created_by;
-            return current;
-          })()) !== snapshot) return false;
-      return true;
+        const user = await refreshCloudSession(false);
+        if (!user || !sameAccount() || (scope.userId && String(user.id) !== scope.userId)) return false;
+        const payload = cloudFinanceAccountPayload(account, user.id);
+        delete payload.created_by;
+        const snapshot = JSON.stringify(payload);
+        const unchanged = () => {
+          if (!sameAccount()) return false;
+          const current = cloudFinanceAccountPayload(account, user.id);
+          delete current.created_by;
+          return JSON.stringify(current) === snapshot;
+        };
+        const expectedRevision = options.expectedRevision || account.cloudUpdatedAt || '';
+        const makeConflict = (remote) => {
+          if (!remote?.updated_at || !unchanged() || options.skipConflict) return false;
+          account.syncStatus = 'conflict';
+          registerCloudRecordConflict({
+            collection: 'finance', table: 'finance_accounts', cloudId, localId: account.id,
+            operation: 'update', label: account.name || 'Finanční účet',
+            expectedRevision, remoteRevision: remote.updated_at, localRecord: account, remoteRow: remote
+          });
+          return true;
+        };
+        // Bez známé původní revize nepřebírat nejnovější cloudovou jako CAS základ.
+        if (!expectedRevision) {
+          const remote = await cloudFinanceAccountRow(cloudId, householdId);
+          if (!unchanged()) return false;
+          return makeConflict(remote) ? 'conflict' : false;
+        }
+        if (!unchanged()) return false;
+        payload.updated_at = new Date().toISOString();
+        const { data, error } = await client.from('finance_accounts')
+          .update(payload).eq('id', cloudId).eq('household_id', householdId)
+          .eq('updated_at', expectedRevision).select('id,updated_at').maybeSingle();
+        if (!sameAccount()) return false;
+        if (error) {
+          showToast(error.message || 'Účet se nepovedlo upravit v cloudu');
+          return false;
+        }
+        if (!data) {
+          const remote = await cloudFinanceAccountRow(cloudId, householdId);
+          if (!unchanged()) return false;
+          return makeConflict(remote) ? 'conflict' : false;
+        }
+        if (!financeCloudUpdateAcknowledged(data, cloudId) || !data.updated_at) return false;
+        // Novou revizi ponechat i tehdy, když proběhla další místní editace.
+        account.cloudUpdatedAt = data.updated_at;
+        return unchanged();
       })();
-      financeAccountUpdateInFlight.set(flightKey, { job, scope: requesterScope });
-      try {
-        return await job;
-      } finally {
+      financeAccountUpdateInFlight.set(flightKey, { job, scope });
+      try { return await job; }
+      finally {
         if (financeAccountUpdateInFlight.get(flightKey)?.job === job) financeAccountUpdateInFlight.delete(flightKey);
       }
     }
@@ -1506,7 +1518,7 @@
       });
       const { data: accountData, error: accountError } = await cloudFinanceFetchAll(
         client, 'finance_accounts',
-        'id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at',
+        'id,name,account_type,owner_label,opening_balance,include_in_total,note,created_at,updated_at',
         requestedHouseholdId
       );
       if (!sameReadScope()) return false;
@@ -1530,7 +1542,8 @@
         openingBalance: Number(item.opening_balance || 0),
         includeInTotal: item.include_in_total !== false,
         note: item.note || '',
-        createdAt: item.created_at || new Date().toISOString()
+        createdAt: item.created_at || new Date().toISOString(),
+        cloudUpdatedAt: item.updated_at || ''
       }));
       const stagedAccounts = [...cloudAccounts, ...localAccounts];
       const cloudAccountById = Object.fromEntries(stagedAccounts.filter((account) => account.cloudId).map((account) => [account.cloudId, account]));
@@ -1653,6 +1666,29 @@
     }
 
     async function resolveFinanceRecordConflict(conflict, strategy) {
+      if (conflict.table === 'finance_accounts') {
+        const householdId = getState().cloud?.householdId;
+        const userId = String(getState().cloud?.userId || '');
+        const profileId = currentProfileId(), localId = currentHouseholdId(false);
+        const account = (getState().financeAccounts || []).find(entry =>
+          entry.id === conflict.localId && entry.cloudId === conflict.cloudId);
+        if (!account || account.syncStatus !== 'conflict' || !householdId || !userId) return false;
+        if (strategy === 'cloud') {
+          const remote = await cloudFinanceAccountRow(conflict.cloudId, householdId);
+          if (!remote?.updated_at || getState().cloud?.householdId !== householdId ||
+              String(getState().cloud?.userId || '') !== userId ||
+              currentProfileId() !== profileId || currentHouseholdId(false) !== localId ||
+              !(getState().financeAccounts || []).includes(account) || account.syncStatus !== 'conflict') return false;
+          Object.assign(account, {
+            name: remote.name || account.name, accountType: remote.account_type || 'other',
+            ownerLabel: remote.owner_label || '', openingBalance: Number(remote.opening_balance || 0),
+            includeInTotal: remote.include_in_total !== false, note: remote.note || '',
+            cloudUpdatedAt: remote.updated_at, syncStatus: ''
+          });
+          return true;
+        }
+        return await cloudUpdateFinanceAccount(account, { expectedRevision: conflict.remoteRevision, skipConflict: true }) === true;
+      }
       if (strategy === 'cloud') {
         if (!conflict.remoteRow) return false;
         applyFinanceCloudRow(conflict.remoteRow, conflict.localRecord || {});
@@ -2240,7 +2276,7 @@
         showToast('Účet upraven v cloudu');
         return;
       }
-      next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
+      if (next.syncStatus !== 'conflict') next.syncStatus = next.cloudId ? 'pending_update' : 'pending_add';
       markFinanceCloudPending('update-finance-account-failed');
       persistStateSnapshot();
       requestRender();
@@ -2400,7 +2436,7 @@
       if (!financeSyncBatchMatches(scope)) return;
       if (!(getState().financeAccounts || []).includes(account)) return;
       if (!financeAccountInsertConfirmed(account, saved) && saved !== true) {
-        account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
+        if (account.syncStatus !== 'conflict') account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
         markFinanceCloudPending('sync-finance-account-failed');
         persistStateSnapshot();
         return;
@@ -2435,7 +2471,7 @@
           account.syncStatus = '';
           count += 1;
         } else {
-          account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
+          if (account.syncStatus !== 'conflict') account.syncStatus = account.cloudId ? 'pending_update' : 'pending_add';
           markFinanceCloudPending('sync-finance-account-failed');
         }
         await yieldToMainThread();
