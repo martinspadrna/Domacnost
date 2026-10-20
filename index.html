@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-title" content="Domácnost+" />
     <meta name="application-name" content="Domácnost+" />
     <meta name="msapplication-TileImage" content="./icons/domacnost-plus-icon-180.png?v=0-1-583" />
-    <title>Domácnost+ v.0.1_582</title>
+    <title>Domácnost+ v.0.1_583</title>
     <link rel="manifest" href="./manifest.webmanifest?v=0-1-583" />
     <link rel="shortcut icon" href="./icons/domacnost-plus-windows.ico?v=0-1-583" />
     <link rel="icon" href="./icons/favicon.ico?v=0-1-583" sizes="any" />
@@ -98,7 +98,7 @@
       window.__DOMACNOST_BOOT_TIMEOUT__ = window.setTimeout(function () {
         var root = document.getElementById('app');
         if (window.__DOMACNOST_APP_STARTED__ || !root || !root.querySelector('.boot-loading-card')) return;
-        root.innerHTML = '<div class="boot-fallback-screen"><section class="boot-fallback-card"><div class="brand-mark big logo-mark"><img src="./icons/domacnost-plus-icon-180.png" alt="Domácnost+" loading="eager"></div><span class="badge">Domácnost+ v.0.1_582</span><h1>Aplikace se nenačetla</h1><p>Vypadá to, že se po aktualizaci nespustil hlavní soubor aplikace. Nejčastěji za to může stará PWA cache v prohlížeči.</p><div class="form-actions"><button class="primary-btn" type="button" data-boot-reload>Obnovit aplikaci</button><button class="ghost-btn" type="button" data-boot-clear>Vyčistit cache a obnovit</button></div><p class="small-muted">Tahle obnova nemaže data domácnosti, čistí jen cache aplikace v prohlížeči.</p></section></div>';
+        root.innerHTML = '<div class="boot-fallback-screen"><section class="boot-fallback-card"><div class="brand-mark big logo-mark"><img src="./icons/domacnost-plus-icon-180.png" alt="Domácnost+" loading="eager"></div><span class="badge">Domácnost+ v.0.1_583</span><h1>Aplikace se nenačetla</h1><p>Vypadá to, že se po aktualizaci nespustil hlavní soubor aplikace. Nejčastěji za to může stará PWA cache v prohlížeči.</p><div class="form-actions"><button class="primary-btn" type="button" data-boot-reload>Obnovit aplikaci</button><button class="ghost-btn" type="button" data-boot-clear>Vyčistit cache a obnovit</button></div><p class="small-muted">Tahle obnova nemaže data domácnosti, čistí jen cache aplikace v prohlížeči.</p></section></div>';
         root.querySelector('[data-boot-reload]')?.addEventListener('click', function () { window.location.reload(); });
         root.querySelector('[data-boot-clear]')?.addEventListener('click', async function () {
           try {
