@@ -3,7 +3,7 @@
 Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_583** (PR #72, squash `b61589143ba0937d216366a49df0b6d312816152`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_582 je rollback bod.
+- **Aktuální produkční verze: v0.1_584** (PR #73, squash `03a178f26266c5dac81701f71702431c104c5cde`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_583 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -853,3 +853,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - APP_BUILD, APP_VERSION, index.html, sw.js, manifest, release.json, module PWA testy, iOS instalační stránka a balíček mají v584. **Zůstává pouze `module-loader.js`: `const ASSET_VERSION = '0-1-583';` → `const ASSET_VERSION = '0-1-584';`.** GitHub `update_file` při dvou pokusech o tento konkrétní soubor vrátil bezpečnostní blokaci. Nepokoušet se ji obcházet alternativními rozhraními; změnu je třeba povoleným způsobem dokončit.
 - Vercel preview `dpl_7awJeeeCGizNdQikLmfeS2dwqG23` ukončeno ERROR v `npm run check:release`. Do tohoto bodu prošly všechny postupné statické a vykonatelné kontroly včetně `check:finance` s novým testem. Výpis `check-release` potvrzuje, že **jediná zbývající chyba** je `module-loader.js ASSET_VERSION=583 neodpovídá APP_BUILD=584`.
 - **Neprovádět merge ani produkční deploy před sjednocením loaderu a následným kompletním CI a Chrome E2E.** Produkční main v0.1_583 `9ab5de8362483da48a17082422e5dc337c3a5723` nadále READY, žádné SQL migrace ani ztráta dat.
+
+
+### 20. 10. 2026 — FINÁLNÍ RELEASE v0.1_584 NA MAIN A PRODUKCI
+- P0 Finance INSERT idempotence: vydá se stabilní UUID pro finanční účet/pohyb, perzistuje se lokálně ještě před síťovým requestem, při opakování se znovu použije stejné UUID PK; nejednoznačná odpověď se dořeší čtením stejného řádku se stejným UUID a přesně shodným odeslaným obsahem a `household_id`. Rozdílný/nesprávný řádek není ACK. Není nutná SQL migrace.
+- Dříve blokovaná úprava `module-loader.js` **ÚSPĚŠNĚ PROVEDENA**, `const ASSET_VERSION = '0-1-584'` commit `54cc1f8f2f8dfeb4eb6f29fa8a48ff76414a1f2d`. Starší WIP poznámky výše o nesouladu a zákazu merge jsou historické a již neplatí.
+- PR <https://github.com/martinspadrna/Domacnost/pull/73> je squash-merged do main jako `03a178f26266c5dac81701f71702431c104c5cde`. PR CI (including Chrome E2E) `39482899006` SUCCESS; main CI (including Chrome E2E) `39483156223` SUCCESS.
+- Produkční Vercel deployment `dpl_6VRTvuHCisoQ7v2p4iXkPYGQwVCc` READY a má alias `domacnost-plus.vercel.app`. HTTP 200 na `/release.json` (build 584), `/index.html`, `/module-loader.js?v=0-1-584` (ověřeno ASSET_VERSION), `/finance.js?v=0-1-584` (ověřena funkce ensureFinanceInsertId), `/ios-install.html` (inline iOS logo), `/manifest.webmanifest?v=0-1-584`, `/sw.js`, `/icons/domacnost-plus-ios-180.png?v=0-1-584`.
+- Databáze/SQL nebyly měněny, stávající data zůstala nedotčená; rollback produkční v0.1_583 commit `9ab5de8362483da48a17082422e5dc337c3a5723`, Vercel `dpl_EtJEEJ9PzoaYyxpuHZNU14nZkxBs`. Další P0: fyzický PC/iPhone cross-device test synchronizace a konfliktních finančních editací, historické pending Garáž/Nastavení, a read-only RLS audit. Idempotence je zajištěna pro opakování stejného lokálního finančního záznamu, nikoliv automatickou deduplikaci nezávisle vytvořených položek na různých zařízení.
