@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_584';
-  const APP_BUILD = 584;
+  const APP_VERSION = 'Domácnost+ v.0.1_585';
+  const APP_BUILD = 585;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18946,12 +18946,13 @@
 
   async function diagnoseGaragePending() {
     if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
-    const householdId = state.cloud?.householdId;
+    const scope = cloudSyncWorkspaceScope();
+    const householdId = scope.householdId;
     try {
       const client = getSupabaseClient();
       if (!client) throw new Error('Cloudové připojení není dostupné');
       const { data, error } = await client.from('vehicles').select('*').eq('household_id', householdId);
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       if (error) throw error;
       const byId = new Map((data || []).map((row) => [String(row.id), row]));
       const pending = (state.vehicles || []).filter((vehicle) =>
@@ -18978,7 +18979,7 @@
         : 'Toto zařízení nemá žádná neodeslaná auta.';
       garageCloudDiagnosticHouseholdId = householdId;
     } catch (error) {
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       garageCloudDiagnosticHouseholdId = householdId;
       garageCloudDiagnosticReport = 'Kontrola Garáže selhala: ' +
         (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') +
@@ -23097,7 +23098,9 @@
     if (!cloudReady()) return false;
     const client = getSupabaseClient();
     if (!client) return false;
+    const saveScope = cloudSyncWorkspaceScope();
     await ensureHouseholdUiSyncDependencies();
+    if (!cloudSyncWorkspaceMatches(saveScope)) return false;
     if (options.force !== true) healStaleHouseholdUiConflict();
     if (state.cloud?.householdUiConflict && options.force !== true) {
       if (showMessage) showToast('Nejdřív vyřeš změny ze dvou zařízení');
@@ -23109,8 +23112,9 @@
       const { data: remote, error: baselineError } = await client
         .from('households')
         .select('updated_at, dashboard_layout, weather_location')
-        .eq('id', state.cloud.householdId)
+        .eq('id', saveScope.householdId)
         .maybeSingle();
+      if (!cloudSyncWorkspaceMatches(saveScope)) return false;
       if (baselineError) {
         state.cloud.lastAutosyncError = cloudErrorFriendlyMessage(baselineError) || 'Nepodařilo se ověřit cloudovou verzi';
         persistStateSnapshot({ immediate: true });
@@ -23160,6 +23164,7 @@
         return false;
       }
     }
+    if (!cloudSyncWorkspaceMatches(saveScope)) return false;
     state.cloud.householdUiPendingAt = state.cloud.householdUiPendingAt || pendingSince;
     const nextRevision = new Date().toISOString();
     const updatePayload = includeName
@@ -23168,9 +23173,10 @@
     let query = client
       .from('households')
       .update(updatePayload)
-      .eq('id', state.cloud.householdId);
+      .eq('id', saveScope.householdId);
     if (expectedRevision && options.force !== true) query = query.eq('updated_at', expectedRevision);
     const { data, error } = await query.select('updated_at, dashboard_layout').maybeSingle();
+    if (!cloudSyncWorkspaceMatches(saveScope)) return false;
     if (error) {
       state.cloud = {
         ...(state.cloud || {}),
@@ -23193,8 +23199,9 @@
       const { data: remote, error: remoteError } = await client
         .from('households')
         .select('updated_at, dashboard_layout, weather_location')
-        .eq('id', state.cloud.householdId)
+        .eq('id', saveScope.householdId)
         .maybeSingle();
+      if (!cloudSyncWorkspaceMatches(saveScope)) return false;
       if (remoteError) {
         state.cloud.lastAutosyncError = remoteError.message || 'Nepodařilo se ověřit novější cloudovou změnu';
       } else {
