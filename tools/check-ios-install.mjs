@@ -8,7 +8,7 @@ import { decodePng } from './generate-pwa-icons.mjs';
 const root = resolve(import.meta.dirname, '..');
 const read = (name) => readFileSync(resolve(root, name));
 const build = JSON.parse(read('release.json')).build;
-assert.equal(build, 584);
+assert.equal(build, 585);
 const png = read('icons/domacnost-plus-ios-180.png');
 const image = decodePng(png);
 assert.equal(image.width, 180);
