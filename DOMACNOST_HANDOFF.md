@@ -3,7 +3,7 @@
 Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_584** (PR #73, squash `03a178f26266c5dac81701f71702431c104c5cde`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_583 je rollback bod.
+- **Aktuální produkční verze: v0.1_585** (PR #74, squash `1782c547d197d48a56a410b0e1bfa6a0a9194dc0`, Vercel READY, verze v585). Předchozí v0.1_584 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -870,3 +870,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `diagnoseGaragePending` (cca ř. 18947–18988) je read-only a porovnává lokální pending auta se vzdálenými; guard však sleduje jen cloud household ID, nikoliv user/profile switch. Doplnit jej, aniž by se jakákoliv lokální značka mazala. `diagnoseSubscriptionPending` používá analogický household-only guard; při úpravě diagnostiky zkontrolovat i ten.
 - `shouldApplyRemoteHouseholdUi` a `reconcileConfirmedSnapshotSectionPendings` porovnávají skutečný obsah před potvrzením starých pending. Zachovat toto chování: žádné globální clearing lokálních značek podle samotného času/revize.
 - **Neproveden live PC↔iPhone test**, protože přímá kontrola uživatelských zařízení není z prostředí dostupná. Bezpečný další krok: branch `fix/p0-household-ui-async-scope-585`, v585 konzistentně bumpnout release markery a PWA, nové regresní testy user switch během GET/UPDATE, kompletní CI/E2E, potom release. Původní v584 ponechat rollbackem.
+
+
+### 21. 10. 2026 — RELEASE v0.1_585 (P0 async identity scope)
+- PR <https://github.com/martinspadrna/Domacnost/pull/74> sloučen do MAIN `1782c547d197d48a56a410b0e1bfa6a0a9194dc0`. Preview READY, PR CI/Chrome E2E PASS run `39653891058`. Produkční deployment `dpl_ESa6yPw9zE9ZcgJL4D53SQ9Tv4bb` READY, alias `domacnost-plus.vercel.app`. HTTP 200 pro `/release.json` build 585 a `/app.js?v=0-1-585` s novým scope guardem.
+- `performCloudSaveHouseholdUiSettings` zachycuje workspace scope na začátku, po načtení závislostí/remote baseline, před UPDATE, po jeho ACK a po následném conflict fetch. Při přepnutí uživatele/domácnosti stará asynchronní odpověď nepřepíše lokální nové nastavení. CAS a stávající pending chování zachovány.
+- `diagnoseGaragePending` drží scope userId + householdId při vzdáleném SELECT i catch větvi. Žádné garážové záznamy ani pending značky nebyly odstraněny.
+- Nový source regression `tools/check-household-ui-async-scope.mjs` zapojený do `package.json`; v585 synchronizované PWA SW, manifest, module-loader, iOS installer a kontrolní skripty. Žádné SQL migrace ani změny reálných uživatelských dat.
+- Rollback produkce v0.1_584 commit `6863ca7cc8cc249cf297439cf9d5d5a7029a8209` (dokumentační MAIN), app commit `03a178f26266c5dac81701f71702431c104c5cde`, deployment `dpl_8bLaqSG1W9ivB1yvqcxk9EuuoNaC`.
+- Otevřené P0: fyzické PC↔iPhone testy obou voleb CAS konfliktu, konkrétní lokální historické pending v Garáži/Nastavení; RLS read-only audit dokončen. Čekat na finální MAIN CI run `39654082103` (v okamžiku zápisu ještě mohl běžet).
