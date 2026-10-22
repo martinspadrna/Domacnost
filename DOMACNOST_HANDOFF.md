@@ -3,7 +3,7 @@
 Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_586** (PR #75, squash `ebb4c275410e87bc75533577382841e7bdff76f1`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_585 je rollback bod.
+- **Aktuální produkční verze: v0.1_587** (PR #76, squash `c1ceb0477d9f8d24dd64008ce43bb6a3185eab3f`, Vercel READY, PR i MAIN CI/Chrome E2E PASS). Předchozí v0.1_586 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -908,3 +908,13 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - `tools/check-app-wiring.mjs` očekává novou podmínku potvrzení `current.syncStatus = usedSchemaFallback || !stillSame ? 'pending_update' : '';`, která zachovává novější lokální data. Všechna relevantní čísla build/cache/PWA/iOS testů sjednocena na 587. Vercel preview po aktualizaci statického testu READY. Před merge nutný GitHub PR CI a Chrome E2E.
 - Žádné SQL migrace ani ruční zásahy do produkčních dat. Rollback na v586. **Zbývá vysoká priorita P0:** idempotence `cloudAddVehicle` při ACK ztraceném po serverovém INSERT. Dnešní guard zabrání chybnému lokálnímu přiřazení, ale pokud přepnutí účtu nebo výpadek nastane až po serverovém commit a před receipt, stávající opakování může založit další remote řádek. Příští samostatný krok zvážit stabilní lokální UUID primárního klíče před POST, persisted before network, read-only shodu remote payload/household, single-flight a tombstone DELETE/outbox pro smazání během INSERT. Nepřepisovat staré záznamy, nehledat duplicity podle jména, nečistit žádné pending značky bez potvrzení.
 - Fyzické PC ↔ iPhone oboustranné konflikty a kontrola konkrétních dlouhodobých pending v Nastavení/Garáži stále otevřené. Nezaměňovat automatické simulace za fyzické otestování.
+
+
+### 22. 10. 2026 — FINÁLNÍ RELEASE v0.1_587 Garáž (P0)
+- PR <https://github.com/martinspadrna/Domacnost/pull/76> úspěšně squash-merged do MAIN jako `c1ceb0477d9f8d24dd64008ce43bb6a3185eab3f`. PR CI (včetně Chrome E2E) `39827942095` SUCCESS; MAIN CI (včetně Chrome E2E) `39828290489` SUCCESS.
+- Produkční Vercel `dpl_Bgbm3YdLT9SY17YEBmX5WCExU53k` READY, alias `domacnost-plus.vercel.app`; dostupnost HTTP 200: `/release.json` (build 587), `/app.js?v=0-1-587`, `/module-loader.js?v=0-1-587`, `/manifest.webmanifest?v=0-1-587`, `/ios-install.html`.
+- Garáž `cloudAddVehicle` a `cloudUpdateVehicle` kontrolují userId i householdId po refresh session a při síťových odpovědích. Úspěšný INSERT propojí cloudId s aktuálním lokálním objektem a při novější lokální editaci ponechá `pending_update`; změna identity a pozdní ACK nesmějí potvrdit staré lokální změny v novém účtu. UPDATE zachovává `updated_at` CAS a bezpečné blokování částečného schema-fallback UPDATE.
+- Vykonatelný test `tools/check-garage-vehicle-scope.mjs` pokrývá switching user/household při session, insertu, fallbacku, remote GET, CAS ACK, změnu během INSERT, nahrazený objekt i smazaný záznam. Žádné SQL ani skutečná cloudová data v rámci oprav neměněny.
+- Rollback na v0.1_586: poslední MAIN před změnou `585272d741b01a814083517d95af7e87fcfeb1c8` (dokumentace), app commit `ebb4c275410e87bc75533577382841e7bdff76f1`, Vercel `dpl_D5saQVTCXL7oFMWF66wL96SNLXD4`.
+- **Zbývá P0 kritické:** idempotence CREATE auta po ztraceném síťovém potvrzení, kdy server mohl vložit záznam, ale lokální `cloudId` nebylo přijato. Zvaž stabilní klientské UUID PK perzistované před POST + read-only porovnání potvrzeného řádku v téže domácnosti, kontrolu souběhu/single-flight a vazbu na tombstone při smazání během INSERT. Neprovádět deduplikaci podle názvu auta, nepřepisovat staré řádky a nemaž pending bez přesného potvrzení.
+- Otevřené: fyzický test PC↔iPhone konfliktů/pending a P1 local-first výkonnost; nikdy nezaměňovat simulované E2E za fyzické potvrzení dat v uživatelských zařízeních.
