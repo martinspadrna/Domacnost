@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_586';
-  const APP_BUILD = 586;
+  const APP_VERSION = 'Domácnost+ v.0.1_587';
+  const APP_BUILD = 587;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -17168,12 +17168,63 @@
   async function ensureCloudVehicle(vehicle) {
     if (!vehicle) return null;
     if (vehicle.cloudId) return vehicle.cloudId;
+    const requestedScope = garageVehicleWriteScope();
     const cloudVehicle = await cloudAddVehicle(vehicle);
-    if (!cloudVehicle?.id) return null;
-    vehicle.cloudId = cloudVehicle.id;
+    if (!garageVehicleWriteScopeMatches(requestedScope, vehicle) ||
+        !cloudVehicle?.id || vehicle.cloudId !== cloudVehicle.id) return null;
     touchState();
     saveState();
     return vehicle.cloudId;
+  }
+
+  // Uchovej identitu uživatele i lokálního profilu/ domácnosti přes všechny
+  // asynchronní zápisy; samotné stejné cloud household_id nestačí.
+  function garageVehicleWriteScope() {
+    return {
+      workspace: cloudSyncWorkspaceScope(),
+      profileId: currentProfileId(),
+      localHouseholdId: currentHouseholdId(false)
+    };
+  }
+
+  function garageVehicleWriteScopeMatches(scope, vehicle) {
+    return Boolean(scope && vehicle?.id &&
+      cloudSyncWorkspaceMatches(scope.workspace) &&
+      currentProfileId() === scope.profileId &&
+      currentHouseholdId(false) === scope.localHouseholdId &&
+      (state.vehicles || []).some((entry) => entry.id === vehicle.id));
+  }
+
+  const garageVehicleInsertInFlight = new Map();
+  const GARAGE_INSERT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  function garageVehicleEnsureInsertId(vehicle) {
+    if (GARAGE_INSERT_UUID_RE.test(vehicle?.cloudInsertId || '')) return vehicle.cloudInsertId;
+    const id = globalThis.crypto?.randomUUID?.();
+    if (!GARAGE_INSERT_UUID_RE.test(id || '')) return '';
+    vehicle.cloudInsertId = id;
+    persistStateSnapshot({ immediate: true });
+    return id;
+  }
+
+  // Ztracené ACK není důvod k dalšímu serverem generovanému INSERTu.
+  // Stejný PK je zaručen v DB; shodu payloadu ověříme POUZE read-only SELECT.
+  async function garageVehicleRecoverInsert(client, scope, insertId, payload) {
+    const fields = [...new Set(['id', 'updated_at', ...Object.keys(payload)])];
+    try {
+      const { data, error } = await client.from('vehicles').select(fields.join(','))
+        .eq('id', insertId)
+        .eq('household_id', scope.workspace.householdId)
+        .maybeSingle();
+      if (error || data?.id !== insertId ||
+          data.household_id !== scope.workspace.householdId) return null;
+      const comparable = (value) => JSON.stringify(canonicalComparableJson(value ?? null));
+      if (!Object.entries(payload).every(([key, value]) =>
+        comparable(data[key]) === comparable(value))) return null;
+      return { id: data.id, updated_at: data.updated_at || '' };
+    } catch {
+      return null;
+    }
   }
 
   function cloudVehiclePayload(vehicle, userId, options = {}) {
@@ -17220,49 +17271,105 @@
   }
 
   async function cloudAddVehicle(vehicle) {
+    if (!vehicle?.id) return null;
     markGarageRecordPending(vehicle);
     const client = getSupabaseClient();
-    if (!client || !state.cloud?.householdId) return null;
-    const user = await refreshCloudSession(false);
-    if (!user) return null;
-    const payload = cloudVehiclePayload(vehicle, user.id);
-    let usedSchemaFallback = false;
-    let { data, error } = await client.from('vehicles').insert(payload).select('id').single();
-    if (error && isGarageVehicleExtendedSchemaError(error)) {
-      markGarageVehicleExtendedSchemaPending();
-      usedSchemaFallback = true;
-      const fallbackPayload = cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false });
-      ({ data, error } = await client.from('vehicles').insert(fallbackPayload).select('id').single());
+    const scope = garageVehicleWriteScope();
+    if (!client || !garageVehicleWriteScopeMatches(scope, vehicle)) return null;
+    const flightKey = [scope.workspace.householdId, vehicle.id].join(':');
+    if (garageVehicleInsertInFlight.has(flightKey)) return garageVehicleInsertInFlight.get(flightKey);
+    if (vehicle.cloudId) return null;
+
+    const job = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || String(user.id) !== String(scope.workspace.userId) ||
+          !garageVehicleWriteScopeMatches(scope, vehicle)) return null;
+      const current = (state.vehicles || []).find((entry) => entry.id === vehicle.id);
+      if (!current || current.cloudId) return null;
+      const insertId = garageVehicleEnsureInsertId(current);
+      if (!insertId || !garageVehicleWriteScopeMatches(scope, current)) return null;
+      vehicle.cloudInsertId = insertId;
+      let usedSchemaFallback = false;
+      let payload = { ...cloudVehiclePayload(current, user.id), id: insertId };
+      if (payload.household_id !== scope.workspace.householdId) return null;
+      let sentSnapshot = JSON.stringify(payload);
+      let response;
+      try {
+        response = await client.from('vehicles').insert(payload).select('id,updated_at').single();
+      } catch (error) {
+        response = { data: null, error };
+      }
+      if (!garageVehicleWriteScopeMatches(scope, current)) return null;
+      let { data, error } = response;
+      if (error && isGarageVehicleExtendedSchemaError(error)) {
+        markGarageVehicleExtendedSchemaPending();
+        usedSchemaFallback = true;
+        payload = { ...cloudVehiclePayload(current, user.id, { includeExtendedFields: false }), id: insertId };
+        sentSnapshot = JSON.stringify(payload);
+        try {
+          ({ data, error } = await client.from('vehicles').insert(payload).select('id,updated_at').single());
+        } catch (fallbackError) {
+          data = null;
+          error = fallbackError;
+        }
+        if (!garageVehicleWriteScopeMatches(scope, current)) return null;
+      }
+      if (error || !data?.id) {
+        data = await garageVehicleRecoverInsert(client, scope, insertId, payload);
+        if (!garageVehicleWriteScopeMatches(scope, current)) return null;
+      }
+      if (data?.id !== insertId) {
+        // Nepotvrzovat chyby, duplicitní ID ani částečně odlišný cloudový obsah.
+        if (error && !String(error.message || '').toLowerCase().includes('duplicate')) {
+          showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
+        }
+        return null;
+      }
+      const live = (state.vehicles || []).find((entry) => entry.id === vehicle.id);
+      if (!live || live.cloudId && live.cloudId !== insertId) return null;
+      live.cloudInsertId = insertId;
+      live.cloudId = insertId;
+      live.cloudUpdatedAt = data.updated_at || '';
+      vehicle.cloudId = insertId;
+      vehicle.cloudUpdatedAt = data.updated_at || '';
+      const currentSnapshot = JSON.stringify({ ...cloudVehiclePayload(live, user.id,
+        { includeExtendedFields: !usedSchemaFallback }), id: insertId });
+      const unchanged = currentSnapshot === sentSnapshot;
+      live.syncStatus = unchanged && !usedSchemaFallback ? '' : 'pending_update';
+      persistStateSnapshot({ immediate: true });
+      return unchanged && !usedSchemaFallback ? data : null;
+    })();
+
+    garageVehicleInsertInFlight.set(flightKey, job);
+    try {
+      return await job;
+    } finally {
+      if (garageVehicleInsertInFlight.get(flightKey) === job) garageVehicleInsertInFlight.delete(flightKey);
     }
-    if (error || !data?.id) {
-      markGarageRecordPending(vehicle);
-      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
-      return null;
-    }
-    vehicle.cloudId = data.id;
-    vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : '';
-    return data;
   }
 
   async function cloudUpdateVehicle(vehicle) {
     if (!vehicle) return false;
     markGarageRecordPending(vehicle);
     const client = getSupabaseClient();
-    const householdId = state.cloud?.householdId;
+    const scope = garageVehicleWriteScope();
+    const householdId = scope.workspace.householdId;
     const cloudId = vehicle.cloudId;
-    if (!client || !cloudId || !householdId) return false;
+    if (!client || !cloudId || !garageVehicleWriteScopeMatches(scope, vehicle)) return false;
     const user = await refreshCloudSession(false);
-    if (!user || state.cloud?.householdId !== householdId || vehicle.cloudId !== cloudId) return false;
+    if (!user || String(user.id) !== String(scope.workspace.userId) ||
+        !garageVehicleWriteScopeMatches(scope, vehicle) ||
+        vehicle.cloudId !== cloudId) return false;
 
     const payload = cloudVehiclePayload(vehicle, user.id, { mode: 'update' });
     const snapshot = JSON.stringify(payload);
     const stillCurrent = () =>
-      state.cloud?.householdId === householdId &&
+      garageVehicleWriteScopeMatches(scope, vehicle) &&
       vehicle.cloudId === cloudId &&
       JSON.stringify(cloudVehiclePayload(vehicle, user.id, { mode: 'update' })) === snapshot;
 
-    // Cti drive: stare schema ani novejsi vzdalena revize nesmeji
-    // vyvolat fallback UPDATE nebo prepsat jina cloudova data.
+    if (!stillCurrent()) return false;
+    // Čtení revize před zápisem, žádný UPDATE při novější vzdálené verzi.
     const { data: remote, error: readError } = await client.from('vehicles')
       .select('*')
       .eq('id', cloudId)
@@ -17270,22 +17377,22 @@
       .maybeSingle();
     if (!stillCurrent()) return false;
     if (readError || !remote) {
-      if (readError) showToast(readError.message || 'Stav auta se nepovedlo overit v cloudu');
+      if (readError) showToast(readError.message || 'Stav auta se nepovedlo ověřit v cloudu');
       return false;
     }
-
     const decision = garageVehicleSafeUpdateDecision(vehicle, remote);
     if (decision === 'schema') {
       markGarageVehicleExtendedSchemaPending();
       return false;
     }
     if (decision === 'confirmed') {
+      if (!stillCurrent()) return false;
+      vehicle.cloudUpdatedAt = remote.updated_at || '';
       vehicle.syncStatus = '';
       return true;
     }
     if (decision !== 'update' || !stillCurrent()) return false;
 
-    // updated_at CAS: nulovy zasah = vzdalena revize se zmenila.
     const { data, error } = await client.from('vehicles')
       .update(payload)
       .eq('id', cloudId)
@@ -17293,12 +17400,14 @@
       .eq('updated_at', remote.updated_at)
       .select('*')
       .maybeSingle();
+    if (!stillCurrent()) return false;
     if (error && isGarageVehicleExtendedSchemaError(error)) markGarageVehicleExtendedSchemaPending();
-    if (error || !data?.id || !stillCurrent()) {
+    if (error || !data?.id) {
       if (error) showToast(error.message || 'Auto se nepovedlo aktualizovat v cloudu');
       return false;
     }
     if (garageVehicleCloudDifference(vehicle, data).type !== 'same') return false;
+    vehicle.cloudUpdatedAt = data.updated_at || '';
     vehicle.syncStatus = '';
     return true;
   }
