@@ -17337,7 +17337,9 @@
       const unchanged = currentSnapshot === sentSnapshot;
       live.syncStatus = unchanged && !usedSchemaFallback ? '' : 'pending_update';
       persistStateSnapshot({ immediate: true });
-      return unchanged && !usedSchemaFallback ? data : null;
+      // Schema fallback vytvořil reálné cloud ID: závislé tankování/servis
+      // může pokračovat, ale rozšířená pole zůstanou pending_update.
+      return unchanged ? data : null;
     })();
 
     garageVehicleInsertInFlight.set(flightKey, job);
