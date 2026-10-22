@@ -180,7 +180,7 @@ if (app && garage && index && sw && moduleLoader) {
   expect(app, 'state.services = mergeGarageCloudItemsPreservingPending(state.services, cloudServices)', 'app.js: cloud reload servisů nepřepíše pending lokální úpravu.');
   expect(app, "state.fuel.filter((entry) => !entry.cloudId || entry.syncStatus)", 'app.js: autosync Garáže znovu odešle i pending update tankování.');
   expect(app, "state.services.filter((entry) => !entry.cloudId || entry.syncStatus)", 'app.js: autosync Garáže znovu odešle i pending update servisu.');
-  expect(app, "vehicle.syncStatus = usedSchemaFallback ? 'pending_update' : ''", 'app.js: fallback staršího Garage schematu nenechá rozšířená data falešně potvrzená.');
+  expect(app, "live.syncStatus = unchanged && !usedSchemaFallback ? '' : 'pending_update'", 'app.js: fallback staršího Garage schematu nenechá rozšířená data falešně potvrzená.');
   expect(app, 'markGarageRecordPending(vehicle);', 'app.js: úprava auta se označí jako pending před background syncem.');
   expect(app, 'markGarageRecordPending(item);', 'app.js: úprava tankování/servisu se označí jako pending před background syncem.');
   expectAbsent(app, "if (garageVehicleHasBackupData(vehicle)) {\n        const ok = await cloudUpdateVehicle(vehicle);", 'app.js: autosync už neposílá každé cloudové auto bez skutečné lokální změny.');
