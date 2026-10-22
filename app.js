@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_585';
-  const APP_BUILD = 585;
+  const APP_VERSION = 'Domácnost+ v.0.1_586';
+  const APP_BUILD = 586;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -18887,10 +18887,11 @@
 
   async function diagnoseHouseholdUiPending() {
     if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
-    const householdId = state.cloud?.householdId;
+    const scope = cloudSyncWorkspaceScope();
+    const householdId = scope.householdId;
     try {
       await ensureHouseholdUiSyncDependencies();
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       const client = getSupabaseClient();
       if (!client) throw new Error('Cloudové připojení není dostupné');
       const localBefore = householdUiPayload();
@@ -18901,7 +18902,7 @@
       const { data, error } = await client.from('households')
         .select('id, dashboard_layout, weather_location, updated_at')
         .eq('id', householdId).maybeSingle();
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       if (error) throw error;
       if (!data?.id) throw new Error('Domácnost v cloudu nebyla nalezena');
       const local = householdUiPayload();
@@ -18932,7 +18933,7 @@
       }
       householdUiDiagnosticHouseholdId = householdId;
     } catch (error) {
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       householdUiDiagnosticHouseholdId = householdId;
       householdUiDiagnosticReport = 'Kontrola Nastavení selhala: ' +
         (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') +
@@ -18994,16 +18995,18 @@
 
   async function diagnoseSubscriptionPending() {
     if (!cloudReady()) return showToast('Cloud domácnosti není připojený');
-    const householdId = state.cloud.householdId;
+    const scope = cloudSyncWorkspaceScope();
+    const householdId = scope.householdId;
     try {
       await ensureHouseholdUiSyncDependencies();
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       const client = getSupabaseClient();
       if (!client) throw new Error('Cloudové spojení není dostupné');
       // SELECT; žádný cloudový UPDATE, žádný force ani ruční odmazání fronty.
       const { data, error } = await client.from('households')
         .select('updated_at, dashboard_layout, weather_location')
         .eq('id', householdId).maybeSingle();
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       if (error) throw error;
       if (!data) throw new Error('Domácnost v cloudu nenalezena');
       // Ruční kontrola zároveň dotáhne pouze nové serverem potvrzené platby.
@@ -19028,7 +19031,7 @@
         subscriptionCloudDiagnosticReport += ' Cloudová revize se mezitím změnila; nic nepřepisuji.';
       }
     } catch (error) {
-      if (state.cloud?.householdId !== householdId) return;
+      if (!cloudSyncWorkspaceMatches(scope)) return;
       subscriptionCloudRecoveryAvailable = false;
       subscriptionCloudDiagnosticReport = 'Ověření selhalo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální data zůstala nedotčená.';
     }
@@ -19043,17 +19046,19 @@
       return showToast('Obnova není dostupná, dokud se neověří čekající změny a konflikty');
     }
     if (!window.confirm('Doplnit jednu chybějící platbu do cloudu? Před zápisem se znovu ověří všechna data Předplatného a revize cloudu. Žádná stávající platba se nenahradí.')) return;
-    const householdId = state.cloud.householdId;
+    const scope = cloudSyncWorkspaceScope();
+    const householdId = scope.householdId;
     return enqueueHouseholdUiSave(async () => {
-      if (!cloudReady() || state.cloud?.householdId !== householdId
+      if (!cloudSyncWorkspaceMatches(scope)
           || cloudHasBlockingConflict() || !state.subscriptionsCloud?.pendingAt) return false;
       try {
         await ensureHouseholdUiSyncDependencies();
+        if (!cloudSyncWorkspaceMatches(scope)) return false;
         const client = getSupabaseClient();
         if (!client) throw new Error('Cloudové připojení není dostupné');
         const { data: remote, error: loadError } = await client.from('households')
           .select('updated_at, dashboard_layout, weather_location').eq('id', householdId).maybeSingle();
-        if (state.cloud?.householdId !== householdId) return false;
+        if (!cloudSyncWorkspaceMatches(scope)) return false;
         if (loadError) throw loadError;
         const layout = householdUiRemoteLayout(remote);
         const revision = householdUiRemoteRevision(remote);
@@ -19073,7 +19078,7 @@
         updatedLayout.appBuild = APP_BUILD;
         // Před zápisem zkontrolovat i změny, které proběhly během načítání.
         const localNow = canonicalSubscriptionSnapshot(state.subscriptions, state.subscriptionPeople, state.subscriptionPayments);
-        if (state.cloud?.householdId !== householdId || cloudHasBlockingConflict()
+        if (!cloudSyncWorkspaceMatches(scope) || cloudHasBlockingConflict()
             || JSON.stringify(canonicalComparableJson(localBefore)) !== JSON.stringify(canonicalComparableJson(localNow))) {
           subscriptionCloudDiagnosticReport = 'Během kontroly se změnila lokální data. Pro bezpečné uložení zopakuj ověření.';
           subscriptionCloudRecoveryAvailable = false;
@@ -19087,7 +19092,7 @@
           .update({ dashboard_layout: updatedLayout, updated_at: now })
           .eq('id', householdId).eq('updated_at', revision)
           .select('updated_at, dashboard_layout, weather_location').maybeSingle();
-        if (state.cloud?.householdId !== householdId) return false;
+        if (!cloudSyncWorkspaceMatches(scope)) return false;
         if (saveError) throw saveError;
         if (!saved || !Array.isArray(householdUiRemoteLayout(saved).subscriptionPayments)
             || !householdUiRemoteLayout(saved).subscriptionPayments.some((entry) => String(entry.id) === planned.id)) {
@@ -19116,7 +19121,7 @@
         requestBackgroundRender();
         return true;
       } catch (error) {
-        if (state.cloud?.householdId !== householdId) return false;
+        if (!cloudSyncWorkspaceMatches(scope)) return false;
         subscriptionCloudRecoveryAvailable = false;
         subscriptionCloudDiagnosticHouseholdId = householdId;
         subscriptionCloudDiagnosticReport = 'Doplnění se nepovedlo: ' + (cloudErrorFriendlyMessage(error) || error?.message || 'neznámá chyba') + '. Lokální platba zůstává zachovaná.';

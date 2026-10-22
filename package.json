@@ -1,12 +1,12 @@
 {
   "name": "domacnost-plus",
-  "version": "0.1.585",
+  "version": "0.1.586",
   "private": true,
   "type": "module",
   "description": "Domácnost+ — instalovatelná PWA pro rodinnou domácnost. Frontend-only repo; ověřovací skripty jsou dependency-free.",
   "scripts": {
     "check": "npm run check:cloud-last-sync-truth && npm run check:cloud-warranty-read && npm run check:cloud-calendar-contracts-read && npm run check:cloud-homecare-read && npm run check:cloud-shopping-garage-read && npm run check:cloud-bootstrap-races && npm run check:cloud-module-completion && npm run check:pwa-offline-cache && npm run check:pwa-icon-alpha && npm run check:ios-install && npm run check:cloud-extra-writes && npm run check:cloud-extra-read-race && npm run check:cloud-realtime-scope && npm run check:cloud-workspace-scope && npm run check:cloud-outbox-race && npm run check:finance-pagination && npm run check:finance-cloud-link && npm run check:finance-read-race && npm run check:finance-cas && npm run check:cloud-sync-status && npm run check:finance-restart && npm run check:finance-inflight && npm run check:finance-snapshot && npm run check:finance && npm run check:finance-trash && npm run check:syntax && npm run check:release && npm run check:static && npm run check:memo && npm run check:wiring && npm run check:style-layers && npm run check:forms",
-    "check:finance": "node tools/check-finance-account-insert.mjs && node tools/check-finance-account-update-scope.mjs && node tools/check-finance-account-cas.mjs && node tools/check-finance-insert-idempotence.mjs && node tools/check-household-ui-async-scope.mjs && node tools/check-finance-sync-batch-scope.mjs",
+    "check:finance": "node tools/check-finance-account-insert.mjs && node tools/check-finance-account-update-scope.mjs && node tools/check-finance-account-cas.mjs && node tools/check-finance-insert-idempotence.mjs && node tools/check-household-ui-async-scope.mjs && node tools/check-recovery-identity-scope.mjs && node tools/check-finance-sync-batch-scope.mjs",
     "check:finance-trash": "node tools/check-finance-trash.mjs",
     "check:finance-snapshot": "node tools/check-finance-snapshot.mjs",
     "check:finance-inflight": "node tools/check-finance-inflight.mjs",
