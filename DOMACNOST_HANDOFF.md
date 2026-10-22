@@ -3,7 +3,7 @@
 Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_585** (PR #74, squash `1782c547d197d48a56a410b0e1bfa6a0a9194dc0`, Vercel READY, verze v585). Předchozí v0.1_584 je rollback bod.
+- **Aktuální produkční verze: v0.1_586** (PR #75, squash `ebb4c275410e87bc75533577382841e7bdff76f1`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_585 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -889,3 +889,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Verze konzistentně 586: APP_VERSION/APP_BUILD, HTML, SW cache, module-loader, manifest, iOS installer a PWA regression skripty. Preview Vercel po posledním testovacím commitu READY.
 - Před release vyžaduje PR CI i Chrome E2E SUCCESS, kontrolu preview a poté MAIN production READY + MAIN CI. Předchozí produkční v585 rollback.
 - **Další konkrétní P0:** `cloudUpdateVehicle()` v Garáži porovnává `householdId` + `cloudId`, ale po jednotlivých async `await` nesleduje `userId` (stejná domácnost při přihlášení jiným uživatelem). `cloudAddVehicle()` nemá úplnou scope kontrolu ani stabilní insert ACK recovery. Připravit izolovanou v587 větev, zachovat její `updated_at` CAS a `pending`, přidat simulaci user switch během read/update i insert. Zároveň dokončit fyzické PC↔iPhone kontroly historie pending a konfliktů, které automatické testy nenahrazují.
+
+
+### 22. 10. 2026 — RELEASE v0.1_586 P0 identity guard v Nastavení/Předplatném
+- PR <https://github.com/martinspadrna/Domacnost/pull/75> úspěšně squash-merged do MAIN jako `ebb4c275410e87bc75533577382841e7bdff76f1`; PR CI včetně Chrome E2E `39807697338` SUCCESS, produkční MAIN CI včetně Chrome E2E `39807972034` SUCCESS.
+- Vercel prod `dpl_E5zS6dobhecgUBdUNXBdHh1BKcX1` READY, alias `domacnost-plus.vercel.app`. Ověřeno HTTP 200 `/release.json` build 586, `/index.html`, `/app.js?v=0-1-586`, `/ios-install.html`, `/module-loader.js?v=0-1-586`, `/manifest.webmanifest?v=0-1-586` a `/sw.js`.
+- V Nastavení a diagnostice Předplatného se po await kontroluje, že user i domácnost odpovídají zahájené operaci. Ruční obnovení jediné chybějící platby chrání CAS přípravnou fázi i pozdní ACK; stale odpověď nesmí importovat platby, nulovat pending ani potvrdit zápis v jiném přihlášeném účtu.
+- Nový vykonatelný regresní test `tools/check-recovery-identity-scope.mjs` simulující user/household přepnutí během načítání a user switch před/po CAS update, který musí zachovat pending. Součástí standardního check řetězce.
+- DB ani soukromá data nebyla měněna, nebyly zapnuté force přepisy či nové SQL migrace. PWA ikonky beze změny. Předchozí prod v585 pro návrat: commit `30e0ac7630d0bd96759ec286652906b032cfd49a`, Vercel `dpl_ANw9E1YSN6QTZ3UszwCabWJbgcnd`.
+- Další P0: `cloudAddVehicle` a `cloudUpdateVehicle` v Garáži po await stále nemají kompletní kontrolu uživatele pro stejnou cloudovou domácnost. Opravit v izolovaném navazujícím releasu s testy user switch během SELECT/UPDATE/INSERT, a zvážit idempotenci INSERT UUID bez destruktivní migrace. Fyzické testy obou variant konfliktů mezi PC↔iPhone a historické lokální pending zůstávají otevřené; to, že na uživatelově zařízení v585 vše vypadalo OK, je cenné, ale neprokazuje oba simulované závodní scénáře.
