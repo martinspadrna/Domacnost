@@ -183,7 +183,7 @@ for (const kind of ['user','household','profile','localHousehold']) {
   assert.equal(h.insertRequests[1].payload.id,firstId,'fallback must reuse UUID');
   assert(!('technical_specs' in h.insertRequests[1].payload));
   h.insertRequests[1].gate.resolve({data:{id:firstId,updated_at:'rev'},error:null});
-  assert.equal(await task,null,'schema fallback preserves unsent extended fields');
+  assert.equal((await task)?.id,firstId,'schema fallback confirms ID for dependent logs');
   assert.equal(c.cloudId,firstId);
   assert.equal(c.syncStatus,'pending_update');
 }
