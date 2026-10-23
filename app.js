@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_587';
-  const APP_BUILD = 587;
+  const APP_VERSION = 'Domácnost+ v.0.1_588';
+  const APP_BUILD = 588;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -17219,47 +17219,133 @@
     return payload;
   }
 
-  async function cloudAddVehicle(vehicle) {
-    if (!vehicle) return null;
+  // UUID must belong to a local logical vehicle, not to a network attempt.
+  // The primary key blocks a second row if a successful INSERT loses its ACK.
+  const GARAGE_VEHICLE_INSERT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const garageVehicleInsertInFlight = new Map();
+
+  function ensureGarageVehicleInsertId(vehicle) {
+    const current = (state.vehicles || []).find((item) => String(item?.id) === String(vehicle?.id));
+    if (!current || current.cloudId) return '';
+    const stored = GARAGE_VEHICLE_INSERT_UUID.test(String(current.cloudInsertId || ''))
+      ? current.cloudInsertId
+      : GARAGE_VEHICLE_INSERT_UUID.test(String(vehicle.cloudInsertId || ''))
+        ? vehicle.cloudInsertId
+        : '';
+    const insertId = stored || globalThis.crypto?.randomUUID?.();
+    if (!GARAGE_VEHICLE_INSERT_UUID.test(String(insertId || ''))) return '';
+    if (current.cloudInsertId !== insertId || vehicle.cloudInsertId !== insertId) {
+      current.cloudInsertId = insertId;
+      vehicle.cloudInsertId = insertId;
+      // Persist before POST, also when a local object was re-normalized.
+      persistStateSnapshot({ immediate: true });
+    }
+    return insertId;
+  }
+
+  function garageVehicleInsertPayloadMatches(payload, remote) {
+    if (!remote || String(remote.id) !== String(payload.id) ||
+        String(remote.household_id) !== String(payload.household_id)) return false;
+    const comparable = (value) => value === null || value === undefined || value === ''
+      ? null
+      : typeof value === 'object'
+        ? JSON.stringify(canonicalComparableJson(value))
+        : typeof value === 'number' ? Number(value) : String(value);
+    return Object.entries(payload).every(([key, expected]) => {
+      if (!Object.prototype.hasOwnProperty.call(remote, key)) return false;
+      const actual = remote[key];
+      if (typeof expected === 'number' && actual != null) return Number(actual) === expected;
+      return comparable(actual) === comparable(expected);
+    });
+  }
+
+  async function garageVehicleInsertedRow(client, scope, payload) {
+    try {
+      const { data, error } = await client.from('vehicles').select('*')
+        .eq('id', payload.id).eq('household_id', scope.householdId).maybeSingle();
+      if (error || !cloudSyncWorkspaceMatches(scope) ||
+          !garageVehicleInsertPayloadMatches(payload, data)) return null;
+      return { id: data.id, updated_at: data.updated_at || '' };
+    } catch {
+      return null;
+    }
+  }
+
+  function cloudAddVehicle(vehicle) {
+    if (!vehicle) return Promise.resolve(null);
     markGarageRecordPending(vehicle);
     const scope = cloudSyncWorkspaceScope();
     const client = getSupabaseClient();
-    if (!client || !cloudSyncWorkspaceMatches(scope)) return null;
-    const user = await refreshCloudSession(false);
-    if (!user || user.id !== scope.userId || !cloudSyncWorkspaceMatches(scope)) return null;
-    const payload = cloudVehiclePayload(vehicle, user.id);
-    let sentPayload = payload;
-    let usedSchemaFallback = false;
-    let { data, error } = await client.from('vehicles').insert(payload).select('id').single();
-    if (!cloudSyncWorkspaceMatches(scope)) return null;
-    if (error && isGarageVehicleExtendedSchemaError(error)) {
-      markGarageVehicleExtendedSchemaPending();
-      usedSchemaFallback = true;
-      sentPayload = cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false });
+    if (!client || !cloudSyncWorkspaceMatches(scope)) return Promise.resolve(null);
+    const key = [scope.householdId, scope.userId, vehicle.id].join(':');
+    const existing = garageVehicleInsertInFlight.get(key);
+    if (existing) return existing;
+    const job = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || user.id !== scope.userId || !cloudSyncWorkspaceMatches(scope)) return null;
+      const insertId = ensureGarageVehicleInsertId(vehicle);
+      if (!insertId) return null;
+      const payload = { ...cloudVehiclePayload(vehicle, user.id), id: insertId };
+      let sentPayload = payload;
+      let usedSchemaFallback = false;
+      let data = null, error = null;
+      try {
+        ({ data, error } = await client.from('vehicles').insert(payload).select('id').single());
+      } catch (cause) {
+        error = cause;
+      }
       if (!cloudSyncWorkspaceMatches(scope)) return null;
-      ({ data, error } = await client.from('vehicles').insert(sentPayload).select('id').single());
-      if (!cloudSyncWorkspaceMatches(scope)) return null;
-    }
-    if (error || !data?.id) {
-      markGarageRecordPending(vehicle);
-      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
-      return null;
-    }
-    // The record may have been edited or normalized into a new object while
-    // INSERT was running. Link the returned cloud ID to the current local item;
-    // only clear its pending marker if the acknowledged payload is still current.
-    const current = (state.vehicles || []).find((entry) => entry?.id === vehicle.id);
-    if (!current) return null; // Deleted meanwhile: never re-attach stale UI state.
-    const stillSame = JSON.stringify(cloudVehiclePayload(current, user.id, { includeExtendedFields: !usedSchemaFallback }))
-      === JSON.stringify(sentPayload);
-    current.cloudId = data.id;
-    current.syncStatus = usedSchemaFallback || !stillSame ? 'pending_update' : '';
-    if (current !== vehicle) {
-      vehicle.cloudId = data.id;
-      vehicle.syncStatus = current.syncStatus;
-    }
-    persistStateSnapshot({ immediate: true });
-    return data;
+      if (error && isGarageVehicleExtendedSchemaError(error)) {
+        markGarageVehicleExtendedSchemaPending();
+        usedSchemaFallback = true;
+        sentPayload = { ...cloudVehiclePayload(vehicle, user.id, { includeExtendedFields: false }), id: insertId };
+        if (!cloudSyncWorkspaceMatches(scope)) return null;
+        try {
+          ({ data, error } = await client.from('vehicles').insert(sentPayload).select('id').single());
+        } catch (cause) {
+          data = null;
+          error = cause;
+        }
+        if (!cloudSyncWorkspaceMatches(scope)) return null;
+      }
+      // An error may mean the server committed but the response was lost.
+      // Read only the exact UUID and compare every submitted field, never a
+      // name/plate-number search and never force-overwrite a remote row.
+      if (error || !data?.id || String(data.id) !== insertId) {
+        data = await garageVehicleInsertedRow(client, scope, sentPayload);
+        if (!cloudSyncWorkspaceMatches(scope)) return null;
+        if (!data) {
+          if (error && !String(error.message || '').toLowerCase().includes('duplicate'))
+            showToast(error.message || 'Auto se nepovedlo uložit do cloudu');
+          return null;
+        }
+      }
+      const current = (state.vehicles || []).find((entry) => String(entry?.id) === String(vehicle.id));
+      if (!current) {
+        // A deleted vehicle must not come back. Keep the receipt on the old
+        // object for the Undo-expiry delete callback.
+        vehicle.cloudId = insertId;
+        return null;
+      }
+      if (current.cloudId && String(current.cloudId) !== insertId) return null;
+      const stillSame = JSON.stringify(cloudVehiclePayload(current, user.id, { includeExtendedFields: !usedSchemaFallback }))
+        === JSON.stringify(Object.fromEntries(Object.entries(sentPayload).filter(([field]) => field !== 'id')));
+      current.cloudId = insertId;
+      current.cloudInsertId = insertId;
+      current.syncStatus = usedSchemaFallback || !stillSame ? 'pending_update' : '';
+      if (current !== vehicle) {
+        vehicle.cloudId = insertId;
+        vehicle.cloudInsertId = insertId;
+        vehicle.syncStatus = current.syncStatus;
+      }
+      persistStateSnapshot({ immediate: true });
+      return data;
+    })();
+    garageVehicleInsertInFlight.set(key, job);
+    void job.finally(() => {
+      if (garageVehicleInsertInFlight.get(key) === job) garageVehicleInsertInFlight.delete(key);
+    }).catch(() => {});
+    return job;
   }
 
   async function cloudUpdateVehicle(vehicle) {
@@ -24032,7 +24118,17 @@
       touchState();
       saveState();
       render();
-    }, { onExpire: () => cloudDeleteVehicle(vehicle) });
+    }, { onExpire: async () => {
+      // Undo may expire while the initial INSERT is still in flight.
+      // Wait for its ACK/recovery before attempting to delete that exact row.
+      const scope = cloudSyncWorkspaceScope();
+      const key = [scope.householdId, scope.userId, vehicle.id].join(':');
+      const pendingInsert = garageVehicleInsertInFlight.get(key);
+      if (pendingInsert) {
+        try { await pendingInsert; } catch { /* insert will remain unconfirmed */ }
+      }
+      if (vehicle.cloudId && cloudSyncWorkspaceMatches(scope)) await cloudDeleteVehicle(vehicle);
+    } });
   }
 
   async function copyText(text) {
