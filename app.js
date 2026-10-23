@@ -24118,7 +24118,17 @@
       touchState();
       saveState();
       render();
-    }, { onExpire: () => cloudDeleteVehicle(vehicle) });
+    }, { onExpire: async () => {
+      // Undo may expire while the initial INSERT is still in flight.
+      // Wait for its ACK/recovery before attempting to delete that exact row.
+      const scope = cloudSyncWorkspaceScope();
+      const key = [scope.householdId, scope.userId, vehicle.id].join(':');
+      const pendingInsert = garageVehicleInsertInFlight.get(key);
+      if (pendingInsert) {
+        try { await pendingInsert; } catch { /* insert will remain unconfirmed */ }
+      }
+      if (vehicle.cloudId && cloudSyncWorkspaceMatches(scope)) await cloudDeleteVehicle(vehicle);
+    } });
   }
 
   async function copyText(text) {
