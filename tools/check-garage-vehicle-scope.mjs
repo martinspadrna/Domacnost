@@ -98,7 +98,7 @@ for(const kind of ['user','household']){
   assert.equal(await task,null);
   assert.equal(h.vehicle.cloudId,'');
   assert.equal(h.vehicle.syncStatus,'pending_add');
-  assert.equal(h.snapshots.length,0);
+  assert.equal(h.snapshots.length,1,'UUID persisted before POST, not a remote ACK');
 }
 // A late schema-error response in a different account must not initiate a
 // fallback INSERT nor set the new account's schema failure flag.
