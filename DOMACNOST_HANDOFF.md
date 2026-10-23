@@ -3,7 +3,7 @@
 Aktualizováno: 20. 10. 2026. Na začátku nového chatu načíst celý tento soubor, ověřit HEAD a nejnovější verzi. Nepoužívat safepoint, pokud to uživatel výslovně nepožádá.
 
 ## Verze a větve
-- **Aktuální produkční verze: v0.1_587** (PR #76, squash `c1ceb0477d9f8d24dd64008ce43bb6a3185eab3f`, Vercel READY, PR i MAIN CI/Chrome E2E PASS). Předchozí v0.1_586 je rollback bod.
+- **Aktuální produkční verze: v0.1_588** (PR #77, squash `37475176a5b198a14d38e5fe93d434513901ebcb`, Vercel READY, PR i MAIN full CI/Chrome E2E PASS). Předchozí v0.1_587 je rollback bod.
 - Historické kandidáty 537–540 už byly nasazeny. Hlavní P0 cloud sync **stále není fyzicky uzavřený**; další práce vychází z aktuálního main.
 - Každá funkční změna = zvýšit verzi konzistentně ve všech release souborech. Zachovat PWA, Supabase Auth/DB/RLS, local-first, kompatibilitu a data.
 
@@ -928,3 +928,12 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Konzistentní bump v588: APP_BUILD/APP_VERSION, release.json, index.html, SW, manifest, module-loader, iOS instalace a PWA testy. DB schema **neměněno**: existující `vehicles.id` je UUID PK, nepoužívá se migrace.
 - **Důležité otevřené riziko P0:** po smazání vozidla během INSERT je Undo-expiry cleanup zabezpečen vůči běžnému in-flight ACK, ale zatím není trvale uložená tombstone/outbox fronta napříč restartem pro scénář, kdy dojde k serverovému INSERTu a současně výpadku/odhlášení před potvrzením i smazáním. Samostatně přidat perzistentní outbox/rekonciliační recovery pro takové delete-after-insert případy, bez mazání existujících cloud dat a s ochranou proti Undo. Rovněž P0 fyzický PC↔iPhone test a historické pending.
 - Před merge ověřit PR CI + Chrome E2E SUCCESS; po merge MAIN CI, READY produkční Vercel a veřejné release markery. Rollback v587 k `e536b6ffd3363b59f5d5e4ad9c825825c9bd414f`.
+
+
+### 23. 10. 2026 — FINÁLNÍ PRODUKČNÍ RELEASE v0.1_588
+- PR <https://github.com/martinspadrna/Domacnost/pull/77> squash-merged do MAIN jako `37475176a5b198a14d38e5fe93d434513901ebcb`. PR CI + Chrome E2E `39994244466` SUCCESS, MAIN CI + Chrome E2E `39994463861` SUCCESS.
+- Vercel produkce `dpl_7h3F6v5TWziNGp5d4iyxSeMYfdHw` READY, správný commit + alias `domacnost-plus.vercel.app`. Public HTTP 200: `/release.json` build 588, `/index.html`, `/app.js?v=0-1-588`, `/module-loader.js?v=0-1-588`, `/manifest.webmanifest?v=0-1-588`, `/ios-install.html`, `/sw.js`.
+- P0 Garáž CREATE auta používá stabilní klientské UUID perzistované před network INSERT a v retry; odolnost vůči ztracenému ACK (bez hledání auta dle názvu/SPZ), single-flight a scope control, Undo delete čeká na nedokončený POST. Původní CAS UPDATE chráněn a zachován.
+- Nové runtime regresní testy pokrývají lost ACK, retry offline/restar­t, schema fallback, mismatch, PK kolizi, jinou domácnost, souběh a smazání za POST. Nedošlo k žádné SQL migraci ani zápisu do produkční DB během testu.
+- **Nevyřešená návaznost P0:** po dokončeném INSERTu při současném ztraceném ACK + vypršení Undo + restartu/odhlášení nemusí být delete trvale uložen; je vhodný durable tombstone/outbox recovery. Fyzické PC↔iPhone konflikty a historické lokální pending zůstávají nutné. Neprezentovat jako fyzicky otestované.
+- Rollback na v0.1_587: předchozí MAIN `e536b6ffd3363b59f5d5e4ad9c825825c9bd414f`, předchozí Vercel deployment `dpl_6EsXoaJAyBeHPCWpbLKDe1W9VdDB`.
