@@ -10,7 +10,7 @@ const source=readFileSync(join(dirname(fileURLToPath(import.meta.url)),'..','app
 const cut=(start,end)=>{const a=source.indexOf(start),b=source.indexOf(end,a+start.length);
   assert(a>=0&&b>a,'Missing code '+start);return source.slice(a,b);};
 const scopeSource=cut('  function cloudSyncWorkspaceScope()', '  function clearCloudAutosyncTimer()');
-const vehicleSource=cut('  async function cloudAddVehicle(vehicle)', '  async function cloudDeleteVehicle(vehicle)');
+const vehicleSource=cut('  const GARAGE_VEHICLE_INSERT_UUID =', '  async function cloudDeleteVehicle(vehicle)');
 const tick=async()=>{for(let i=0;i<25;i++)await Promise.resolve();};
 function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};}
 function harness() {
@@ -57,6 +57,7 @@ function harness() {
     showToast:message=>notifications.push(message),
     garageVehicleSafeUpdateDecision:()=> 'update',
     garageVehicleCloudDifference:()=>({type:'same'}),
+    canonicalComparableJson:value=>value,
     persistStateSnapshot:()=>snapshots.push(JSON.stringify(state.vehicles))
   };
   const api=new Function(...Object.keys(deps),
@@ -115,20 +116,20 @@ for(const kind of ['user','household']){
 {
   const h=harness(),task=h.api.cloudAddVehicle(h.vehicle);
   await tick();
-  h.insert[0].gate.resolve({data:{id:'remote-a'},error:null});
-  assert.equal((await task)?.id,'remote-a');
-  assert.equal(h.vehicle.cloudId,'remote-a');
+  h.insert[0].gate.resolve({data:{id:h.insert[0].payload.id},error:null});
+  assert.equal((await task)?.id,h.insert[0].payload.id);
+  assert.equal(h.vehicle.cloudId,h.insert[0].payload.id);
   assert.equal(h.vehicle.syncStatus,'');
-  assert.equal(h.snapshots.length,1);
+  assert.equal(h.snapshots.length,2);
 }
 // User edits an auto while INSERT is running: cloud row is linked but latest
 // local edits remain pending for a later CAS UPDATE.
 {
   const h=harness(),task=h.api.cloudAddVehicle(h.vehicle);
   await tick();h.vehicle.name='Nový název';
-  h.insert[0].gate.resolve({data:{id:'remote-b'},error:null});
-  assert.equal((await task)?.id,'remote-b');
-  assert.equal(h.vehicle.cloudId,'remote-b');
+  h.insert[0].gate.resolve({data:{id:h.insert[0].payload.id},error:null});
+  assert.equal((await task)?.id,h.insert[0].payload.id);
+  assert.equal(h.vehicle.cloudId,h.insert[0].payload.id);
   assert.equal(h.vehicle.syncStatus,'pending_update');
 }
 // Normalize Garage into a new object while request is outstanding; don't only
@@ -138,18 +139,18 @@ for(const kind of ['user','household']){
   await tick();
   const latest={...h.vehicle,name:'Přejmenované auto'};
   h.state.vehicles=[latest];
-  h.insert[0].gate.resolve({data:{id:'remote-c'},error:null});
-  assert.equal((await task)?.id,'remote-c');
-  assert.equal(latest.cloudId,'remote-c');
+  h.insert[0].gate.resolve({data:{id:h.insert[0].payload.id},error:null});
+  assert.equal((await task)?.id,h.insert[0].payload.id);
+  assert.equal(latest.cloudId,h.insert[0].payload.id);
   assert.equal(latest.syncStatus,'pending_update');
 }
 // Deleted local auto should never be revived by a late cloud receipt.
 {
   const h=harness(),task=h.api.cloudAddVehicle(h.vehicle);
   await tick();h.state.vehicles=[];
-  h.insert[0].gate.resolve({data:{id:'orphan-remote'},error:null});
+  h.insert[0].gate.resolve({data:{id:h.insert[0].payload.id},error:null});
   assert.equal(await task,null);
-  assert.equal(h.vehicle.cloudId,'');
+  assert.equal(h.vehicle.cloudId,h.insert[0].payload.id);
 }
 // UPDATE requires the same workspace after auth refresh and after remote GET.
 for(const kind of ['user','household']){
