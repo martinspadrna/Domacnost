@@ -124,9 +124,12 @@ for(const mode of ['mismatch','other-home']){
   // A locally deleted item is not revived. The old object retains the remote
   // receipt so Undo-expiry cleanup can still target exactly that UUID.
   const original=h.api.cloudAddVehicle(car);
+  await Promise.resolve(); // wait for session refresh and POST to begin
+  assert.equal(h.inserted.length,1,'delete must happen during an actual POST');
   h.state.vehicles=[];
   assert.equal(await original,null);
   assert.equal(h.state.vehicles.length,0);
+  assert.match(car.cloudId,uuid,'deleted object retains ACK for delayed Undo cleanup');
   assert.equal(car.cloudId,car.cloudInsertId);
 }
 {
