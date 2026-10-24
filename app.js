@@ -17856,7 +17856,13 @@
     if (cloudReady()) await cloudSaveHouseholdUiSettings(false);
     render();
     const suffix = garageVehicleExtendedSchemaPending ? ' · nová pole čekají na Supabase migraci/schema reload' : '';
-    showToast(`Garáž zkontrolována: ${vehicles} aut, ${fuel} tankování, ${services} servisů${suffix}`);
+    const garageWaiting = state.vehicles.filter((vehicle) => garageVehicleNeedsCloudSync(vehicle)).length +
+      state.fuel.filter((item) => !item.cloudId || item.syncStatus).length +
+      state.services.filter((item) => !item.cloudId || item.syncStatus).length;
+    const waitingLabel = garageWaiting
+      ? ` · ${garageWaiting} položek stále čeká na potvrzení`
+      : ' · bez čekajících položek Garáže';
+    showToast(`Garáž zkontrolována: ${vehicles} aut, ${fuel} tankování, ${services} servisů${waitingLabel}${suffix}`);
   }
 
 
@@ -19154,9 +19160,21 @@
       if (state.cloud?.garageVehicleExtendedColumnsPending) {
         lines.unshift('Aplikace eviduje chybějící rozšířené sloupce databáze vozidel nebo dřívější schema fallback.');
       }
-      garageCloudDiagnosticReport = pending.length
+      const pendingFuel = (state.fuel || []).filter((item) =>
+        (!item.cloudId || item.syncStatus) &&
+        (!item.householdId || String(item.householdId) === String(householdId)));
+      const pendingServices = (state.services || []).filter((item) =>
+        (!item.cloudId || item.syncStatus) &&
+        (!item.householdId || String(item.householdId) === String(householdId)));
+      if (pendingFuel.length)
+        lines.push('Tankování: ' + pendingFuel.length + ' čekající záznamy (bez cloud ID ' +
+          pendingFuel.filter((item) => !item.cloudId).length + ').');
+      if (pendingServices.length)
+        lines.push('Servisy a nákupy: ' + pendingServices.length + ' čekající záznamy (bez cloud ID ' +
+          pendingServices.filter((item) => !item.cloudId).length + ').');
+      garageCloudDiagnosticReport = lines.length
         ? lines.join(' | ')
-        : 'Toto zařízení nemá žádná neodeslaná auta.';
+        : 'Toto zařízení nemá žádné neodeslané položky Garáže.';
       garageCloudDiagnosticHouseholdId = householdId;
     } catch (error) {
       if (!cloudSyncWorkspaceMatches(scope)) return;
