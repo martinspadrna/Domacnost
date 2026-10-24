@@ -17421,77 +17421,149 @@
     return true;
   }
 
-  async function cloudAddFuelLog(item) {
-    markGarageRecordPending(item);
-    const client = getSupabaseClient();
-    if (!client || !state.cloud?.householdId) return null;
-    const user = await refreshCloudSession(false);
-    if (!user) return null;
-    const vehicle = state.vehicles.find((entry) => entry.id === item.vehicleId);
-    const vehicleCloudId = await ensureCloudVehicle(vehicle);
-    if (!vehicleCloudId) return null;
-    const liters = item.liters === '' || item.liters === undefined ? null : Number(item.liters);
-    const totalPrice = item.price === '' || item.price === undefined ? null : Number(item.price);
-    const payload = {
-      household_id: state.cloud.householdId,
+  // The DB guarantees uniqueness of (household_id, vehicle_id, source_hash)
+  // for both tables. A lost INSERT response or a legacy pending record may
+  // therefore be acknowledged only after an exact read-only payload match.
+  const garageLogInsertInFlight = new Map();
+
+  function garageLogInsertPayload(collection, item, vehicleCloudId, userId, householdId) {
+    const base = {
+      household_id: householdId,
       vehicle_id: vehicleCloudId,
       profile_id: null,
       date: item.date || todayISO(),
       odometer: item.odometer === '' || item.odometer === undefined ? null : Number(item.odometer),
-      liters,
-      total_price: totalPrice,
-      price_per_liter: liters && totalPrice ? Number((totalPrice / liters).toFixed(2)) : null,
-      full_tank: true,
       note: item.note || null,
       source: item.source === 'fuelio' ? 'fuelio_import' : 'manual',
-      source_hash: garageSourceHash('fuel', item),
-      created_by: user.id,
-      updated_by: user.id
+      source_hash: garageSourceHash(collection === 'fuel' ? 'fuel' : 'service', item),
+      created_by: userId,
+      updated_by: userId
     };
-    const { data, error } = await client.from('fuel_logs').insert(payload).select('id').single();
-    if (error || !data?.id) {
-      markGarageRecordPending(item);
-      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Tankování se nepovedlo uložit do cloudu');
-      return null;
+    if (collection === 'fuel') {
+      const liters = item.liters === '' || item.liters === undefined ? null : Number(item.liters);
+      const totalPrice = item.price === '' || item.price === undefined ? null : Number(item.price);
+      return {
+        ...base, liters, total_price: totalPrice,
+        price_per_liter: liters && totalPrice ? Number((totalPrice / liters).toFixed(2)) : null,
+        full_tank: true
+      };
     }
-    item.cloudId = data.id;
-    item.syncStatus = '';
-    return data;
-  }
-
-  async function cloudAddServiceLog(item) {
-    markGarageRecordPending(item);
-    const client = getSupabaseClient();
-    if (!client || !state.cloud?.householdId) return null;
-    const user = await refreshCloudSession(false);
-    if (!user) return null;
-    const vehicle = state.vehicles.find((entry) => entry.id === item.vehicleId);
-    const vehicleCloudId = await ensureCloudVehicle(vehicle);
-    if (!vehicleCloudId) return null;
-    const payload = {
-      household_id: state.cloud.householdId,
-      vehicle_id: vehicleCloudId,
-      profile_id: null,
-      date: item.date || todayISO(),
-      odometer: item.odometer === '' || item.odometer === undefined ? null : Number(item.odometer),
+    return {
+      ...base,
       type: serviceTypeToCloud(item.title),
       title: item.title || 'Servis',
-      total_price: item.price === '' || item.price === undefined ? null : Number(item.price),
-      note: item.note || null,
-      source: item.source === 'fuelio' ? 'fuelio_import' : 'manual',
-      source_hash: garageSourceHash('service', item),
-      created_by: user.id,
-      updated_by: user.id
+      total_price: item.price === '' || item.price === undefined ? null : Number(item.price)
     };
-    const { data, error } = await client.from('service_logs').insert(payload).select('id').single();
-    if (error || !data?.id) {
-      markGarageRecordPending(item);
-      if (error && !String(error.message || '').toLowerCase().includes('duplicate')) showToast(error.message || 'Servis se nepovedlo uložit do cloudu');
+  }
+
+  async function garageLogExistingReceipt(client, table, scope, payload, bySourceHash = false) {
+    try {
+      let query = client.from(table).select('*')
+        .eq('household_id', scope.householdId).eq('vehicle_id', payload.vehicle_id);
+      query = bySourceHash
+        ? query.eq('source_hash', payload.source_hash)
+        : query.eq('id', payload.id);
+      const { data, error } = await query.maybeSingle();
+      if (error || !cloudSyncWorkspaceMatches(scope) || !data?.id) return null;
+      // With an old pending record the server-generated ID is not known.
+      // Never accept a hash collision with different price, note or details.
+      const expected = { ...payload, id: bySourceHash ? data.id : payload.id };
+      if (!garageVehicleInsertPayloadMatches(expected, data)) return null;
+      return { id: data.id };
+    } catch {
       return null;
     }
-    item.cloudId = data.id;
-    item.syncStatus = '';
-    return data;
+  }
+
+  function cloudAddGarageLog(collection, item) {
+    if (!item) return Promise.resolve(null);
+    markGarageRecordPending(item);
+    const scope = cloudSyncWorkspaceScope();
+    const client = getSupabaseClient();
+    if (!client || !cloudSyncWorkspaceMatches(scope)) return Promise.resolve(null);
+    const table = collection === 'fuel' ? 'fuel_logs' : 'service_logs';
+    const key = [scope.householdId, scope.userId, collection, item.id].join(':');
+    const existing = garageLogInsertInFlight.get(key);
+    if (existing) return existing;
+
+    const job = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || user.id !== scope.userId || !cloudSyncWorkspaceMatches(scope)) return null;
+      const vehicle = (state.vehicles || []).find((entry) => entry.id === item.vehicleId);
+      const vehicleCloudId = await ensureCloudVehicle(vehicle);
+      if (!vehicleCloudId || !cloudSyncWorkspaceMatches(scope)) return null;
+      const current = (state[collection] || []).find((entry) => String(entry?.id) === String(item.id));
+      if (!current || current.cloudId) return current?.cloudId ? { id: current.cloudId } : null;
+
+      const valid = GARAGE_VEHICLE_INSERT_UUID;
+      const id = valid.test(String(current.cloudInsertId || '')) ? current.cloudInsertId
+        : valid.test(String(item.cloudInsertId || '')) ? item.cloudInsertId
+        : globalThis.crypto?.randomUUID?.();
+      if (!valid.test(String(id || ''))) return null;
+      if (current.cloudInsertId !== id || item.cloudInsertId !== id) {
+        current.cloudInsertId = id;
+        item.cloudInsertId = id;
+        // Durable UUID must be saved BEFORE the first request, including retry.
+        persistStateSnapshot({ immediate: true });
+      }
+
+      const payload = {
+        ...garageLogInsertPayload(collection, current, vehicleCloudId, user.id, scope.householdId),
+        id
+      };
+      const localBefore = JSON.stringify(current);
+      let data = null;
+      let error = null;
+      try {
+        ({ data, error } = await client.from(table).insert(payload).select('id').single());
+      } catch (cause) {
+        error = cause;
+      }
+      if (!cloudSyncWorkspaceMatches(scope)) return null;
+      if (error || !data?.id || String(data.id) !== id) {
+        // First recover an ACK lost after our UUID INSERT. A previous release
+        // may have INSERTed with a server UUID; only then use the unique hash.
+        data = await garageLogExistingReceipt(client, table, scope, payload);
+        if (!data && payload.source_hash && cloudSyncWorkspaceMatches(scope))
+          data = await garageLogExistingReceipt(client, table, scope, payload, true);
+        if (!cloudSyncWorkspaceMatches(scope)) return null;
+        if (!data) {
+          if (error?.code === '23505' || String(error?.message || '').toLowerCase().includes('duplicate')) {
+            showToast('Záznam Garáže už v cloudu existuje, ale liší se. Lokální změna zůstala zachována.');
+          } else if (error) {
+            showToast(error.message || 'Záznam Garáže se nepovedlo odeslat');
+          }
+          return null;
+        }
+      }
+      const updated = (state[collection] || []).find((entry) => String(entry?.id) === String(item.id));
+      if (!updated || updated.cloudId && String(updated.cloudId) !== String(data.id)) return null;
+      // A newer local edit made during POST is not included in its ACK.
+      const unchanged = JSON.stringify(updated) === localBefore;
+      updated.cloudId = data.id;
+      updated.cloudInsertId = data.id;
+      updated.syncStatus = unchanged ? '' : 'pending_update';
+      if (updated !== item) {
+        item.cloudId = data.id;
+        item.cloudInsertId = data.id;
+        item.syncStatus = updated.syncStatus;
+      }
+      persistStateSnapshot({ immediate: true });
+      return data;
+    })();
+    garageLogInsertInFlight.set(key, job);
+    void job.finally(() => {
+      if (garageLogInsertInFlight.get(key) === job) garageLogInsertInFlight.delete(key);
+    }).catch(() => {});
+    return job;
+  }
+
+  function cloudAddFuelLog(item) {
+    return cloudAddGarageLog('fuel', item);
+  }
+
+  function cloudAddServiceLog(item) {
+    return cloudAddGarageLog('services', item);
   }
 
 
