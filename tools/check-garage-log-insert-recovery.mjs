@@ -15,7 +15,7 @@ const cut = (a, b) => {
 const source =
   cut('  function cloudSyncWorkspaceScope()', '  function clearCloudAutosyncTimer()') +
   cut('  const GARAGE_VEHICLE_INSERT_UUID =', '  async function garageVehicleInsertedRow(') +
-  cut('  const garageLogInsertInFlight =', '  async function cloudUpdateFuelLog(item)');
+  cut('  const garageLogInsertInFlight =', '  // CAS protects records loaded by a different PC/phone.');
 const uuid = /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i;
 const makeItem = collection => collection === 'fuel'
   ? { id: 'fuel-local', vehicleId: 'car-local', date: '2026-10-24', odometer: '150001', liters: 42, price: 1645, note: 'Plná nádrž', syncStatus: 'pending_add' }

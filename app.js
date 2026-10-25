@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_589';
-  const APP_BUILD = 589;
+  const APP_VERSION = 'Domácnost+ v.0.1_590';
+  const APP_BUILD = 590;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2559,7 +2559,7 @@
       const table = normalizeText(entry?.table);
       const cloudId = normalizeText(entry?.cloudId);
       const collection = normalizeText(entry?.collection);
-      if (!table || !cloudId || !['shopping', 'finance', 'calendar'].includes(collection)) return;
+      if (!table || !cloudId || !['shopping', 'finance', 'calendar', 'fuel', 'services'].includes(collection)) return;
       const operation = entry?.operation === 'delete' ? 'delete' : 'update';
       unique.set(`${table}:${cloudId}`, {
         id: normalizeText(entry.id) || `record-conflict-${uid()}`,
@@ -15345,7 +15345,7 @@
   function renderCloudRecordConflicts() {
     const conflicts = cloudRecordConflicts();
     if (!conflicts.length) return '';
-    const collectionLabels = { shopping: 'Nákupy', finance: 'Finance', calendar: 'Kalendář' };
+    const collectionLabels = { shopping: 'Nákupy', finance: 'Finance', calendar: 'Kalendář', fuel: 'Tankování', services: 'Servis' };
     return `
       <section class="record-conflict-panel" data-record-conflict-panel>
         <div class="card-subheader"><h3>Rozdílné verze záznamů</h3><p>Domácnost+ zabránila tichému přepsání změn z jiného zařízení.</p></div>
@@ -17469,7 +17469,7 @@
       // Never accept a hash collision with different price, note or details.
       const expected = { ...payload, id: bySourceHash ? data.id : payload.id };
       if (!garageVehicleInsertPayloadMatches(expected, data)) return null;
-      return { id: data.id };
+      return { id: data.id, updated_at: data.updated_at || '' };
     } catch {
       return null;
     }
@@ -17515,7 +17515,7 @@
       let data = null;
       let error = null;
       try {
-        ({ data, error } = await client.from(table).insert(payload).select('id').single());
+        ({ data, error } = await client.from(table).insert(payload).select('id,updated_at').single());
       } catch (cause) {
         error = cause;
       }
@@ -17542,10 +17542,12 @@
       const unchanged = JSON.stringify(updated) === localBefore;
       updated.cloudId = data.id;
       updated.cloudInsertId = data.id;
+      if (data.updated_at) updated.cloudUpdatedAt = data.updated_at;
       updated.syncStatus = unchanged ? '' : 'pending_update';
       if (updated !== item) {
         item.cloudId = data.id;
         item.cloudInsertId = data.id;
+        if (data.updated_at) item.cloudUpdatedAt = data.updated_at;
         item.syncStatus = updated.syncStatus;
       }
       persistStateSnapshot({ immediate: true });
@@ -17567,69 +17569,212 @@
   }
 
 
-  async function cloudUpdateFuelLog(item) {
-    if (!item) return false;
-    markGarageRecordPending(item);
-    const client = getSupabaseClient();
-    if (!client || !item.cloudId || !state.cloud?.householdId) return false;
-    const user = await refreshCloudSession(false);
-    if (!user) return false;
-    const liters = item.liters === '' || item.liters === undefined ? null : Number(item.liters);
-    const totalPrice = item.price === '' || item.price === undefined ? null : Number(item.price);
-    const payload = {
+  // CAS protects records loaded by a different PC/phone. A missing baseline
+  // must never become an implicit "overwrite whatever is in the cloud".
+  const garageLogUpdateInFlight = new Map();
+
+  function garageLogUpdatePayload(collection, item, userId) {
+    const result = {
       date: item.date || todayISO(),
       odometer: item.odometer === '' || item.odometer === undefined ? null : Number(item.odometer),
-      liters,
-      total_price: totalPrice,
-      price_per_liter: liters && totalPrice ? Number((totalPrice / liters).toFixed(2)) : null,
       note: item.note || null,
-      updated_by: user.id
+      updated_by: userId
     };
-    const { data, error } = await client
-      .from('fuel_logs')
-      .update(payload)
-      .eq('id', item.cloudId)
-      .eq('household_id', state.cloud.householdId)
-      .select('id')
-      .maybeSingle();
-    if (error || !data?.id) {
-      markGarageRecordPending(item);
-      if (error) showToast(error.message || 'Tankování se nepovedlo upravit v cloudu');
-      return false;
+    if (collection === 'fuel') {
+      const liters = item.liters === '' || item.liters === undefined ? null : Number(item.liters);
+      const totalPrice = item.price === '' || item.price === undefined ? null : Number(item.price);
+      return { ...result, liters, total_price: totalPrice,
+        price_per_liter: liters && totalPrice ? Number((totalPrice / liters).toFixed(2)) : null };
     }
-    item.syncStatus = '';
+    return { ...result, type: serviceTypeToCloud(item.title), title: item.title || 'Servis',
+      total_price: item.price === '' || item.price === undefined ? null : Number(item.price) };
+  }
+
+  function garageLogUpdatePayloadMatches(payload, remote) {
+    if (!remote) return false;
+    const compare = (value) => value == null || value === ''
+      ? null : typeof value === 'number' ? Number(value)
+        : typeof value === 'object' ? JSON.stringify(canonicalComparableJson(value)) : String(value);
+    return Object.entries(payload).every(([key, value]) =>
+      key === 'updated_by' || (
+        Object.prototype.hasOwnProperty.call(remote, key) &&
+        (typeof value === 'number' && remote[key] != null
+          ? Number(remote[key]) === value
+          : compare(remote[key]) === compare(value))));
+  }
+
+  function garageLogConflict(collection, item, scope, remote, revision) {
+    if (!remote?.id || !cloudSyncWorkspaceMatches(scope)) return false;
+    const current = (state[collection] || []).find((row) => String(row?.id) === String(item.id));
+    if (!current || String(current.cloudId || '') !== String(remote.id)) return false;
+    current.syncStatus = 'conflict';
+    registerCloudRecordConflict({
+      collection, table: collection === 'fuel' ? 'fuel_logs' : 'service_logs',
+      cloudId: current.cloudId, localId: current.id, operation: 'update',
+      label: collection === 'fuel' ? 'Tankování ' + (current.date || '') : current.title || 'Servis',
+      expectedRevision: revision || '', remoteRevision: remote.updated_at || '',
+      localRecord: current, remoteRow: remote
+    });
     return true;
   }
 
-  async function cloudUpdateServiceLog(item) {
-    if (!item) return false;
+  function cloudUpdateGarageLog(collection, item, options = {}) {
+    if (!item?.cloudId) return Promise.resolve(false);
+    if (item.syncStatus === 'conflict' && !options.skipConflict) return Promise.resolve('conflict');
     markGarageRecordPending(item);
     const client = getSupabaseClient();
-    if (!client || !item.cloudId || !state.cloud?.householdId) return false;
-    const user = await refreshCloudSession(false);
-    if (!user) return false;
-    const payload = {
-      date: item.date || todayISO(),
-      odometer: item.odometer === '' || item.odometer === undefined ? null : Number(item.odometer),
-      type: serviceTypeToCloud(item.title),
-      title: item.title || 'Servis',
-      total_price: item.price === '' || item.price === undefined ? null : Number(item.price),
-      note: item.note || null,
-      updated_by: user.id
-    };
-    const { data, error } = await client
-      .from('service_logs')
-      .update(payload)
-      .eq('id', item.cloudId)
-      .eq('household_id', state.cloud.householdId)
-      .select('id')
-      .maybeSingle();
-    if (error || !data?.id) {
-      markGarageRecordPending(item);
-      if (error) showToast(error.message || 'Servis se nepovedlo upravit v cloudu');
+    const scope = cloudSyncWorkspaceScope();
+    const cloudId = item.cloudId;
+    if (!client || !cloudSyncWorkspaceMatches(scope)) return Promise.resolve(false);
+    const table = collection === 'fuel' ? 'fuel_logs' : 'service_logs';
+    const key = [scope.householdId, scope.userId, collection, item.id].join(':');
+    const running = garageLogUpdateInFlight.get(key);
+    if (running) return running;
+
+    const job = (async () => {
+      const user = await refreshCloudSession(false);
+      if (!user || user.id !== scope.userId || !cloudSyncWorkspaceMatches(scope)) return false;
+      const payload = garageLogUpdatePayload(collection, item, user.id);
+      const serialized = JSON.stringify(payload);
+      const currentRecord = () => (state[collection] || []).find((row) => String(row?.id) === String(item.id));
+      const stillRelevant = () => cloudSyncWorkspaceMatches(scope) &&
+        String(currentRecord()?.cloudId || '') === String(cloudId);
+      const stillSame = () => stillRelevant() &&
+        JSON.stringify(garageLogUpdatePayload(collection, currentRecord(), user.id)) === serialized;
+      const expectedRevision = options.expectedRevision || item.cloudUpdatedAt || '';
+
+      let remote, readError;
+      try {
+        ({ data: remote, error: readError } = await client.from(table).select('*')
+          .eq('id', cloudId).eq('household_id', scope.householdId).maybeSingle());
+      } catch (error) {
+        readError = error;
+      }
+      if (!stillRelevant()) return false;
+      if (readError || !remote?.id) {
+        if (readError) showToast(readError.message || 'Cloudový záznam Garáže se nepovedlo ověřit');
+        return false;
+      }
+      if (!stillSame()) return false;
+
+      // If a former request committed but its ACK vanished, an exact match
+      // confirms the data without sending another UPDATE.
+      if (garageLogUpdatePayloadMatches(payload, remote)) {
+        const current = currentRecord();
+        if (!stillSame()) return false;
+        current.cloudUpdatedAt = remote.updated_at || current.cloudUpdatedAt || '';
+        current.syncStatus = '';
+        persistStateSnapshot({ immediate: true });
+        return true;
+      }
+      // Legacy local pending without any known server revision is ambiguous.
+      // It must not silently overwrite a remote edit.
+      if (!expectedRevision || String(remote.updated_at || '') !== String(expectedRevision)) {
+        // The cloud may change again while a user resolves a conflict.
+        garageLogConflict(collection, item, scope, remote, expectedRevision);
+        return false;
+      }
+
+      let data, error;
+      try {
+        ({ data, error } = await client.from(table).update(payload)
+          .eq('id', cloudId).eq('household_id', scope.householdId)
+          .eq('updated_at', expectedRevision).select('*').maybeSingle());
+      } catch (cause) {
+        error = cause;
+      }
+      if (!stillRelevant()) return false;
+      if (!error && data?.id && garageLogUpdatePayloadMatches(payload, data)) {
+        const current = currentRecord();
+        current.cloudUpdatedAt = data.updated_at || expectedRevision;
+        current.syncStatus = stillSame() ? '' : 'pending_update';
+        persistStateSnapshot({ immediate: true });
+        return true;
+      }
+      // Zero-row CAS or lost UPDATE ACK: retry a read-only exact comparison.
+      let latest, latestError;
+      try {
+        ({ data: latest, error: latestError } = await client.from(table).select('*')
+          .eq('id', cloudId).eq('household_id', scope.householdId).maybeSingle());
+      } catch (cause) {
+        latestError = cause;
+      }
+      if (!stillRelevant() || latestError) return false;
+      if (latest?.id && garageLogUpdatePayloadMatches(payload, latest)) {
+        const current = currentRecord();
+        current.cloudUpdatedAt = latest.updated_at || expectedRevision;
+        current.syncStatus = stillSame() ? '' : 'pending_update';
+        persistStateSnapshot({ immediate: true });
+        return true;
+      }
+      if (error && latest?.id && String(latest.updated_at || '') === String(expectedRevision)) {
+        // A transient failure can leave the original remote revision intact.
+        // Keep the local change pending; this is not evidence of a conflict.
+        showToast(error.message || 'Změnu Garáže se nepovedlo uložit');
+        return false;
+      }
+      if (latest?.id) {
+        garageLogConflict(collection, item, scope, latest, expectedRevision);
+        return false;
+      }
+      if (error) showToast(error.message || 'Změnu Garáže se nepovedlo uložit');
       return false;
+    })();
+    garageLogUpdateInFlight.set(key, job);
+    void job.finally(() => {
+      if (garageLogUpdateInFlight.get(key) === job) garageLogUpdateInFlight.delete(key);
+    }).catch(() => {});
+    return job;
+  }
+
+  function cloudUpdateFuelLog(item, options = {}) {
+    return cloudUpdateGarageLog('fuel', item, options);
+  }
+
+  function cloudUpdateServiceLog(item, options = {}) {
+    return cloudUpdateGarageLog('services', item, options);
+  }
+
+  async function resolveGarageLogRecordConflict(conflict, strategy) {
+    const collection = conflict.collection;
+    if (!['fuel', 'services'].includes(collection) || conflict.operation !== 'update') return false;
+    const scope = cloudSyncWorkspaceScope();
+    const client = getSupabaseClient();
+    const item = (state[collection] || []).find((entry) =>
+      String(entry?.id) === String(conflict.localId) ||
+      String(entry?.cloudId) === String(conflict.cloudId));
+    if (!item?.cloudId || !client || !cloudSyncWorkspaceMatches(scope)) return false;
+    if (strategy === 'local') {
+      return await cloudUpdateGarageLog(collection, item,
+        { expectedRevision: conflict.remoteRevision, skipConflict: true }) === true;
     }
-    item.syncStatus = '';
+    if (strategy !== 'cloud') return false;
+    let remote, error;
+    try {
+      ({ data: remote, error } = await client.from(collection === 'fuel' ? 'fuel_logs' : 'service_logs')
+        .select('*').eq('id', conflict.cloudId).eq('household_id', scope.householdId).maybeSingle());
+    } catch (cause) {
+      error = cause;
+    }
+    if (!cloudSyncWorkspaceMatches(scope) || error || !remote?.id) return false;
+    const active = (state[collection] || []).find((entry) => String(entry?.id) === String(item.id));
+    if (!active || String(active.cloudId) !== String(remote.id)) return false;
+    active.date = remote.date || active.date;
+    active.odometer = remote.odometer == null ? '' : String(remote.odometer);
+    active.note = remote.note || '';
+    active.source = remote.source === 'fuelio_import' ? 'fuelio' : 'cloud';
+    if (collection === 'fuel') {
+      active.liters = remote.liters == null ? '' : Number(remote.liters);
+      active.price = remote.total_price == null ? '' : Number(remote.total_price);
+      active.pricePerLiter = remote.price_per_liter == null ? '' : Number(remote.price_per_liter);
+    } else {
+      active.title = remote.title || 'Servis';
+      active.price = remote.total_price == null ? '' : Number(remote.total_price);
+    }
+    active.cloudUpdatedAt = remote.updated_at || '';
+    active.updatedAt = remote.updated_at || active.updatedAt;
+    active.syncStatus = '';
+    persistStateSnapshot({ immediate: true });
     return true;
   }
 
@@ -17723,6 +17868,7 @@
       profileId: readProfileId,
       createdAt: item.created_at || new Date().toISOString(),
       updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+      cloudUpdatedAt: item.updated_at || '',
       source: item.source === 'fuelio_import' ? 'fuelio' : 'cloud',
       vehicleId: vehicleIdByCloud.get(item.vehicle_id) || '',
       date: item.date || '',
@@ -23540,6 +23686,8 @@
       ok = applyE2eRecordConflict(conflict, strategy);
     } else if (conflict.collection === 'shopping') {
       ok = await resolveShoppingRecordConflict(conflict, strategy);
+    } else if (conflict.collection === 'fuel' || conflict.collection === 'services') {
+      ok = await resolveGarageLogRecordConflict(conflict, strategy);
     } else if (conflict.collection === 'finance') {
       await ensureModuleCode('finance');
       ok = await getFinanceModule().resolveFinanceRecordConflict(conflict, strategy);
