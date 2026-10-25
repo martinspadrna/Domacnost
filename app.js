@@ -17707,6 +17707,12 @@
         persistStateSnapshot({ immediate: true });
         return true;
       }
+      if (error && latest?.id && String(latest.updated_at || '') === String(expectedRevision)) {
+        // A transient failure can leave the original remote revision intact.
+        // Keep the local change pending; this is not evidence of a conflict.
+        showToast(error.message || 'Změnu Garáže se nepovedlo uložit');
+        return false;
+      }
       if (latest?.id && !options.skipConflict) {
         garageLogConflict(collection, item, scope, latest, expectedRevision);
         return false;
