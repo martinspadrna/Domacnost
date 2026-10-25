@@ -55,6 +55,7 @@ function harness(mode='success'){
     state,cloudReady:()=>true,getSupabaseClient:()=>client,
     refreshCloudSession:async()=>({id:'user-one'}),
     cloudVehiclePayload,
+    linkGarageLateInsertToTrash: () => false,
     markGarageRecordPending:item=>{item.syncStatus=item.cloudId?'pending_update':'pending_add';},
     isGarageVehicleExtendedSchemaError:e=>e?.code==='PGRST204',
     markGarageVehicleExtendedSchemaPending:()=>schema.push(true),
