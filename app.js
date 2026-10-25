@@ -2774,7 +2774,7 @@
       const remaining = (entry.records || []).some(({ collection, record }) => {
         if (!['finance', 'financeAccounts'].includes(collection) ||
             !record?.cloudId || record.cloudDeleteConfirmedAt ||
-            !garageRecordInCurrentHousehold(record, householdId)) return false;
+            (record.householdId && String(record.householdId) !== householdId)) return false;
         const table = CLOUD_DELETE_TABLES[collection];
         if (!table || existing.has(table + ':' + String(record.cloudId))) return false;
         // Nikdy nemaž aktivní řádek (může jít o obnovu, která zanechala Koš).
@@ -2871,7 +2871,7 @@
           activeUndoTrashIds.has(entry.id) || pendingUndoTrashIds.has(entry.id)) continue;
       if ((entry.records || []).some(({collection,record}) => {
         if (!GARAGE_DELETE_COLLECTIONS.includes(collection) || !record || record.cloudDeleteConfirmedAt ||
-            (record.householdId && String(record.householdId) !== householdId)) return false;
+            !garageRecordInCurrentHousehold(record, householdId)) return false;
         const id = String(record.cloudId || record.cloudInsertId || '');
         const table = CLOUD_DELETE_TABLES[collection];
         if (!id || !table || queued.has(table + ':' + id)) return false;
