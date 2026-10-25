@@ -2719,7 +2719,8 @@
         if (!table || !deleteCloudId || record?.cloudDeleteConfirmedAt) return;
         if (options.collections && !options.collections.includes(collection)) return;
         // Bezpečnost mezi domácnostmi a po dokončeném smazání Finance.
-        if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
+        if (garage && !garageRecordInCurrentHousehold(record)) return;
+        if (!garage && record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
         if (['finance', 'financeAccounts'].includes(collection) && record.cloudDeleteConfirmedAt) return;
         if (collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)) return;
         if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(deleteCloudId))) return;
@@ -2773,7 +2774,7 @@
       const remaining = (entry.records || []).some(({ collection, record }) => {
         if (!['finance', 'financeAccounts'].includes(collection) ||
             !record?.cloudId || record.cloudDeleteConfirmedAt ||
-            (record.householdId && String(record.householdId) !== householdId)) return false;
+            !garageRecordInCurrentHousehold(record, householdId)) return false;
         const table = CLOUD_DELETE_TABLES[collection];
         if (!table || existing.has(table + ':' + String(record.cloudId))) return false;
         // Nikdy nemaž aktivní řádek (může jít o obnovu, která zanechala Koš).
@@ -2799,6 +2800,13 @@
 
   const GARAGE_DELETE_COLLECTIONS = ['vehicles', 'fuel', 'services'];
 
+  function garageRecordInCurrentHousehold(record, householdId = state.cloud?.householdId) {
+    const id = String(record?.householdId || '');
+    // Local-first data can use "household-<cloud UUID>" as the workspace ID.
+    return !id || [householdId, currentHouseholdId(false), `household-${householdId}`]
+      .filter(Boolean).some(candidate => id === String(candidate));
+  }
+
   // Never resurrect a removed Garage record during a background cloud reload.
   // Its tombstone is durable in the 30-day Trash or deletion outbox.
   function garageDeletedCloudIds(collection) {
@@ -2807,7 +2815,7 @@
       for (const deleted of entry.records || []) {
         if (deleted.collection !== collection || !deleted.record) continue;
         const record = deleted.record;
-        if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) continue;
+        if (!garageRecordInCurrentHousehold(record)) continue;
         const id = String(record.cloudId || record.cloudInsertId || '');
         if (id) excluded.add(id);
       }
@@ -2832,7 +2840,7 @@
       for (const deleted of entry.records || []) {
         const record = deleted.record;
         if (deleted.collection !== collection || String(record?.id || '') !== String(localId) ||
-            (record.householdId && String(record.householdId) !== String(scope.householdId))) continue;
+            !garageRecordInCurrentHousehold(record, scope.householdId)) continue;
         if (record.cloudId && String(record.cloudId) !== String(receipt.id)) return false;
         record.cloudId = receipt.id;
         record.cloudInsertId = receipt.id;
@@ -3011,7 +3019,11 @@
           : '';
         const expectedRevisionMatches = !entry.expectedRevision ||
           String(remote.updated_at || '') === String(entry.expectedRevision);
-        if (!sameContent || !expectedRevisionMatches ||
+        const unversionedEdited = !entry.expectedRevision &&
+          Number.isFinite(Date.parse(remote.created_at || '')) &&
+          Number.isFinite(Date.parse(remote.updated_at || '')) &&
+          Date.parse(remote.updated_at) > Date.parse(remote.created_at);
+        if (!sameContent || !expectedRevisionMatches || unversionedEdited ||
             (source && remote.source !== source)) {
           return reportGarageFailure({ message: 'Mazání Garáže pozastaveno: cloudový záznam byl mezitím změněn' }, true);
         }
