@@ -74,7 +74,7 @@ function harness(collection='fuel'){
    scheduleCloudAutosync:()=>{},
    browserAppearsOnline:()=>true,cleanupProviderManagedCalendarSyncArtifacts:()=>{},
    getSupabaseClient:()=>client, showToast:()=>{},
-   garageVehicleCloudDifference:(local,remote)=>({type:local.name===remote?.name && local.plate===remote?.plate_number?'same':'different'}),
+   garageVehicleCloudDifference:(local,remote)=>({type:local.name===remote?.name && local.plate===remote?.plate_number && local.note===remote?.note?'same':'different'}),
    garageLogUpdatePayload:(col,rec,user)=>col==='fuel'
      ? {date:rec.date,odometer:Number(rec.odometer),note:rec.note,liters:Number(rec.liters),total_price:Number(rec.price),price_per_liter:38.64,updated_by:user}
      : {date:rec.date,odometer:Number(rec.odometer),note:rec.note,type:'tires',title:rec.title,total_price:Number(rec.price),updated_by:user},
