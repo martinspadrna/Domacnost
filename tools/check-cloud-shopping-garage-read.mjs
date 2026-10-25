@@ -43,6 +43,7 @@ const create=()=>{
     markShoppingRuntimeDirty:()=>actions.push('runtime'),dedupeShoppingData:()=>{},
     findShoppingCatalogItem:()=>null,cloudRecordConflicts:()=>[],uid:()=>('id-'+actions.length),
     mergeGarageCloudItemsPreservingPending:(local,cloud)=>[...local.filter(x=>x.syncStatus==='pending'),...cloud],
+    garageDeletedCloudIds:()=>new Set(),
     keepExistingGarageValue:(next,old)=>next??old,
     keepExistingGarageObject:(next,old)=>next??old,
     vehicleOwnershipStatus:()=> 'owned',fuelTypeFromCloud:x=>x,
