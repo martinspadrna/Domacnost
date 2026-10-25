@@ -67,6 +67,7 @@ function harness(collection='fuel'){
    CLOUD_DELETE_TABLES:{vehicles:'vehicles',fuel:'fuel_logs',services:'service_logs'},
    currentHouseholdId:()=>state.household.id,
    normalizeText:v=>String(v??'').trim(),structuredCloneSafe:structuredClone,
+   normalizeTrashEntries:rows=>rows,
    uid:()=>String(++seq),trashRecordTitle:(col,rec)=>rec.title||rec.name||col, cloudReady:()=>Boolean(state.cloud.userId&&state.cloud.householdId),
    cloudSyncWorkspaceMatches:scope=>scope.householdId===state.cloud.householdId && scope.userId===state.cloud.userId,
    cloudLocalPendingCount:()=>state.cloud.outbox.length,requestBackgroundRender:()=>{},
