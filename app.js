@@ -2540,6 +2540,7 @@
         cloudId: normalizeText(entry.cloudId),
         collection: normalizeText(entry.collection),
         expectedRevision: normalizeText(entry.expectedRevision),
+        garageInsertUnconfirmed: Boolean(entry.garageInsertUnconfirmed),
         label: normalizeText(entry.label),
         localRecord: entry.localRecord && typeof entry.localRecord === 'object' ? structuredCloneSafe(entry.localRecord) : null,
         createdAt: Number.isFinite(Date.parse(entry.createdAt || '')) ? entry.createdAt : new Date().toISOString(),
@@ -2713,16 +2714,20 @@
     (state.trash || []).filter((entry) => ids.has(String(entry.id))).forEach((entry) => {
       entry.records.forEach(({ collection, record }) => {
         const table = CLOUD_DELETE_TABLES[collection];
-        if (!table || !record?.cloudId) return;
+        const garage = ['vehicles', 'fuel', 'services'].includes(collection);
+        const deleteCloudId = record?.cloudId || (garage && record?.cloudInsertId) || '';
+        if (!table || !deleteCloudId || record?.cloudDeleteConfirmedAt) return;
         if (options.collections && !options.collections.includes(collection)) return;
         // Bezpečnost mezi domácnostmi a po dokončeném smazání Finance.
         if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
         if (['finance', 'financeAccounts'].includes(collection) && record.cloudDeleteConfirmedAt) return;
         if (collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)) return;
-        if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(record.cloudId))) return;
+        if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(deleteCloudId))) return;
         additions.push({
-          id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection,
-          expectedRevision: normalizeText(record.cloudUpdatedAt), label: trashRecordTitle(collection, record), localRecord: record,
+          id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(deleteCloudId), collection,
+          expectedRevision: normalizeText(record.cloudUpdatedAt),
+          garageInsertUnconfirmed: Boolean(garage && !record.cloudId && record.cloudInsertId),
+          label: trashRecordTitle(collection, record), localRecord: record,
           createdAt: entry.deletedAt || new Date().toISOString(), attempts: 0, lastError: '', nextRetryAt: ''
         });
       });
@@ -2789,6 +2794,107 @@
       skipSchedule: true
     });
     return recoverIds.length;
+  }
+
+
+  const GARAGE_DELETE_COLLECTIONS = ['vehicles', 'fuel', 'services'];
+
+  // Never resurrect a removed Garage record during a background cloud reload.
+  // Its tombstone is durable in the 30-day Trash or deletion outbox.
+  function garageDeletedCloudIds(collection) {
+    const excluded = new Set();
+    for (const entry of state.trash || []) {
+      for (const deleted of entry.records || []) {
+        if (deleted.collection !== collection || !deleted.record) continue;
+        const record = deleted.record;
+        if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) continue;
+        const id = String(record.cloudId || record.cloudInsertId || '');
+        if (id) excluded.add(id);
+      }
+    }
+    for (const entry of normalizeCloudOutbox(state.cloud?.outbox || [])) {
+      if (entry.collection === collection && entry.cloudId) excluded.add(String(entry.cloudId));
+    }
+    for (const current of state[collection] || []) {
+      if (current.cloudId) excluded.delete(String(current.cloudId));
+      if (current.cloudInsertId) excluded.delete(String(current.cloudInsertId));
+    }
+    return excluded;
+  }
+
+  // Persist the received UUID in Trash when a cloud INSERT finishes after
+  // deletion. If Undo expired before ACK, queue a durable idempotent DELETE.
+  function linkGarageLateInsertToTrash(collection, localId, scope, receipt) {
+    if (!GARAGE_DELETE_COLLECTIONS.includes(collection) || !receipt?.id ||
+        !cloudSyncWorkspaceMatches(scope)) return false;
+    const ids = [];
+    for (const entry of state.trash || []) {
+      for (const deleted of entry.records || []) {
+        const record = deleted.record;
+        if (deleted.collection !== collection || String(record?.id || '') !== String(localId) ||
+            (record.householdId && String(record.householdId) !== String(scope.householdId))) continue;
+        if (record.cloudId && String(record.cloudId) !== String(receipt.id)) return false;
+        record.cloudId = receipt.id;
+        record.cloudInsertId = receipt.id;
+        if (receipt.updated_at) record.cloudUpdatedAt = receipt.updated_at;
+        ids.push(entry.id);
+      }
+    }
+    if (!ids.length) return false;
+    state.trash = normalizeTrashEntries(state.trash || []);
+    persistStateSnapshot({ immediate: true });
+    const ready = ids.filter(id => !activeUndoTrashIds.has(id) && !pendingUndoTrashIds.has(id));
+    if (ready.length) enqueueTrashCloudDeletes(ready);
+    return true;
+  }
+
+  // Recover deletion intents after restart/pagehide/expired Undo. Never queue
+  // an item that was restored, confirmed deleted or belongs to another house.
+  function recoverableGarageTrashDeleteIds() {
+    if (!cloudReady() || !state.cloud?.householdId) return [];
+    const householdId = String(state.cloud.householdId);
+    const queued = new Set(normalizeCloudOutbox(state.cloud?.outbox || [])
+      .map(entry => entry.table + ':' + entry.cloudId));
+    const now = Date.now();
+    const ids = [];
+    for (const entry of state.trash || []) {
+      if (!entry?.id || !Number.isFinite(Date.parse(entry.deletedAt || '')) ||
+          Date.parse(entry.deletedAt) + 8000 > now ||
+          activeUndoTrashIds.has(entry.id) || pendingUndoTrashIds.has(entry.id)) continue;
+      if ((entry.records || []).some(({collection,record}) => {
+        if (!GARAGE_DELETE_COLLECTIONS.includes(collection) || !record || record.cloudDeleteConfirmedAt ||
+            (record.householdId && String(record.householdId) !== householdId)) return false;
+        const id = String(record.cloudId || record.cloudInsertId || '');
+        const table = CLOUD_DELETE_TABLES[collection];
+        if (!id || !table || queued.has(table + ':' + id)) return false;
+        const live = Array.isArray(state[collection]) ? state[collection] : [];
+        return !live.some(x => String(x.id) === String(record.id) ||
+          [x.cloudId,x.cloudInsertId].filter(Boolean).some(v => String(v) === id));
+      })) ids.push(entry.id);
+    }
+    return ids;
+  }
+
+  function recoverGarageTrashCloudDeletes() {
+    const ids = recoverableGarageTrashDeleteIds();
+    if (!ids.length) return 0;
+    enqueueTrashCloudDeletes(ids, { collections: GARAGE_DELETE_COLLECTIONS, skipSchedule: true });
+    return ids.length;
+  }
+
+  function confirmGarageTrashCloudDelete(entry) {
+    if (!GARAGE_DELETE_COLLECTIONS.includes(entry?.collection) || !entry?.cloudId) return false;
+    let changed = false;
+    for (const trash of state.trash || []) {
+      for (const deleted of trash.records || []) {
+        if (deleted.collection !== entry.collection || deleted.record?.cloudDeleteConfirmedAt) continue;
+        const rec = deleted.record;
+        if (![rec.cloudId,rec.cloudInsertId].filter(Boolean).some(id => String(id) === String(entry.cloudId))) continue;
+        rec.cloudDeleteConfirmedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function cloudErrorIsTransient(error) {
@@ -7736,6 +7842,7 @@
 
   function getCloudSyncOverviewItems() {
     const recoverableFinanceDeletes = recoverableFinanceTrashDeleteIds();
+    const recoverableGarageDeletes = recoverableGarageTrashDeleteIds();
     const snapshotSectionPending = Boolean(
       state.subscriptionsCloud?.pendingAt
       || state.readingsCloud?.pendingAt
@@ -7765,7 +7872,7 @@
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0, pendingAt: state.loyaltyCardsCloud?.pendingAt },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0, pendingAt: state.poolCloud?.pendingAt },
       { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: financeSettingsPendingCount(), pendingAt: financeSettingsPendingAt() },
-      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceDeletes.length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => recoverableFinanceDeletes.includes(entry.id))?.deletedAt },
+      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceDeletes.length + recoverableGarageDeletes.length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => [...recoverableFinanceDeletes, ...recoverableGarageDeletes].includes(entry.id))?.deletedAt },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending, pendingAt: state.cloud?.householdUiPendingAt }
     ];
     return counters.map((entry) => {
@@ -17325,6 +17432,7 @@
         // A deleted vehicle must not come back. Keep the receipt on the old
         // object for the Undo-expiry delete callback.
         vehicle.cloudId = insertId;
+        linkGarageLateInsertToTrash('vehicles', vehicle.id, scope, data || { id: insertId });
         return null;
       }
       if (current.cloudId && String(current.cloudId) !== insertId) return null;
@@ -17537,7 +17645,11 @@
         }
       }
       const updated = (state[collection] || []).find((entry) => String(entry?.id) === String(item.id));
-      if (!updated || updated.cloudId && String(updated.cloudId) !== String(data.id)) return null;
+      if (!updated) {
+        linkGarageLateInsertToTrash(collection, item.id, scope, data);
+        return null;
+      }
+      if (updated.cloudId && String(updated.cloudId) !== String(data.id)) return null;
       // A newer local edit made during POST is not included in its ACK.
       const unchanged = JSON.stringify(updated) === localBefore;
       updated.cloudId = data.id;
@@ -17822,7 +17934,8 @@
     if (JSON.stringify([state.vehicles || [], state.fuel || [], state.services || []]) !== localBeforeRead) return false;
 
     const existingByCloud = new Map(state.vehicles.filter((vehicle) => vehicle.cloudId).map((vehicle) => [vehicle.cloudId, vehicle]));
-    const cloudVehicles = (vehicles || []).map((vehicle) => {
+    const deletedVehicles = garageDeletedCloudIds('vehicles');
+    const cloudVehicles = (vehicles || []).filter(vehicle => !deletedVehicles.has(String(vehicle.id))).map((vehicle) => {
       const existing = existingByCloud.get(vehicle.id) || {};
       const item = {
         id: existing.id || uid(),
@@ -17861,7 +17974,8 @@
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
 
-    const cloudFuel = (fuel || []).map((item) => ({
+    const deletedFuel = garageDeletedCloudIds('fuel');
+    const cloudFuel = (fuel || []).filter(item => !deletedFuel.has(String(item.id))).map((item) => ({
       id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
       householdId: readLocalHouseholdId || workspace.householdId,
@@ -17881,7 +17995,8 @@
     })).filter((item) => item.vehicleId);
     state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel);
 
-    const cloudServices = (services || []).map((item) => ({
+    const deletedServices = garageDeletedCloudIds('services');
+    const cloudServices = (services || []).filter(item => !deletedServices.has(String(item.id))).map((item) => ({
       id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
       householdId: readLocalHouseholdId || workspace.householdId,
@@ -19580,6 +19695,7 @@
     if (cloudAutosyncRunning || cloudRealtimeReloading || suppressToastDepth > 0) return;
     // Před vyhodnocením počtu pending obnovit ztracenou Finance delete frontu.
     recoverFinanceTrashCloudDeletes();
+    recoverGarageTrashCloudDeletes();
     const pending = cloudLocalPendingCount();
     state.cloud.localPendingCount = pending;
     if (!pending) {
@@ -19663,6 +19779,7 @@
       return false;
     }
     recoverFinanceTrashCloudDeletes();
+    recoverGarageTrashCloudDeletes();
     const before = cloudLocalPendingCount();
     state.cloud.localPendingCount = before;
     if (!before) {
@@ -20379,6 +20496,7 @@
       const workspace = cloudSyncWorkspaceScope();
       // I ruční synchronizace musí před prvním replay obnovit ztracený DELETE po pádu Undo.
       recoverFinanceTrashCloudDeletes();
+      recoverGarageTrashCloudDeletes();
       const syncers = [
         { run: replayCloudOutbox },
         { run: cloudSyncLocalProfiles },
@@ -24282,9 +24400,8 @@
       saveState();
       render();
     }, { onExpire: async () => {
-      if (collection === 'fuel' || collection === 'services') {
-        await cloudDeleteGarageRecord(collection, record);
-      } else if (collection === 'contracts') {
+      // Garáž se maže výhradně persistentním cloud outboxem po uplynutí Undo.
+      if (collection === 'contracts') {
         const contracts = getContractsModule();
         for (const file of files) {
           if (file.cloudId) await contracts.deleteCloudContractFile(file, { preserveStorage: true });
@@ -24357,15 +24474,8 @@
       saveState();
       render();
     }, { onExpire: async () => {
-      // Undo may expire while the initial INSERT is still in flight.
-      // Wait for its ACK/recovery before attempting to delete that exact row.
-      const scope = cloudSyncWorkspaceScope();
-      const key = [scope.householdId, scope.userId, vehicle.id].join(':');
-      const pendingInsert = garageVehicleInsertInFlight.get(key);
-      if (pendingInsert) {
-        try { await pendingInsert; } catch { /* insert will remain unconfirmed */ }
-      }
-      if (vehicle.cloudId && cloudSyncWorkspaceMatches(scope)) await cloudDeleteVehicle(vehicle);
+      // Undo-expiry enqueues all vehicle/child records atomically in the
+      // durable outbox. Never issue an untracked direct DELETE.
     } });
   }
 
