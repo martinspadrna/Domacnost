@@ -2970,6 +2970,16 @@
       const entry = queue[0];
       if (!entryIsCurrent(entry)) return false;
       if (GARAGE_DELETE_COLLECTIONS.includes(entry.collection)) {
+        const restoredGarage = () => (state[entry.collection] || []).some(item =>
+          String(item?.id || '') === String(entry.localRecord?.id || '') ||
+          [item?.cloudId, item?.cloudInsertId].filter(Boolean).some(id => String(id) === String(entry.cloudId)));
+        // User restored the record from Trash while the delete was queued.
+        if (restoredGarage()) {
+          if (!finishEntry(entry)) return false;
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
         // A lost INSERT ACK may leave only cloudInsertId in a durable Trash
         // snapshot. Never DELETE by guessed name/plate/hash or without a
         // read-only verification of the exact PK and household.
@@ -3029,6 +3039,14 @@
         }
         if (!remote.updated_at) {
           return reportGarageFailure({ message: 'Mazání Garáže čeká na čas revize cloudového záznamu' }, true);
+        }
+        // Recheck after network read: Undo/Trash restore may have happened
+        // while the SELECT was in flight.
+        if (restoredGarage()) {
+          if (!finishEntry(entry)) return false;
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
         }
         // CAS even for an unconfirmed INSERT: only the content-verified
         // revision can be deleted; a newer edit on the other device is safe.
@@ -15141,6 +15159,16 @@
       state[collection].splice(Math.min(Math.max(Number(index || 0), 0), state[collection].length), 0, restored);
       restoredCollections.push(collection);
     });
+    // Obnovená Garáž nesmí být současně smazána starým pending outboxem.
+    const restoredGarageKeys = new Set(entry.records
+      .filter(({ collection, record }) => ['vehicles', 'fuel', 'services'].includes(collection) && record)
+      .map(({ collection, record }) => CLOUD_DELETE_TABLES[collection] + ':' +
+        String(record.cloudId || record.cloudInsertId || ''))
+      .filter(key => !key.endsWith(':')));
+    if (restoredGarageKeys.size) {
+      state.cloud.outbox = normalizeCloudOutbox(state.cloud?.outbox || [])
+        .filter(item => !restoredGarageKeys.has(item.table + ':' + item.cloudId));
+    }
     removeTrashEntries([entry.id]);
     markRestoredCollectionsPending(restoredCollections);
     touchState();
