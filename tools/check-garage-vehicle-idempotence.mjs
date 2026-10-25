@@ -55,6 +55,7 @@ function harness(mode='success'){
     state,cloudReady:()=>true,getSupabaseClient:()=>client,
     refreshCloudSession:async()=>({id:'user-one'}),
     cloudVehiclePayload,
+    linkGarageLateInsertToTrash: () => false,
     markGarageRecordPending:item=>{item.syncStatus=item.cloudId?'pending_update':'pending_add';},
     isGarageVehicleExtendedSchemaError:e=>e?.code==='PGRST204',
     markGarageVehicleExtendedSchemaPending:()=>schema.push(true),
@@ -140,6 +141,6 @@ for(const mode of ['mismatch','other-home']){
   assert(!car.cloudId,'auth switch prevents stale local ACK');
   assert.equal(h.state.vehicles[0].cloudInsertId||'', '');
 }
-assert(app.includes('const pendingInsert = garageVehicleInsertInFlight.get(key);'));
-assert(app.includes('if (pendingInsert) {'));
+assert(app.includes("linkGarageLateInsertToTrash('vehicles', vehicle.id, scope"), 'late ACK must link deleted car to Trash');
+assert(app.includes('garageInsertUnconfirmed:'), 'deleted car must use durable Garage outbox');
 console.log('PASS P0 v588 Garage UUID: durable restart, lost ACK, schema fallback, mismatch, scope, concurrent insert and Undo');

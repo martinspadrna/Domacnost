@@ -62,6 +62,7 @@ function createHarness(collection, behavior = 'normal') {
     state, cloudReady: () => true, getSupabaseClient: () => client,
     refreshCloudSession: async () => ({ id:'user-a' }),
     ensureCloudVehicle: async () => 'car-cloud',
+    linkGarageLateInsertToTrash: () => false,
     markGarageRecordPending: r => {r.syncStatus=r.cloudId?'pending_update':'pending_add';},
     garageSourceHash: (kind,rec) => [kind,'car-cloud',rec.date,rec.odometer,
       kind==='fuel'?rec.liters:rec.title].join('|'),

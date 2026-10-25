@@ -17,7 +17,7 @@ const e=()=>{
    state, console, cloudReady:()=>true, cloudSyncWorkspaceScope:()=>({userId:state.cloud.userId,householdId:state.cloud.householdId}),
    cloudSyncWorkspaceMatches:x=>x.userId===state.cloud.userId&&x.householdId===state.cloud.householdId,
    withDeferredRender:fn=>fn(),withMutedToasts:fn=>fn(),
-   recoverFinanceTrashCloudDeletes:()=>{},moduleCodeReady:()=>false,yieldToMainThread:async()=>{},
+   recoverFinanceTrashCloudDeletes:()=>{},recoverGarageTrashCloudDeletes:()=>{},moduleCodeReady:()=>false,yieldToMainThread:async()=>{},
    replayCloudOutbox:async()=>true,cloudSyncLocalProfiles:async()=>true,
    cloudSyncLocalShoppingItems:async()=>true,cloudSyncLocalContracts:async()=>true,cloudSyncLocalContractFiles:async()=>true,
    cloudSyncLocalWarrantyFiles:async()=>true,cloudSyncLocalGarage:async()=>true,

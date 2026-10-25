@@ -9,8 +9,8 @@
   const localStorage = createSafeStorage(window.localStorage, 'local');
   const sessionStorage = createSafeStorage(window.sessionStorage, 'session');
 
-  const APP_VERSION = 'Domácnost+ v.0.1_590';
-  const APP_BUILD = 590;
+  const APP_VERSION = 'Domácnost+ v.0.1_591';
+  const APP_BUILD = 591;
   const APP_PERFORMANCE_STORAGE_KEY = 'domacnostPlus.performanceMetrics.v1';
   const APP_PERFORMANCE_STARTED_AT = performance?.now ? performance.now() : Date.now();
   const APP_PERFORMANCE_MAX_SAMPLES = 96;
@@ -2540,6 +2540,7 @@
         cloudId: normalizeText(entry.cloudId),
         collection: normalizeText(entry.collection),
         expectedRevision: normalizeText(entry.expectedRevision),
+        garageInsertUnconfirmed: Boolean(entry.garageInsertUnconfirmed),
         label: normalizeText(entry.label),
         localRecord: entry.localRecord && typeof entry.localRecord === 'object' ? structuredCloneSafe(entry.localRecord) : null,
         createdAt: Number.isFinite(Date.parse(entry.createdAt || '')) ? entry.createdAt : new Date().toISOString(),
@@ -2713,16 +2714,21 @@
     (state.trash || []).filter((entry) => ids.has(String(entry.id))).forEach((entry) => {
       entry.records.forEach(({ collection, record }) => {
         const table = CLOUD_DELETE_TABLES[collection];
-        if (!table || !record?.cloudId) return;
+        const garage = ['vehicles', 'fuel', 'services'].includes(collection);
+        const deleteCloudId = record?.cloudId || (garage && record?.cloudInsertId) || '';
+        if (!table || !deleteCloudId || record?.cloudDeleteConfirmedAt) return;
         if (options.collections && !options.collections.includes(collection)) return;
         // Bezpečnost mezi domácnostmi a po dokončeném smazání Finance.
-        if (record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
+        if (garage && !garageRecordInCurrentHousehold(record)) return;
+        if (!garage && record.householdId && String(record.householdId) !== String(state.cloud?.householdId || '')) return;
         if (['finance', 'financeAccounts'].includes(collection) && record.cloudDeleteConfirmedAt) return;
         if (collection === 'calendar' && calendarSyncRecordIsProviderManaged(record)) return;
-        if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(record.cloudId))) return;
+        if (cloudRecordConflicts().some((conflict) => conflict.table === table && conflict.cloudId === String(deleteCloudId))) return;
         additions.push({
-          id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(record.cloudId), collection,
-          expectedRevision: normalizeText(record.cloudUpdatedAt), label: trashRecordTitle(collection, record), localRecord: record,
+          id: `outbox-${uid()}`, operation: 'delete', table, cloudId: String(deleteCloudId), collection,
+          expectedRevision: normalizeText(record.cloudUpdatedAt),
+          garageInsertUnconfirmed: Boolean(garage && !record.cloudId && record.cloudInsertId),
+          label: trashRecordTitle(collection, record), localRecord: record,
           createdAt: entry.deletedAt || new Date().toISOString(), attempts: 0, lastError: '', nextRetryAt: ''
         });
       });
@@ -2791,6 +2797,114 @@
     return recoverIds.length;
   }
 
+
+  const GARAGE_DELETE_COLLECTIONS = ['vehicles', 'fuel', 'services'];
+
+  function garageRecordInCurrentHousehold(record, householdId = state.cloud?.householdId) {
+    const id = String(record?.householdId || '');
+    // Local-first data can use "household-<cloud UUID>" as the workspace ID.
+    return !id || [householdId, currentHouseholdId(false), `household-${householdId}`]
+      .filter(Boolean).some(candidate => id === String(candidate));
+  }
+
+  // Never resurrect a removed Garage record during a background cloud reload.
+  // Its tombstone is durable in the 30-day Trash or deletion outbox.
+  function garageDeletedCloudIds(collection) {
+    const excluded = new Set();
+    for (const entry of state.trash || []) {
+      for (const deleted of entry.records || []) {
+        if (deleted.collection !== collection || !deleted.record) continue;
+        const record = deleted.record;
+        if (!garageRecordInCurrentHousehold(record)) continue;
+        const id = String(record.cloudId || record.cloudInsertId || '');
+        if (id) excluded.add(id);
+      }
+    }
+    for (const entry of normalizeCloudOutbox(state.cloud?.outbox || [])) {
+      if (entry.collection === collection && entry.cloudId) excluded.add(String(entry.cloudId));
+    }
+    for (const current of state[collection] || []) {
+      if (current.cloudId) excluded.delete(String(current.cloudId));
+      if (current.cloudInsertId) excluded.delete(String(current.cloudInsertId));
+    }
+    return excluded;
+  }
+
+  // Persist the received UUID in Trash when a cloud INSERT finishes after
+  // deletion. If Undo expired before ACK, queue a durable idempotent DELETE.
+  function linkGarageLateInsertToTrash(collection, localId, scope, receipt) {
+    if (!GARAGE_DELETE_COLLECTIONS.includes(collection) || !receipt?.id ||
+        !cloudSyncWorkspaceMatches(scope)) return false;
+    const ids = [];
+    for (const entry of state.trash || []) {
+      for (const deleted of entry.records || []) {
+        const record = deleted.record;
+        if (deleted.collection !== collection || String(record?.id || '') !== String(localId) ||
+            !garageRecordInCurrentHousehold(record, scope.householdId)) continue;
+        if (record.cloudId && String(record.cloudId) !== String(receipt.id)) return false;
+        record.cloudId = receipt.id;
+        record.cloudInsertId = receipt.id;
+        if (receipt.updated_at) record.cloudUpdatedAt = receipt.updated_at;
+        ids.push(entry.id);
+      }
+    }
+    if (!ids.length) return false;
+    state.trash = normalizeTrashEntries(state.trash || []);
+    persistStateSnapshot({ immediate: true });
+    const ready = ids.filter(id => !activeUndoTrashIds.has(id) && !pendingUndoTrashIds.has(id));
+    if (ready.length) enqueueTrashCloudDeletes(ready);
+    return true;
+  }
+
+  // Recover deletion intents after restart/pagehide/expired Undo. Never queue
+  // an item that was restored, confirmed deleted or belongs to another house.
+  function recoverableGarageTrashDeleteIds() {
+    if (!cloudReady() || !state.cloud?.householdId) return [];
+    const householdId = String(state.cloud.householdId);
+    const queued = new Set(normalizeCloudOutbox(state.cloud?.outbox || [])
+      .map(entry => entry.table + ':' + entry.cloudId));
+    const now = Date.now();
+    const ids = [];
+    for (const entry of state.trash || []) {
+      if (!entry?.id || !Number.isFinite(Date.parse(entry.deletedAt || '')) ||
+          Date.parse(entry.deletedAt) + 8000 > now ||
+          activeUndoTrashIds.has(entry.id) || pendingUndoTrashIds.has(entry.id)) continue;
+      if ((entry.records || []).some(({collection,record}) => {
+        if (!GARAGE_DELETE_COLLECTIONS.includes(collection) || !record || record.cloudDeleteConfirmedAt ||
+            !garageRecordInCurrentHousehold(record, householdId)) return false;
+        const id = String(record.cloudId || record.cloudInsertId || '');
+        const table = CLOUD_DELETE_TABLES[collection];
+        if (!id || !table || queued.has(table + ':' + id)) return false;
+        const live = Array.isArray(state[collection]) ? state[collection] : [];
+        return !live.some(x => String(x.id) === String(record.id) ||
+          [x.cloudId,x.cloudInsertId].filter(Boolean).some(v => String(v) === id));
+      })) ids.push(entry.id);
+    }
+    return ids;
+  }
+
+  function recoverGarageTrashCloudDeletes() {
+    const ids = recoverableGarageTrashDeleteIds();
+    if (!ids.length) return 0;
+    enqueueTrashCloudDeletes(ids, { collections: GARAGE_DELETE_COLLECTIONS, skipSchedule: true });
+    return ids.length;
+  }
+
+  function confirmGarageTrashCloudDelete(entry) {
+    if (!GARAGE_DELETE_COLLECTIONS.includes(entry?.collection) || !entry?.cloudId) return false;
+    let changed = false;
+    for (const trash of state.trash || []) {
+      for (const deleted of trash.records || []) {
+        if (deleted.collection !== entry.collection || deleted.record?.cloudDeleteConfirmedAt) continue;
+        const rec = deleted.record;
+        if (![rec.cloudId,rec.cloudInsertId].filter(Boolean).some(id => String(id) === String(entry.cloudId))) continue;
+        rec.cloudDeleteConfirmedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function cloudErrorIsTransient(error) {
     const code = normalizeText(error?.code).toUpperCase();
     const status = Number(error?.status || error?.statusCode || error?.context?.status || (/^\d{3}$/.test(code) ? code : 0));
@@ -2855,6 +2969,117 @@
       if (!scopeIsCurrent()) return false;
       const entry = queue[0];
       if (!entryIsCurrent(entry)) return false;
+      if (GARAGE_DELETE_COLLECTIONS.includes(entry.collection)) {
+        const restoredGarage = () => (state[entry.collection] || []).some(item =>
+          String(item?.id || '') === String(entry.localRecord?.id || '') ||
+          [item?.cloudId, item?.cloudInsertId].filter(Boolean).some(id => String(id) === String(entry.cloudId)));
+        // User restored the record from Trash while the delete was queued.
+        if (restoredGarage()) {
+          if (!finishEntry(entry)) return false;
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
+        // A lost INSERT ACK may leave only cloudInsertId in a durable Trash
+        // snapshot. Never DELETE by guessed name/plate/hash or without a
+        // read-only verification of the exact PK and household.
+        const fetchGarageRow = () => client.from(entry.table).select('*')
+          .eq('id', entry.cloudId).eq('household_id', replayHouseholdId).maybeSingle();
+        const reportGarageFailure = (error, permanent = false) => {
+          if (!entryIsCurrent(entry)) return false;
+          entry.attempts += 1;
+          entry.lastError = normalizeText(error?.message) || 'Smazání Garáže čeká na ověření';
+          entry.lastErrorCode = permanent ? 'GARAGE_DELETE_MISMATCH' : normalizeText(error?.code || error?.status || '503');
+          entry.lastErrorHint = permanent ? 'Cloud se liší; záznam nebyl smazán.' : 'Záznam byl zachován, pokus se bezpečně zopakuje.';
+          entry.nextRetryAt = permanent ? '' : new Date(Date.now() + Math.min(300000, 3000 * 2 ** Math.min(entry.attempts, 6))).toISOString();
+          state.cloud.autosyncStatus = permanent ? 'blocked' : 'pending';
+          state.cloud.lastAutosyncError = entry.lastError;
+          persistFailedEntry(entry);
+          persistStateSnapshot({ immediate: true });
+          return false;
+        };
+        let fetched;
+        try {
+          fetched = await fetchGarageRow();
+        } catch (error) {
+          return reportGarageFailure(error);
+        }
+        if (!entryIsCurrent(entry)) return false;
+        if (fetched.error) return reportGarageFailure(fetched.error);
+        let remote = fetched.data;
+        if (!remote) {
+          // Unknown INSERT outcome: a read taken before a late server commit
+          // is not enough to declare a client-generated UUID deleted.
+          if (entry.garageInsertUnconfirmed)
+            return reportGarageFailure({ message: 'Čeká se na ověření původního zápisu Garáže' });
+          if (!finishEntry(entry)) return false;
+          confirmGarageTrashCloudDelete(entry);
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
+        const record = entry.localRecord || {};
+        const sameContent = entry.collection === 'vehicles'
+          ? garageVehicleCloudDifference({ ...record, cloudId: entry.cloudId }, remote).type === 'same'
+          : garageLogUpdatePayloadMatches(garageLogUpdatePayload(
+              entry.collection, record, replayUserId), remote);
+        const source = entry.collection === 'fuel' || entry.collection === 'services'
+          ? record.source === 'fuelio' ? 'fuelio_import'
+            : record.source === 'cloud' ? remote.source : 'manual'
+          : '';
+        const expectedRevisionMatches = !entry.expectedRevision ||
+          String(remote.updated_at || '') === String(entry.expectedRevision);
+        const unversionedEdited = !entry.expectedRevision &&
+          Number.isFinite(Date.parse(remote.created_at || '')) &&
+          Number.isFinite(Date.parse(remote.updated_at || '')) &&
+          Date.parse(remote.updated_at) > Date.parse(remote.created_at);
+        if (!sameContent || !expectedRevisionMatches || unversionedEdited ||
+            (source && remote.source !== source)) {
+          return reportGarageFailure({ message: 'Mazání Garáže pozastaveno: cloudový záznam byl mezitím změněn' }, true);
+        }
+        if (!remote.updated_at) {
+          return reportGarageFailure({ message: 'Mazání Garáže čeká na čas revize cloudového záznamu' }, true);
+        }
+        // Recheck after network read: Undo/Trash restore may have happened
+        // while the SELECT was in flight.
+        if (restoredGarage()) {
+          if (!finishEntry(entry)) return false;
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
+        // CAS even for an unconfirmed INSERT: only the content-verified
+        // revision can be deleted; a newer edit on the other device is safe.
+        let deletion;
+        try {
+          deletion = await client.from(entry.table).delete()
+            .eq('id', entry.cloudId).eq('household_id', replayHouseholdId)
+            .eq('updated_at', remote.updated_at).select('id').maybeSingle();
+        } catch (error) {
+          deletion = { error, data: null };
+        }
+        if (!entryIsCurrent(entry)) return false;
+        if (deletion.error || !deletion.data?.id) {
+          let checked;
+          try {
+            checked = await fetchGarageRow();
+          } catch (error) {
+            return reportGarageFailure(error);
+          }
+          if (!entryIsCurrent(entry)) return false;
+          if (checked.error) return reportGarageFailure(checked.error);
+          if (checked.data) {
+            if (String(checked.data.updated_at || '') !== String(remote.updated_at))
+              return reportGarageFailure({ message: 'Mazání Garáže pozastaveno: v cloudu je novější revize' }, true);
+            return reportGarageFailure(deletion.error || { message: 'Smazání Garáže nebylo potvrzeno' });
+          }
+        }
+        if (!finishEntry(entry)) return false;
+        confirmGarageTrashCloudDelete(entry);
+        persistStateSnapshot({ immediate: true });
+        await yieldToMainThread();
+        continue;
+      }
       if (entry.collection === 'calendar' && entry.operation === 'delete' && !calendarSyncRecordIsProviderManaged(entry.localRecord)) {
         const { data: calendarRemote, error: calendarRemoteError } = await client
           .from(entry.table)
@@ -7736,6 +7961,7 @@
 
   function getCloudSyncOverviewItems() {
     const recoverableFinanceDeletes = recoverableFinanceTrashDeleteIds();
+    const recoverableGarageDeletes = recoverableGarageTrashDeleteIds();
     const snapshotSectionPending = Boolean(
       state.subscriptionsCloud?.pendingAt
       || state.readingsCloud?.pendingAt
@@ -7765,7 +7991,7 @@
       { nav: 'shopping', tab: 'loyalty', icon: '💳', label: 'Věrnostní karty', items: state.loyaltyCards || [], loadedAt: state.loyaltyCardsCloud?.loadedAt, cloudSynced: Boolean(state.loyaltyCardsCloud?.loadedAt && cloudReady()), pendingCount: state.loyaltyCardsCloud?.pendingAt ? 1 : 0, pendingAt: state.loyaltyCardsCloud?.pendingAt },
       { nav: 'pool', tab: 'overview', icon: '🏊', label: 'Bazén', items: state.pools || [], loadedAt: state.poolCloud?.loadedAt, cloudSynced: Boolean(state.poolCloud?.loadedAt && cloudReady()), pendingCount: state.poolCloud?.pendingAt ? 1 : 0, pendingAt: state.poolCloud?.pendingAt },
       { nav: 'finance', tab: 'loans', icon: '🧾', label: 'Finance nastavení', items: [...(state.financeTemplates || []), ...(state.financeLoans || [])], loadedAt: state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt, cloudSynced: Boolean((state.financeCloud?.templatesLoadedAt || state.financeCloud?.loansLoadedAt || state.cloud?.lastSyncAt) && cloudReady()), pendingCount: financeSettingsPendingCount(), pendingAt: financeSettingsPendingAt() },
-      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceDeletes.length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => recoverableFinanceDeletes.includes(entry.id))?.deletedAt },
+      { nav: 'settings', tab: 'data', icon: '🗑️', label: 'Čekající smazání', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: true, pendingCount: normalizeCloudOutbox(state.cloud?.outbox || []).length + recoverableFinanceDeletes.length + recoverableGarageDeletes.length, pendingAt: normalizeCloudOutbox(state.cloud?.outbox || [])[0]?.createdAt || (state.trash || []).find(entry => [...recoverableFinanceDeletes, ...recoverableGarageDeletes].includes(entry.id))?.deletedAt },
       { nav: 'settings', tab: 'cloud', icon: '⚙️', label: 'Nastavení domácnosti', items: [], loadedAt: state.cloud?.lastSyncAt, cloudSynced: Boolean(state.cloud?.lastSyncAt && cloudReady()), pendingCount: householdUiFallbackPending, pendingAt: state.cloud?.householdUiPendingAt }
     ];
     return counters.map((entry) => {
@@ -14933,6 +15159,16 @@
       state[collection].splice(Math.min(Math.max(Number(index || 0), 0), state[collection].length), 0, restored);
       restoredCollections.push(collection);
     });
+    // Obnovená Garáž nesmí být současně smazána starým pending outboxem.
+    const restoredGarageKeys = new Set(entry.records
+      .filter(({ collection, record }) => ['vehicles', 'fuel', 'services'].includes(collection) && record)
+      .map(({ collection, record }) => CLOUD_DELETE_TABLES[collection] + ':' +
+        String(record.cloudId || record.cloudInsertId || ''))
+      .filter(key => !key.endsWith(':')));
+    if (restoredGarageKeys.size) {
+      state.cloud.outbox = normalizeCloudOutbox(state.cloud?.outbox || [])
+        .filter(item => !restoredGarageKeys.has(item.table + ':' + item.cloudId));
+    }
     removeTrashEntries([entry.id]);
     markRestoredCollectionsPending(restoredCollections);
     touchState();
@@ -17325,6 +17561,7 @@
         // A deleted vehicle must not come back. Keep the receipt on the old
         // object for the Undo-expiry delete callback.
         vehicle.cloudId = insertId;
+        linkGarageLateInsertToTrash('vehicles', vehicle.id, scope, data || { id: insertId });
         return null;
       }
       if (current.cloudId && String(current.cloudId) !== insertId) return null;
@@ -17537,7 +17774,11 @@
         }
       }
       const updated = (state[collection] || []).find((entry) => String(entry?.id) === String(item.id));
-      if (!updated || updated.cloudId && String(updated.cloudId) !== String(data.id)) return null;
+      if (!updated) {
+        linkGarageLateInsertToTrash(collection, item.id, scope, data);
+        return null;
+      }
+      if (updated.cloudId && String(updated.cloudId) !== String(data.id)) return null;
       // A newer local edit made during POST is not included in its ACK.
       const unchanged = JSON.stringify(updated) === localBefore;
       updated.cloudId = data.id;
@@ -17822,7 +18063,8 @@
     if (JSON.stringify([state.vehicles || [], state.fuel || [], state.services || []]) !== localBeforeRead) return false;
 
     const existingByCloud = new Map(state.vehicles.filter((vehicle) => vehicle.cloudId).map((vehicle) => [vehicle.cloudId, vehicle]));
-    const cloudVehicles = (vehicles || []).map((vehicle) => {
+    const deletedVehicles = garageDeletedCloudIds('vehicles');
+    const cloudVehicles = (vehicles || []).filter(vehicle => !deletedVehicles.has(String(vehicle.id))).map((vehicle) => {
       const existing = existingByCloud.get(vehicle.id) || {};
       const item = {
         id: existing.id || uid(),
@@ -17861,7 +18103,8 @@
     refreshVehicleIconColorSettings();
     refreshVehicleIconShapeSettings();
 
-    const cloudFuel = (fuel || []).map((item) => ({
+    const deletedFuel = garageDeletedCloudIds('fuel');
+    const cloudFuel = (fuel || []).filter(item => !deletedFuel.has(String(item.id))).map((item) => ({
       id: state.fuel.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
       householdId: readLocalHouseholdId || workspace.householdId,
@@ -17881,7 +18124,8 @@
     })).filter((item) => item.vehicleId);
     state.fuel = mergeGarageCloudItemsPreservingPending(state.fuel, cloudFuel);
 
-    const cloudServices = (services || []).map((item) => ({
+    const deletedServices = garageDeletedCloudIds('services');
+    const cloudServices = (services || []).filter(item => !deletedServices.has(String(item.id))).map((item) => ({
       id: state.services.find((entry) => entry.cloudId === item.id)?.id || uid(),
       cloudId: item.id,
       householdId: readLocalHouseholdId || workspace.householdId,
@@ -19580,6 +19824,7 @@
     if (cloudAutosyncRunning || cloudRealtimeReloading || suppressToastDepth > 0) return;
     // Před vyhodnocením počtu pending obnovit ztracenou Finance delete frontu.
     recoverFinanceTrashCloudDeletes();
+    recoverGarageTrashCloudDeletes();
     const pending = cloudLocalPendingCount();
     state.cloud.localPendingCount = pending;
     if (!pending) {
@@ -19663,6 +19908,7 @@
       return false;
     }
     recoverFinanceTrashCloudDeletes();
+    recoverGarageTrashCloudDeletes();
     const before = cloudLocalPendingCount();
     state.cloud.localPendingCount = before;
     if (!before) {
@@ -20379,6 +20625,7 @@
       const workspace = cloudSyncWorkspaceScope();
       // I ruční synchronizace musí před prvním replay obnovit ztracený DELETE po pádu Undo.
       recoverFinanceTrashCloudDeletes();
+      recoverGarageTrashCloudDeletes();
       const syncers = [
         { run: replayCloudOutbox },
         { run: cloudSyncLocalProfiles },
@@ -24282,9 +24529,8 @@
       saveState();
       render();
     }, { onExpire: async () => {
-      if (collection === 'fuel' || collection === 'services') {
-        await cloudDeleteGarageRecord(collection, record);
-      } else if (collection === 'contracts') {
+      // Garáž se maže výhradně persistentním cloud outboxem po uplynutí Undo.
+      if (collection === 'contracts') {
         const contracts = getContractsModule();
         for (const file of files) {
           if (file.cloudId) await contracts.deleteCloudContractFile(file, { preserveStorage: true });
@@ -24357,15 +24603,8 @@
       saveState();
       render();
     }, { onExpire: async () => {
-      // Undo may expire while the initial INSERT is still in flight.
-      // Wait for its ACK/recovery before attempting to delete that exact row.
-      const scope = cloudSyncWorkspaceScope();
-      const key = [scope.householdId, scope.userId, vehicle.id].join(':');
-      const pendingInsert = garageVehicleInsertInFlight.get(key);
-      if (pendingInsert) {
-        try { await pendingInsert; } catch { /* insert will remain unconfirmed */ }
-      }
-      if (vehicle.cloudId && cloudSyncWorkspaceMatches(scope)) await cloudDeleteVehicle(vehicle);
+      // Undo-expiry enqueues all vehicle/child records atomically in the
+      // durable outbox. Never issue an untracked direct DELETE.
     } });
   }
 

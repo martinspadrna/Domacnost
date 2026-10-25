@@ -51,6 +51,7 @@ const make=()=>{
     healStaleHouseholdUiConflict:stub,
     browserAppearsOnline:()=>true,
     recoverFinanceTrashCloudDeletes:stub,
+    recoverGarageTrashCloudDeletes:stub,
     ensurePendingCloudModuleCode:async()=>{},
     runWhenMainThreadFree:stub,
     householdUiHasPendingChanges:()=>false,
