@@ -2961,6 +2961,95 @@
       if (!scopeIsCurrent()) return false;
       const entry = queue[0];
       if (!entryIsCurrent(entry)) return false;
+      if (GARAGE_DELETE_COLLECTIONS.includes(entry.collection)) {
+        // A lost INSERT ACK may leave only cloudInsertId in a durable Trash
+        // snapshot. Never DELETE by guessed name/plate/hash or without a
+        // read-only verification of the exact PK and household.
+        const fetchGarageRow = () => client.from(entry.table).select('*')
+          .eq('id', entry.cloudId).eq('household_id', replayHouseholdId).maybeSingle();
+        const reportGarageFailure = (error, permanent = false) => {
+          if (!entryIsCurrent(entry)) return false;
+          entry.attempts += 1;
+          entry.lastError = normalizeText(error?.message) || 'Smazání Garáže čeká na ověření';
+          entry.lastErrorCode = permanent ? 'GARAGE_DELETE_MISMATCH' : normalizeText(error?.code || error?.status || '503');
+          entry.lastErrorHint = permanent ? 'Cloud se liší; záznam nebyl smazán.' : 'Záznam byl zachován, pokus se bezpečně zopakuje.';
+          entry.nextRetryAt = permanent ? '' : new Date(Date.now() + Math.min(300000, 3000 * 2 ** Math.min(entry.attempts, 6))).toISOString();
+          state.cloud.autosyncStatus = permanent ? 'blocked' : 'pending';
+          state.cloud.lastAutosyncError = entry.lastError;
+          persistFailedEntry(entry);
+          persistStateSnapshot({ immediate: true });
+          return false;
+        };
+        let fetched;
+        try {
+          fetched = await fetchGarageRow();
+        } catch (error) {
+          return reportGarageFailure(error);
+        }
+        if (!entryIsCurrent(entry)) return false;
+        if (fetched.error) return reportGarageFailure(fetched.error);
+        let remote = fetched.data;
+        if (!remote) {
+          // Unknown INSERT outcome: a read taken before a late server commit
+          // is not enough to declare a client-generated UUID deleted.
+          if (entry.garageInsertUnconfirmed)
+            return reportGarageFailure({ message: 'Čeká se na ověření původního zápisu Garáže' });
+          if (!finishEntry(entry)) return false;
+          confirmGarageTrashCloudDelete(entry);
+          persistStateSnapshot({ immediate: true });
+          await yieldToMainThread();
+          continue;
+        }
+        const record = entry.localRecord || {};
+        const sameContent = entry.collection === 'vehicles'
+          ? garageVehicleCloudDifference({ ...record, cloudId: entry.cloudId }, remote).type === 'same'
+          : garageLogUpdatePayloadMatches(garageLogUpdatePayload(
+              entry.collection, record, replayUserId), remote);
+        const source = entry.collection === 'fuel' || entry.collection === 'services'
+          ? record.source === 'fuelio' ? 'fuelio_import'
+            : record.source === 'cloud' ? remote.source : 'manual'
+          : '';
+        const expectedRevisionMatches = !entry.expectedRevision ||
+          String(remote.updated_at || '') === String(entry.expectedRevision);
+        if (!sameContent || !expectedRevisionMatches ||
+            (source && remote.source !== source)) {
+          return reportGarageFailure({ message: 'Mazání Garáže pozastaveno: cloudový záznam byl mezitím změněn' }, true);
+        }
+        if (!remote.updated_at) {
+          return reportGarageFailure({ message: 'Mazání Garáže čeká na čas revize cloudového záznamu' }, true);
+        }
+        // CAS even for an unconfirmed INSERT: only the content-verified
+        // revision can be deleted; a newer edit on the other device is safe.
+        let deletion;
+        try {
+          deletion = await client.from(entry.table).delete()
+            .eq('id', entry.cloudId).eq('household_id', replayHouseholdId)
+            .eq('updated_at', remote.updated_at).select('id').maybeSingle();
+        } catch (error) {
+          deletion = { error, data: null };
+        }
+        if (!entryIsCurrent(entry)) return false;
+        if (deletion.error || !deletion.data?.id) {
+          let checked;
+          try {
+            checked = await fetchGarageRow();
+          } catch (error) {
+            return reportGarageFailure(error);
+          }
+          if (!entryIsCurrent(entry)) return false;
+          if (checked.error) return reportGarageFailure(checked.error);
+          if (checked.data) {
+            if (String(checked.data.updated_at || '') !== String(remote.updated_at))
+              return reportGarageFailure({ message: 'Mazání Garáže pozastaveno: v cloudu je novější revize' }, true);
+            return reportGarageFailure(deletion.error || { message: 'Smazání Garáže nebylo potvrzeno' });
+          }
+        }
+        if (!finishEntry(entry)) return false;
+        confirmGarageTrashCloudDelete(entry);
+        persistStateSnapshot({ immediate: true });
+        await yieldToMainThread();
+        continue;
+      }
       if (entry.collection === 'calendar' && entry.operation === 'delete' && !calendarSyncRecordIsProviderManaged(entry.localRecord)) {
         const { data: calendarRemote, error: calendarRemoteError } = await client
           .from(entry.table)
