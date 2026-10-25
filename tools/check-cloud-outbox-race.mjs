@@ -26,6 +26,7 @@ function setup() {
     console,
     normalizeText: (v) => String(v || '').trim(),
     normalizeCloudOutbox: (a) => a.map((x) => ({ ...x })),
+    GARAGE_DELETE_COLLECTIONS: ['vehicles', 'fuel', 'services'],
     cloudReady: () => Boolean(ctx.state.cloud?.userId && ctx.state.cloud?.householdId),
     browserAppearsOnline: () => true,
     cleanupProviderManagedCalendarSyncArtifacts: () => {},
