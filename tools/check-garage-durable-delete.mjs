@@ -159,6 +159,24 @@ for(const collection of ['vehicles','fuel','services']){
   h.state[collection].push({...h.record});
   assert.equal(h.api.recoverGarageTrashCloudDeletes(),0);
 
+  // Trash restore before replay or during remote SELECT cancels its DELETE.
+  h=harness(collection);h.seed();h.api.recoverGarageTrashCloudDeletes();
+  h.state[collection].push({...h.record,cloudId:''});
+  assert.equal(await h.api.replayCloudOutbox(),true);
+  assert.equal(h.operations.filter(x=>x.operation==='delete').length,0);
+  assert.equal(h.rows.size,1);
+  assert.equal(h.state.cloud.outbox.length,0);
+  h=harness(collection);h.seed();h.api.recoverGarageTrashCloudDeletes();
+  let unblock;const readGate=new Promise(resolve=>{unblock=resolve;});
+  h.setGate(readGate);
+  const restoring=h.api.replayCloudOutbox();
+  for(let i=0;i<12;i++)await Promise.resolve();
+  h.state[collection].push({...h.record,cloudId:''});
+  unblock();
+  assert.equal(await restoring,true);
+  assert.equal(h.rows.size,1);
+  assert.equal(h.operations.filter(x=>x.operation==='delete').length,0);
+
   // Late ACK while Undo is active links only the durable Trash, not a delete.
   h=harness(collection);
   h.ctx.activeUndoTrashIds.add('trash-a');
