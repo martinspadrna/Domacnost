@@ -17670,8 +17670,8 @@
       // Legacy local pending without any known server revision is ambiguous.
       // It must not silently overwrite a remote edit.
       if (!expectedRevision || String(remote.updated_at || '') !== String(expectedRevision)) {
-        if (!options.skipConflict)
-          garageLogConflict(collection, item, scope, remote, expectedRevision);
+        // The cloud may change again while a user resolves a conflict.
+        garageLogConflict(collection, item, scope, remote, expectedRevision);
         return false;
       }
 
@@ -17713,7 +17713,7 @@
         showToast(error.message || 'Změnu Garáže se nepovedlo uložit');
         return false;
       }
-      if (latest?.id && !options.skipConflict) {
+      if (latest?.id) {
         garageLogConflict(collection, item, scope, latest, expectedRevision);
         return false;
       }
