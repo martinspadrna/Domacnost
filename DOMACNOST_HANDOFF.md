@@ -976,3 +976,11 @@ Nejdřív dokončit P0, potom P1 → P2 → P3 → P4. Po každé dokončené et
 - Přidán test tools/check-module-loader-concurrent.mjs (tři souběžné požadavky, pořadí vykonání, deduplikace ready eventu, single-file modul); zahrnut do npm check. iOS instalační stránka na produkci omylem nesla text TEST, odstraněn bez změny loga.
 - Verze 592 sjednocena v app.js, index.html, module-loader.js, sw.js, manifest.webmanifest, ios-install.html, release.json, package.json. Rollback: původní MAIN 30be431 (v591), Vercel dpl_6e7vtU4RcK8FUMrEmoxDouyfRLem.
 - Před merge: npm check + Chrome E2E (zejména Nákupy) + preview READY. Po merge: MAIN CI + Vercel production READY. Fyzické PC↔iPhone, offline→online a případné zablokované DELETE tombstony Garáže nadále vyžadují pozdější ověření na reálných účtech.
+
+
+### 26. 10. 2026 — RELEASE v0.1_592 na MAIN/produkci
+- PR #81 https://github.com/martinspadrna/Domacnost/pull/81 merge squash `85f34c3df0c3b7f703b5df32defa25931ff24381`. Oprava uživatelsky neviditelných testů: testy ikon i iOS instalace teď odvozují očekávané query verze z release.json (původně napevno 591). Kód změny v592 zachován.
+- PR GitHub Actions run `40265112027`: SUCCESS včetně npm check a Chrome E2E. PR preview `dpl_HFgxzrjNjsEtRbp2w7TZjJjG7xHa`: READY.
+- MAIN GitHub Actions run `40265216012`: SUCCESS včetně Chrome E2E. Produkční Vercel `dpl_DfAtCZpVfis5TNWMVsLAtQEWNH2N`: READY, commit `85f34c3`, alias `domacnost-plus.vercel.app`. Není nutná DB migrace.
+- Chrome E2E přinesl orientační výkonový vzorek první fyzické navigace do Financí: 99 ms na v591 vs 76 ms na PR v592. Jde o jiný modul a nesrovnatelné jednotlivé běhy — **neprokazuje to vliv úpravy Nákupů**. Přínos Nákupů je zatím deterministicky ověřené paralelní zahájení 3 requestů místo sekvenčního čekání; měření na reálných zařízeních a řízené síťové throttling testy ještě chybí.
+- Rollback: MAIN před PR `30be431684e0600c5b120079901260d73bc9dda3` a Vercel původní 591 READY `dpl_J3Ax7LUixRJs1gUKNtwCTadCmgYN`. Reálný test Garáže (přerušené INSERT/DELETE, Undo, konflikt PC↔telefon) je nadále otevřený. Další P1: změřit first-open Nákupů, profily opakovaných renderů v Home, pomalé moduly a plynulost Android/iOS.
