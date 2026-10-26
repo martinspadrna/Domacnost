@@ -28,3 +28,10 @@ jobs:
         env:
           E2E_REQUIRED: "1"
         run: npm run check:e2e
+
+      # Stejný Chrome, fixně zpožděné asset odpovědi, v592 baseline vs aktuální.
+      # Benchmark je oddělený od npm check (v lokálním prostředí může chybět Chrome).
+      - name: Benchmark Shopping cold code load
+        env:
+          BENCH_REQUIRED: "1"
+        run: npm run bench:shopping-loader
