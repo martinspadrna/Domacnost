@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const ASSET_VERSION = '0-1-592';
+  const ASSET_VERSION = '0-1-593';
   const ASSET_LOAD_TIMEOUT_MS = 15000;
   const definitions = {
     shopping: {
@@ -160,10 +160,13 @@
     if (modulePromises.has(id)) return modulePromises.get(id);
 
     const promise = (async () => {
-      await Promise.all((definition.styles || []).map(loadStyle));
-      // Dynamic classic scripts (async=false) se vykonají ve vloženém pořadí.
-      // Stahování spustíme souběžně: Nákupy tak nečekají na tři requesty za sebou.
-      await Promise.all((definition.scripts || []).map(loadScript));
+      // CSS a classic JS stahujeme souběžně. Zobrazení modulu však počká
+      // na obojí, takže se ani na pomalé síti neukáže bez stylů.
+      // Classic JS zůstává async=false a vykoná se v pořadí vložení.
+      await Promise.all([
+        ...(definition.styles || []).map(loadStyle),
+        ...(definition.scripts || []).map(loadScript)
+      ]);
       if (!definition.ready?.()) throw new Error(`Modul ${id} se nenačetl úplně`);
       window.dispatchEvent(new CustomEvent('domacnost:module-code-ready', { detail: { moduleId: id } }));
       return true;

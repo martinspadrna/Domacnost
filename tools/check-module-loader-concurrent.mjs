@@ -48,8 +48,7 @@ assert.ok(loader?.ensure && loader?.isReady && loader?.start);
 const first = loader.ensure('shopping');
 const second = loader.ensure('shopping');
 const css = requests.find((node) => pathname(node) === '/shopping.css');
-assert.ok(css, 'Nákupy nejprve potřebují CSS');
-css.emit('load');
+assert.ok(css, 'Nákupy potřebují CSS');
 await new Promise(setImmediate);
 const scripts = requests.filter((node) => node.tagName === 'SCRIPT' && pathname(node).startsWith('/shopping-'));
 assert.deepEqual(scripts.map(pathname), ['/shopping-utils.js', '/shopping-render.js', '/shopping-actions.js'],
@@ -57,9 +56,17 @@ assert.deepEqual(scripts.map(pathname), ['/shopping-utils.js', '/shopping-render
 assert.ok(scripts.every((node) => node.async === false),
   'vykonání classic scripts musí zůstat v pořadí vložení');
 assert.equal(loader.isReady('shopping'), false);
+// CSS stále čeká na síti: JS requesty jsou spuštěné a kód se smí načíst,
+// ale modul nesmí být hotový před CSS (žádný flash nestylovaného obsahu).
+let resolved = false;
+first.then(() => { resolved = true; });
 windowStub.DomacnostShoppingUtils = {}; scripts[0].emit('load');
 windowStub.DomacnostShoppingRender = {}; scripts[1].emit('load');
 windowStub.DomacnostShoppingActions = {}; scripts[2].emit('load');
+await new Promise(setImmediate);
+assert.equal(resolved, false, 'modul nesmí být hotový před CSS');
+assert.equal(loader.isReady('shopping'), true, 'JS ready nemůže obcházet čekání na CSS');
+css.emit('load');
 await Promise.all([first, second]);
 assert.equal(loader.isReady('shopping'), true);
 assert.equal(events.filter((event) => event.type === 'domacnost:module-code-ready' && event.detail?.moduleId === 'shopping').length, 1);
@@ -76,4 +83,4 @@ windowStub.DomacnostNotes = {};
 notes.emit('load');
 await tasks;
 assert.equal(loader.isReady('tasks'), true);
-console.log('OK: bootstrap, paralelní requesty Nákupů, async=false, deduplikace a Úkoly.');
+console.log('OK: bootstrap, CSS+JS paralelně, dokončení čeká na CSS, async=false, deduplikace a Úkoly.');
