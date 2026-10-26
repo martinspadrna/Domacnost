@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PWA v591: verify exact RGBA PNG pixels, native Windows ICO, browser references and
+// PWA: verify exact RGBA PNG pixels, native Windows ICO, browser references and
 // absence of opaque legacy Android maskable icon choices. No npm dependencies.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -8,6 +8,8 @@ import { buildIcons, decodePng } from './generate-pwa-icons.mjs';
 
 const root=resolve(import.meta.dirname,'..');
 const read=(name)=>readFileSync(resolve(root,name));
+const build=JSON.parse(read('release.json').toString('utf8')).build;
+const assetVersion='0-1-'+build;
 const source=read('icons/source/domacnost-plus-original-512.png');
 const {result}=buildIcons(source);
 const alphaPaths=[
@@ -62,20 +64,20 @@ assert.deepEqual(manifest.icons.map(x=>x.sizes),['48x48','64x64','128x128','192x
 for(const entry of manifest.icons){
  assert.equal(entry.type,'image/png');
  assert.equal(entry.purpose,'any','No maskable selection with colored background');
- assert.match(entry.src,/\?v=0-1-591$/,'versioned Android resource URLs prevent stale icons');
+ assert.match(entry.src,new RegExp('\\?v='+assetVersion+'$'),'versioned Android resource URLs prevent stale icons');
 }
 const html=read('index.html').toString('utf8');
 assert(!html.includes('msapplication-TileColor'),'Windows tile must not force old blue square background');
 for(const size of [16,32,180]){
- assert(html.includes('domacnost-plus-icon-'+size+'.png?v=0-1-591'),'versioned HTML icon missing: '+size);
+ assert(html.includes('domacnost-plus-icon-'+size+'.png?v='+assetVersion),'versioned HTML icon missing: '+size);
 }
-assert(html.includes('favicon.ico?v=0-1-591'));
-assert(html.includes('domacnost-plus-windows.ico?v=0-1-591'),'Windows shortcut icon must be explicitly linked');
-assert(html.includes('domacnost-plus-ios-180.png?v=0-1-591'));
+assert(html.includes('favicon.ico?v='+assetVersion));
+assert(html.includes('domacnost-plus-windows.ico?v='+assetVersion),'Windows shortcut icon must be explicitly linked');
+assert(html.includes('domacnost-plus-ios-180.png?v='+assetVersion));
 assert(!html.includes('href="./icons/apple-touch-icon-precomposed.png'));
 const sw=read('sw.js').toString('utf8');
-assert(sw.includes('v0-1-591'));
+assert(sw.includes('v'+assetVersion));
 assert(sw.includes("'./icons/domacnost-plus-windows.ico'"));
 assert(!sw.includes("'./icons/domacnost-plus-maskable-"),'old maskable icons must not enter new offline cache');
 for(const size of [16,32,48,64,120,128,152,167,180,192,256,384,512])assert(sw.includes("'./icons/domacnost-plus-icon-"+size+".png'"));
-console.log('PASS PWA icons v591: RGBA transparency, Windows native BGRA/AND-mask ICO, Android any, iOS, manifest + SW cache');
+console.log('PASS PWA icons v'+build+': RGBA transparency, Windows native BGRA/AND-mask ICO, Android any, iOS, manifest + SW cache');
