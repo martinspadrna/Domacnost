@@ -35,3 +35,8 @@ jobs:
         env:
           BENCH_REQUIRED: "1"
         run: npm run bench:shopping-loader
+
+      - name: Benchmark full Home and Shopping UI on mobile and desktop
+        env:
+          E2E_REQUIRED: "1"
+        run: npm run bench:ui-navigation

@@ -1,6 +1,6 @@
 {
   "name": "domacnost-plus",
-  "version": "0.1.594",
+  "version": "0.1.595",
   "private": true,
   "type": "module",
   "description": "Domácnost+ — instalovatelná PWA pro rodinnou domácnost. Frontend-only repo; ověřovací skripty jsou dependency-free.",
@@ -42,6 +42,7 @@
     "check:ios-install": "node tools/check-ios-install.mjs",
     "check:module-loader": "node tools/check-module-loader-concurrent.mjs",
     "check:home-alert-perf": "node tools/check-home-alert-performance.mjs",
-    "bench:shopping-loader": "node tools/bench-shopping-loader.mjs"
+    "bench:shopping-loader": "node tools/bench-shopping-loader.mjs",
+    "bench:ui-navigation": "node tools/bench-ui-navigation.mjs"
   }
 }
