@@ -163,8 +163,18 @@ function startStaticServer() {
         return;
       }
       const data = readFileSync(filePath);
-      res.writeHead(200, { 'Content-Type': mimeType(filePath), 'Cache-Control': 'no-store' });
-      res.end(data);
+      const sendAsset = () => {
+        if (res.destroyed) return;
+        res.writeHead(200, { 'Content-Type': mimeType(filePath), 'Cache-Control': 'no-store' });
+        res.end(data);
+      };
+      // Pouze pro UI benchmark: Nákupy mají fixní syntetickou síťovou latenci.
+      const benchmarkFiles = ['shopping.css', 'shopping-utils.js', 'shopping-render.js', 'shopping-actions.js'];
+      if (process.env.E2E_BENCH_MODE === '1' && benchmarkFiles.includes(safePath)) {
+        setTimeout(sendAsset, safePath.endsWith('.css') ? 260 : 210);
+        return;
+      }
+      sendAsset();
     } catch {
       res.writeHead(404);
       res.end('Not found');
@@ -702,6 +712,19 @@ function smokeSeedScript() {
       autoSyncEnabled: true
     }
   };
+  // Zvýšená zátěž pouze v samostatném benchmarku; smoke seed se nemění.
+  if (process.env.E2E_BENCH_MODE === '1') {
+    for (let i = 0; i < 300; i += 1) {
+      seed.shopping.push({
+        id: 'shopping-bench-item-' + i,
+        householdId: 'household-e2e-smoke', profileId: 'profile-e2e-smoke',
+        listId: 'shopping-list-e2e-smoke', name: 'Benchmark položka ' + (i + 1),
+        category: 'Potraviny', kind: 'Potraviny', quantity: 1,
+        unit: 'ks', done: false,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      });
+    }
+  }
   const auth = {
     access_token: 'e2e-access-token',
     refresh_token: 'e2e-refresh-token',
@@ -733,6 +756,104 @@ function smokeSeedScript() {
     localStorage.setItem('domacnost-plus-auth', ${JSON.stringify(JSON.stringify(auth))});
     localStorage.setItem('domacnostPlus.moduleTabs', JSON.stringify({ finance: 'loans' }));
   `;
+}
+
+
+function benchmarkFirstHomeObserver() {
+  let observer;
+  const watch = () => {
+    if (window.__DOMACNOST_E2E_HOME_DOM_MS__ !== undefined || !document.querySelector('.home-dash')) return;
+    window.__DOMACNOST_E2E_HOME_DOM_MS__ = performance.now();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      window.__DOMACNOST_E2E_HOME_TWO_RAF_MS__ = Math.round(performance.now());
+    }));
+    observer.disconnect();
+  };
+  observer = new MutationObserver(watch);
+  observer.observe(document, { childList: true, subtree: true });
+}
+
+async function browserUiNavigationBenchmark(profileName) {
+  const round = (n) => Math.round(n * 10) / 10;
+  const samples = { home: [], shopping: [] };
+  const twoFrames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+  async function visit(id) {
+    const started = performance.now();
+    await window.__DOMACNOST_E2E_NAV__(id, id === 'shopping' ? 'list' : '');
+    const domAt = performance.now();
+    await twoFrames();
+    const framesAt = performance.now();
+    const main = document.querySelector('#app .app-frame main');
+    const text = main?.innerText || '';
+    return {
+      domMs: round(domAt - started),
+      twoRafMs: round(framesAt - started),
+      elementCount: main?.querySelectorAll('*').length || 0,
+      visible: Boolean(main && main.getBoundingClientRect().height > 100),
+      contentOk: id === 'home'
+        ? Boolean(main?.querySelector('.home-dash'))
+        : Boolean(window.DomacnostShoppingUtils && window.DomacnostShoppingRender && window.DomacnostShoppingActions && text.includes('Mléko') && text.includes('Benchmark položka')),
+      surface: document.querySelector('#app')?.dataset?.lastRenderSurface || ''
+    };
+  }
+  const coldShopping = profileName === 'mobile390' ? await visit('shopping') : null;
+  for (let i = 0; i < 5; i += 1) {
+    samples.home.push(await visit('home'));
+    samples.shopping.push(await visit('shopping'));
+  }
+  return { coldShopping, samples, width: window.innerWidth, height: window.innerHeight };
+}
+
+async function runUiNavigationBenchmark(page, runtimeErrors) {
+  // DOM / double-rAF časy měřené přímo v Chrome, nezahrnují latenci CDP volání.
+  const bootStamp = await waitForExpression(
+    page, 'Number.isFinite(window.__DOMACNOST_E2E_HOME_TWO_RAF_MS__) ? window.__DOMACNOST_E2E_HOME_TWO_RAF_MS__ : null', 3000, 40
+  );
+  const measurements = {};
+  const profiles = [
+    { key: 'mobile390', width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    { key: 'desktop1366', width: 1366, height: 768, deviceScaleFactor: 1, mobile: false }
+  ];
+  for (const profile of profiles) {
+    await page.send('Emulation.setDeviceMetricsOverride', {
+      width: profile.width, height: profile.height,
+      deviceScaleFactor: profile.deviceScaleFactor, mobile: profile.mobile
+    });
+    const result = await page.send('Runtime.evaluate', {
+      returnByValue: true,
+      awaitPromise: true,
+      expression: '(' + browserUiNavigationBenchmark.toString() + ')(' + JSON.stringify(profile.key) + ')'
+    });
+    const value = result.result?.value;
+    if (!value?.samples || !Array.isArray(value.samples.home) || value.samples.home.length !== 5) {
+      throw new Error('UI benchmark nevrátil kompletní měření ' + profile.key + ': ' + JSON.stringify(value));
+    }
+    const sampleRows = [...(value.coldShopping ? [value.coldShopping] : []), ...value.samples.home, ...value.samples.shopping];
+    if (!sampleRows.every((s) =>
+      s.visible && s.contentOk && Number.isFinite(s.domMs) && Number.isFinite(s.twoRafMs) && s.twoRafMs < 6000)) {
+      throw new Error('UI benchmark: neúplný obsah, nepoužitelný layout nebo pomalá navigace: ' + JSON.stringify(value));
+    }
+    if (Math.abs(value.width - profile.width) > 2) throw new Error('Špatný viewport ' + profile.key + ': ' + value.width);
+    const median = (records, property) => records.map((item) => item[property]).sort((a, b) => a - b)[2];
+    measurements[profile.key] = {
+      ...(value.coldShopping ? { coldShopping: value.coldShopping } : {}),
+      homeDomMedianMs: median(value.samples.home, 'domMs'),
+      homeTwoRafMedianMs: median(value.samples.home, 'twoRafMs'),
+      shoppingDomMedianMs: median(value.samples.shopping, 'domMs'),
+      shoppingTwoRafMedianMs: median(value.samples.shopping, 'twoRafMs'),
+      homeDomSamples: value.samples.home.map((x) => x.domMs),
+      shoppingDomSamples: value.samples.shopping.map((x) => x.domMs),
+      homeElementCount: value.samples.home[0].elementCount,
+      shoppingElementCount: value.samples.shopping[0].elementCount,
+      viewport: value.width + 'x' + value.height
+    };
+  }
+  if (runtimeErrors.length) throw new Error('Chrome runtime: ' + runtimeErrors.join('; '));
+  console.log('UI_BENCH_RESULT ' + JSON.stringify({
+    kind: 'Chrome real app + synthetic household, 300 shopping items, 260ms CSS / 210ms JS response latency, DOM + 2x requestAnimationFrame',
+    firstHomeTwoRafFromNavigationMs: bootStamp,
+    ...measurements
+  }));
 }
 
 async function run() {
@@ -790,6 +911,11 @@ async function run() {
       mobile: true
     });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: smokeSeedScript() });
+    if (process.env.E2E_BENCH_MODE === '1') {
+      await page.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: '(' + benchmarkFirstHomeObserver.toString() + ')();'
+      });
+    }
     await page.send('Page.navigate', { url });
     const bootWaitStart = Date.now();
     while (Date.now() - bootWaitStart < timeoutMs) {
@@ -889,6 +1015,12 @@ async function run() {
     if (!initialValue.navFinance) { fail('Po seed bootu není dostupná navigace Finance.'); bootOk = false; }
     if (!initialValue.navContracts) { fail('Po seed bootu není dostupná navigace Smlouvy.'); bootOk = false; }
     if (bootOk) ok('boot: nový Home, app root, verze, Finance, Bazén i Smlouvy navigace dostupné.');
+
+    if (process.env.E2E_BENCH_MODE === '1') {
+      if (!bootOk) throw new Error('Benchmark nemůže pokračovat bez úspěšného Home bootu');
+      await runUiNavigationBenchmark(page, runtimeErrors);
+      return;
+    }
 
     await page.send('Runtime.evaluate', {
       expression: `(() => {
@@ -3065,7 +3197,7 @@ async function run() {
 
 await run();
 
-console.log('E2E smoke pro Domácnost+');
+console.log(process.env.E2E_BENCH_MODE === '1' ? 'UI benchmark Domácnost+' : 'E2E smoke pro Domácnost+');
 notes.forEach((line) => console.log(`  ok: ${line}`));
 
 if (errors.length) {
@@ -3075,4 +3207,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log('\nReal-browser E2E smoke prošel.');
+console.log(process.env.E2E_BENCH_MODE === '1' ? '\nUI navigation benchmark prošel.' : '\nReal-browser E2E smoke prošel.');
